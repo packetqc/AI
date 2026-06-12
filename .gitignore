@@ -1,0 +1,6 @@
+local_mp_1
+llama.cpp
+.cache
+OLDs*
+st_output_code
+venv
