@@ -1,0 +1,1 @@
+FROM ./model_version_smallest_1.gguf
