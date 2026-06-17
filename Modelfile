@@ -1,1 +1,7 @@
-FROM ./model_version_smallest_1.gguf
+FROM /opt/DEV/AI/model_version_smallest_1.gguf
+
+TEMPLATE """<|endoftext|>{ .Prompt }[token_11]"""
+
+PARAMETER stop "<|endoftext|>"
+PARAMETER temperature 0.0
+PARAMETER num_predict 1

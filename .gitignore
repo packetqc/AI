@@ -5,3 +5,5 @@ OLDs*
 st_output_code
 venv
 model_version*
+.chroma_memory_db
+chroma_db

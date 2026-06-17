@@ -11,6 +11,8 @@ from gguf import GGUFWriter
 from transformers import Qwen2Config, Qwen2TokenizerFast, Qwen2ForCausalLM
 from tokenizers import Tokenizer, models
 
+from transformers import AutoTokenizer
+
 #################################################################################################
 #
 #################################################################################################
@@ -284,6 +286,15 @@ scores = [0.0] * config.vocab_size
 token_types = [1] * config.vocab_size
 token_types[0] = 2 # Control token for EOS
 
+custom_merges = [
+
+]
+
+# custom_merges = [
+#     "a b",
+#     "ab c"
+# ]
+
 #################################################################################################
 #
 #################################################################################################
@@ -338,6 +349,9 @@ writer.add_tokenizer_model("gpt2")
 writer.add_token_list(tokens)
 writer.add_token_scores(scores)
 writer.add_token_types(token_types)
+
+# CRITICAL FIX: Inject your custom merge array
+writer.add_array("tokenizer.ggml.merges", custom_merges)
 
 print("Packing trained tensor matrices into GGUF format...")
 state_dict = model.state_dict()
