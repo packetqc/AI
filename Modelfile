@@ -1,4 +1,4 @@
-FROM /opt/DEV/AI/model_version_smallest_1.gguf
+FROM /opt/DEV/AI/model_optimized_1.gguf
 
 TEMPLATE """<|endoftext|>{ .Prompt }[token_11]"""
 
