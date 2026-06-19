@@ -7,3 +7,8 @@ venv
 model_version*
 .chroma_memory_db
 chroma_db
+
+# build artifacts
+__pycache__/
+*.gguf
+model_optimized_*/
