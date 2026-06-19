@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sys
 import time
 import subprocess
@@ -22,6 +23,8 @@ from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, pr
 from class_terminal_logs import TerminalLogger
 logger = TerminalLogger()
 
+from class_model_assets import ModelAssets
+
 #################################################################################################
 #
 #################################################################################################
@@ -36,6 +39,20 @@ modelfile_path = "./Modelfile"
 
 NAME = "model_hugging_face_optimized"
 OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
+
+# Markdown knowledge trained into the model at start-up (set to None to skip).
+# In-flight, the same training runs via the "/read <file.md>" command in the runner.
+INIT_MARKDOWN_FILE = "knowledge.md"
+
+# Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
+# later run of this script restores everything learned in previous sessions.
+STATE_PATH = model_path + ".state.json"
+
+# Ollama serving parameters (shared by the first build and every /read rebuild).
+# NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
+# reproduces EXACTLY the training prefix ("<|endoftext|>" + prompt, no trailing space).
+MODELFILE_TEMPLATE = "<|endoftext|>{{ .Prompt }}"
+NUM_PREDICT = 8
 
 
 os.makedirs("./"+model_path, exist_ok=True)
@@ -52,7 +69,7 @@ os.environ["OLLAMA_HOST"] = "http://127.0.0.1:11434"
 VOCAB_SIZE = 1027
 HIDDEN_SIZE = 256   #512   #256   #128   #64
 INTERMEDIATE_SIZE = 512 #1024    #512 #256 #128
-NUM_LAYERS = 1  #12 #4  #2
+NUM_LAYERS = 2  #12 #4  #2  (>=2 gives headroom for memorizing knowledge alongside the anchors)
 NUM_HEADS = 4   #8   #4
 NUM_KV_HEADS = 2    #4    #2
 CONTEXT_LENGTH = 256
@@ -100,174 +117,229 @@ def get_ollama_answer(prompt: str, model_name: str = "llama3", host_url: str = "
         return f"[Error]: An unexpected issues occurred: {str(e)}"
 
 #################################################################################################
-# TOKENS
+# KNOWLEDGE-AWARE PIPELINE  (tokenizer + model, rebuilt whenever new markdown is learned)
 #################################################################################################
-logger.log("info", "SYSTEM", "Training a real byte-level BPE tokenizer (single source of truth)...")
-
-# The canonical prompt/answer pairs the model must learn. These exact strings are reused
-# for (a) training the tokenizer, (b) building the training tensors, (c) the self-test,
-# so training token IDs are guaranteed identical to the IDs Ollama produces at inference.
+# The canonical prompt/answer pairs the model must ALWAYS know (replayed on every rebuild).
 SPECIAL_TOKEN = "<|endoftext|>"
 PAIRS = [
     ("what color is always good ?", "green"),
     ("what color is always bad ?",  "red"),
 ]
 
-# Format a single training example. The TEMPLATE in the Modelfile reproduces everything
-# up to and including the trailing space, then the model must generate the answer + EOS.
 def format_example(prompt: str, answer: str) -> str:
+    """Training form of an anchor pair. The Modelfile TEMPLATE reproduces the prefix
+    ("<|endoftext|>" + prompt); the model then emits the " answer" token + EOS."""
     return f"{SPECIAL_TOKEN}{prompt} {answer}{SPECIAL_TOKEN}"
 
-# Tiny corpus: the prompts, the answers, and the full formatted lines, repeated so that
-# whole words (green/red/color/...) collapse into single merged tokens.
-corpus = []
-for prompt, answer in PAIRS:
-    corpus.extend([prompt, answer, format_example(prompt, answer)] * 20)
-
-# CRITICAL: use the exact Qwen2 pre-tokenizer regex AND export pre="qwen2" below, so that
-# HF (training) and llama.cpp/Ollama (inference) split text identically. With a plain ByteLevel
-# pre-tokenizer the two diverge on " ?" (HF keeps "Ġ?" as one token, llama.cpp splits "Ġ"+"?"),
-# which shifts the prompt's final token and makes the model answer with EOS instead of green/red.
+# CRITICAL: the exact Qwen2 pre-tokenizer regex. We also export pre="qwen2" so that HF
+# (training) and llama.cpp/Ollama (inference) split text identically — notably " ?" stays a
+# single "Ġ?" token instead of splitting into "Ġ"+"?", which would shift the final token.
 QWEN2_PRETOKENIZER_PATTERN = (
     r"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}|"
     r" ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"
 )
 
-# Byte-level BPE: the 256-byte initial alphabet makes ANY text tokenizable.
-raw_tokenizer = Tokenizer(models.BPE(unk_token=None))
-raw_tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
-    pre_tokenizers.Split(pattern=Regex(QWEN2_PRETOKENIZER_PATTERN), behavior="isolated", invert=False),
-    pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False),
-])
-raw_tokenizer.decoder = decoders.ByteLevel()
-trainer = trainers.BpeTrainer(
-    vocab_size=512,
-    special_tokens=[SPECIAL_TOKEN],
-    initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
-    show_progress=False,
-)
-raw_tokenizer.train_from_iterator(corpus, trainer=trainer)
+DEFAULT_VOCAB_CAP = 4096     # starting BPE vocabulary ceiling
+MAX_VOCAB_CAP = 32768        # hard upper bound so a huge file can't blow up the embedding matrix
+BLOCK_SIZE = 64              # sliding-window length for knowledge text (<= CONTEXT_LENGTH)
+MAX_KNOWLEDGE_TOKENS = 2048  # per-document safety cap so a huge file can't stall the toy
+MAX_EPOCHS = 800
+TARGET_LOSS = 5e-4
 
-tokenizer = Qwen2TokenizerFast(tokenizer_object=raw_tokenizer)
-tokenizer.add_special_tokens({
-    "bos_token": SPECIAL_TOKEN,
-    "eos_token": SPECIAL_TOKEN,
-    "pad_token": SPECIAL_TOKEN,
-})
-
-# Save weightless files directly to disk (No internet requests sent)
-tokenizer.save_pretrained("./"+model_path)
-
-#################################################################################################
-# SYSTEM VOCABULARY ROUTING  (derived entirely from the trained tokenizer)
-#################################################################################################
-# Token list ordered by id — this is exactly what gets embedded in the GGUF.
-vocab = tokenizer.get_vocab()                       # {token_str: id}
-tokens = [tok for tok, _ in sorted(vocab.items(), key=lambda kv: kv[1])]
-
-# Real merge rules from the trained tokenizer (replaces the old 3-item junk fallback).
-_tok_state = json.loads(raw_tokenizer.to_str())
-merges = []
-for m in _tok_state["model"]["merges"]:
-    # tokenizers may serialize merges as "a b" strings or as ["a", "b"] pairs.
-    merges.append(m if isinstance(m, str) else " ".join(m))
-
-scores = [0.0] * len(tokens)
-token_types = [1] * len(tokens)
-token_types[tokenizer.convert_tokens_to_ids(SPECIAL_TOKEN)] = 3   # control token
-
-VOCAB_SIZE = len(tokens)
-
-logger.log("ok", "SYSTEM", "Vocabulary mapping stabilized at exactly " + str(VOCAB_SIZE) + " tokens, " + str(len(merges)) + " merges.")
-
-#################################################################################################
-# CONFIG
-#################################################################################################
-logger.log("info", "SYSTEM", "Initializing architecture parameters and model...")
-
-# Define the tiny architecture parameters only
-config = Qwen2Config(
-    vocab_size=VOCAB_SIZE,
-    hidden_size=HIDDEN_SIZE,
-    intermediate_size=INTERMEDIATE_SIZE,
-    num_hidden_layers=NUM_LAYERS,
-    num_attention_heads=NUM_HEADS,
-    num_key_value_heads=NUM_KV_HEADS,
-    max_position_embeddings=CONTEXT_LENGTH,
-    # Crucial mapping tags expected by llama.cpp's internal dictionary parser
-    architectures=["Qwen2ForCausalLM"],
-    model_type="qwen2"
-)
-
-# Add this parameter to your Qwen2Config constructor block
-config.attention_bias = True
-
-# Save configuration metadata directly to disk
-config.save_pretrained("./"+model_path)
-
-jsonConfig = config.to_dict()
-logger.log("info", "SYSTEM", "vocab_size: "+str(config.vocab_size)+", hidden_size: "+str(config.hidden_size)+", intermediate_size: "+str(config.intermediate_size)+", num_hidden_layers: "+str(config.num_hidden_layers))
-logger.log("info", "SYSTEM", "num_attention_heads: "+str(config.num_attention_heads)+", num_key_value_heads: "+str(config.num_key_value_heads)+", max_position_embeddings: "+str(config.max_position_embeddings)+", model_type: "+str(config.model_type))
+# Default architecture dims (persisted in the state file; an old state can override these).
+ARCH_DEFAULTS = {
+    "hidden_size": HIDDEN_SIZE,
+    "intermediate_size": INTERMEDIATE_SIZE,
+    "num_hidden_layers": NUM_LAYERS,
+    "num_attention_heads": NUM_HEADS,
+    "num_key_value_heads": NUM_KV_HEADS,
+    "max_position_embeddings": CONTEXT_LENGTH,
+}
 
 
-# =========================================================================
-# 6. INSTANT ONE-LAYER GRADIENT OPTIMIZATION PASS
-# =========================================================================
-logger.log("info", "SYSTEM", "Initializing model layers with active numeric weights...")
-model = Qwen2ForCausalLM(config)
-model.resize_token_embeddings(len(tokens), mean_resizing=False)
+def required_vocab_cap(corpus_texts, floor):
+    """How big the BPE vocabulary should be to give the corpus' words first-class tokens.
 
-logger.log("info", "SYSTEM", "Building training tensors by encoding the real prompt/answer strings...")
+    The byte alphabet (256) + special token + roughly a few sub-word tokens per distinct word.
+    This is what lets the pipeline DETECT that a freshly-read file needs more vocabulary than the
+    current ceiling and grow it (bounded by MAX_VOCAB_CAP)."""
+    words = set()
+    for t in corpus_texts:
+        words.update(t.split())
+    needed = 256 + 16 + 4 * len(words)
+    return min(MAX_VOCAB_CAP, max(floor, needed))
+# Mask this many leading tokens of each knowledge window from the loss. Documents that share a
+# prefix (e.g. "The ...") force a contradictory next-token target right after the shared word,
+# which floors the loss and corrupts recall. Masking those first couple of predictions removes
+# the conflict; the user still supplies them as prompt context at inference. Keep this SMALL so
+# the answer in a short fact ("The CEO is Maria") is not itself masked out of training.
+MASK_LEAD = 2
 
-# Build training rows by ENCODING the actual text with the same tokenizer used for export.
-# The ByteLevel pre-tokenizer's gpt2 regex never merges across a space/punctuation boundary,
-# so the answer's leading space attaches to it (e.g. "Ġgreen") and encode(prefix) is a clean
-# prefix of encode(full). We mask everything up to the answer, training loss only on the
-# answer tokens + the closing EOS.
-eos_id = tokenizer.convert_tokens_to_ids(SPECIAL_TOKEN)
 
-examples = []
-max_len = 0
-for prompt, answer in PAIRS:
-    prefix_ids = tokenizer.encode(f"{SPECIAL_TOKEN}{prompt}")     # exactly what the template feeds
-    full_ids = tokenizer.encode(format_example(prompt, answer))   # prompt + answer + EOS
-    examples.append((full_ids, len(prefix_ids)))
-    max_len = max(max_len, len(full_ids))
+def markdown_to_text(md: str) -> str:
+    """Strip markdown syntax down to plain prose so structural tokens (#, *, `, links) don't
+    create spurious training targets and the model learns the actual content."""
+    text = re.sub(r"```.*?```", " ", md, flags=re.DOTALL)          # fenced code blocks
+    text = re.sub(r"`([^`]*)`", r"\1", text)                       # inline code
+    text = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", text)         # links / images -> link text
+    text = re.sub(r"^\s{0,3}#{1,6}\s*", "", text, flags=re.MULTILINE)   # ATX headers
+    text = re.sub(r"^\s{0,3}[-*+]\s+", "", text, flags=re.MULTILINE)    # bullet markers
+    text = re.sub(r"[*_~>]", "", text)                             # emphasis / blockquote marks
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{2,}", "\n", text)
+    return text.strip()
 
-batch = examples * 5  # repeat for a stable batch on this tiny model
 
-input_rows, label_rows, mask_rows = [], [], []
-for full_ids, prefix_len in batch:
-    pad = max_len - len(full_ids)
-    ids = full_ids + [eos_id] * pad
-    lab = [-100] * len(ids)
-    for j in range(prefix_len, len(full_ids)):   # answer tokens + closing EOS only
-        lab[j] = ids[j]
-    msk = [1] * len(full_ids) + [0] * pad
-    input_rows.append(ids)
-    label_rows.append(lab)
-    mask_rows.append(msk)
+def split_segments(text: str):
+    """Split prose into independent sentence/line segments. Each becomes its own training
+    sequence so a natural prompt (a prefix of one sentence) matches what the model saw —
+    without an unrelated header or neighbouring sentence prefixed in front of it."""
+    segments = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        for part in re.split(r"(?<=[.!?])\s+", line):
+            part = part.strip()
+            if part:
+                segments.append(part)
+    return segments
 
-input_ids = torch.tensor(input_rows, dtype=torch.long)
-labels = torch.tensor(label_rows, dtype=torch.long)
-attention_mask = torch.tensor(mask_rows, dtype=torch.long)
 
-# Setup optimization parameters with a clean learning rate
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-model.train()
+def build_pipeline(knowledge_texts, arch=None, vocab_cap=None):
+    """Build a tokenizer + model that cover the green/red prompts AND every knowledge text,
+    then train them JOINTLY (anchors masked to the answer; knowledge as causal-LM windows).
 
-logger.log("info", "SYSTEM", "Training until the two examples are memorized...")
-for epoch in range(400):
-    optimizer.zero_grad()
-    outputs = model(input_ids=input_ids, labels=labels, attention_mask=attention_mask)
-    loss = outputs.loss
-    loss.backward()
-    optimizer.step()
-    if loss.item() < 1e-4:
-        break
+    This runs at start-up and on every /read, so any newly-read word becomes a first-class
+    token (not a pile of byte fragments) — which is what makes in-flight recall robust.
+    Retraining on the full set each time also makes catastrophic forgetting impossible.
 
-model.eval()
-logger.log("ok", "SYSTEM", "MODEL CONVERGED at epoch " + str(epoch + 1) + ", final loss = " + f"{loss.item():.6f}")
+    ``arch`` overrides the architecture dims (from a persisted state); ``vocab_cap`` is the
+    current ceiling, which is grown automatically if the accumulated knowledge needs more
+    whole-word tokens. Returns an artifacts dict (incl. the effective ``vocab_cap`` / ``arch``).
+    """
+    arch = dict(ARCH_DEFAULTS, **(arch or {}))
+
+    # Strip markdown to plain prose before anything else (tokenizer + training use the same text).
+    knowledge_texts = [markdown_to_text(t) for t in (knowledge_texts or []) if t and t.strip()]
+    knowledge_texts = [t for t in knowledge_texts if t]
+
+    # ---- corpus: base prompts/answers (repeated) + every knowledge document ----
+    corpus = []
+    for prompt, answer in PAIRS:
+        corpus.extend([prompt, answer, format_example(prompt, answer)] * 20)
+    corpus.extend(knowledge_texts)
+
+    # ADAPT: grow the vocabulary ceiling if the corpus needs more than the current cap.
+    eff_vocab_cap = required_vocab_cap(corpus, vocab_cap or DEFAULT_VOCAB_CAP)
+    logger.log("info", "SYSTEM", "Building tokenizer + model over base prompts + "
+               + str(len(knowledge_texts)) + " knowledge doc(s); vocab_cap=" + str(eff_vocab_cap) + "...")
+
+    # ---- tokenizer: byte-level BPE with the Qwen2 pre-tokenizer ----
+    raw_tokenizer = Tokenizer(models.BPE(unk_token=None))
+    raw_tokenizer.pre_tokenizer = pre_tokenizers.Sequence([
+        pre_tokenizers.Split(pattern=Regex(QWEN2_PRETOKENIZER_PATTERN), behavior="isolated", invert=False),
+        pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False),
+    ])
+    raw_tokenizer.decoder = decoders.ByteLevel()
+    raw_tokenizer.train_from_iterator(corpus, trainer=trainers.BpeTrainer(
+        vocab_size=eff_vocab_cap,
+        special_tokens=[SPECIAL_TOKEN],
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
+        show_progress=False,
+    ))
+    tokenizer = Qwen2TokenizerFast(tokenizer_object=raw_tokenizer)
+    tokenizer.add_special_tokens({
+        "bos_token": SPECIAL_TOKEN, "eos_token": SPECIAL_TOKEN, "pad_token": SPECIAL_TOKEN,
+    })
+    tokenizer.save_pretrained("./" + model_path)
+
+    tokens = [t for t, _ in sorted(tokenizer.get_vocab().items(), key=lambda kv: kv[1])]
+    _state = json.loads(raw_tokenizer.to_str())
+    merges = [m if isinstance(m, str) else " ".join(m) for m in _state["model"]["merges"]]
+    eos_id = tokenizer.convert_tokens_to_ids(SPECIAL_TOKEN)
+    scores = [0.0] * len(tokens)
+    token_types = [1] * len(tokens)
+    token_types[eos_id] = 3   # control token
+    logger.log("ok", "SYSTEM", "Vocabulary: " + str(len(tokens)) + " tokens, "
+               + str(len(merges)) + " merges.")
+
+    # ---- config + fresh model (architecture dims come from `arch`) ----
+    config = Qwen2Config(
+        vocab_size=len(tokens),
+        hidden_size=arch["hidden_size"], intermediate_size=arch["intermediate_size"],
+        num_hidden_layers=arch["num_hidden_layers"], num_attention_heads=arch["num_attention_heads"],
+        num_key_value_heads=arch["num_key_value_heads"], max_position_embeddings=arch["max_position_embeddings"],
+        architectures=["Qwen2ForCausalLM"], model_type="qwen2",
+    )
+    config.attention_bias = True
+    config.save_pretrained("./" + model_path)
+    model = Qwen2ForCausalLM(config)
+    model.resize_token_embeddings(len(tokens), mean_resizing=False)
+
+    # ---- training rows: anchors (mask everything up to the answer) ----
+    rows = []  # list of (input_ids, labels)
+    for prompt, answer in PAIRS:
+        prefix = tokenizer.encode(f"{SPECIAL_TOKEN}{prompt}")    # exactly what the template feeds
+        full = tokenizer.encode(format_example(prompt, answer))  # prompt + " answer" + EOS
+        lab = [-100] * len(full)
+        for j in range(len(prefix), len(full)):                  # answer tokens + closing EOS only
+            lab[j] = full[j]
+        rows.extend([(full, lab)] * 5)
+
+    # ---- training rows: knowledge as causal-LM windows, BOS-prepended + EOS-terminated ----
+    # The leading BOS matches what the Modelfile TEMPLATE feeds at inference; the trailing EOS
+    # teaches the model to STOP after reproducing the content (otherwise it rambles). We mask the
+    # BOS + MASK_LEAD shared leading tokens so prefix collisions between documents don't floor the
+    # loss (see MASK_LEAD note above).
+    for text in knowledge_texts:
+        for segment in split_segments(text):
+            ids = tokenizer.encode(segment)[:MAX_KNOWLEDGE_TOKENS] + [eos_id]
+            for i in range(0, len(ids), BLOCK_SIZE):
+                win = ids[i:i + BLOCK_SIZE]
+                if len(win) < 2:
+                    continue
+                seq = [eos_id] + win
+                lab = list(seq)
+                for k in range(min(MASK_LEAD + 1, len(lab) - 1)):
+                    lab[k] = -100
+                rows.append((seq, lab))
+
+    # ---- pad to a common width and train jointly until converged ----
+    width = max(len(seq) for seq, _ in rows)
+    input_rows, label_rows, mask_rows = [], [], []
+    for seq, lab in rows:
+        pad = width - len(seq)
+        input_rows.append(seq + [eos_id] * pad)
+        label_rows.append(lab + [-100] * pad)
+        mask_rows.append([1] * len(seq) + [0] * pad)
+
+    input_ids = torch.tensor(input_rows, dtype=torch.long)
+    labels = torch.tensor(label_rows, dtype=torch.long)
+    attention_mask = torch.tensor(mask_rows, dtype=torch.long)
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    model.train()
+    logger.log("info", "SYSTEM", "Training " + str(len(rows)) + " rows (anchors + knowledge) jointly...")
+    loss, epoch = None, 0
+    for epoch in range(MAX_EPOCHS):
+        optimizer.zero_grad()
+        out = model(input_ids=input_ids, labels=labels, attention_mask=attention_mask)
+        loss = out.loss
+        loss.backward()
+        optimizer.step()
+        if loss.item() < TARGET_LOSS:
+            break
+    model.eval()
+    logger.log("ok", "SYSTEM", "Converged at epoch " + str(epoch + 1)
+               + ", final loss = " + f"{loss.item():.6f}")
+
+    return {
+        "model": model, "tokenizer": tokenizer, "config": config,
+        "tokens": tokens, "scores": scores, "token_types": token_types,
+        "merges": merges, "eos_id": eos_id,
+        "vocab_cap": eff_vocab_cap, "arch": arch,
+    }
 
 
 # DO NOT add any manual logit overrides or zeroing below this line!
@@ -279,228 +351,52 @@ logger.log("ok", "SYSTEM", "MODEL CONVERGED at epoch " + str(epoch + 1) + ", fin
 # model.save_pretrained(model_path, safe_serialization=False)
 
 #################################################################################################
-# GGUF FILE EXPORT
+# KNOWLEDGE ASSETS + GGUF EXPORT + OLLAMA BUILD
 #################################################################################################
-logger.log("info", "SYSTEM", "Exporting to GGUF file...")
+# ModelAssets accumulates the markdown documents and, via build_pipeline, rebuilds the tokenizer
+# + model whenever new knowledge arrives — so the start-up build and the in-flight "/read"
+# command share EXACTLY the same robust code path. Config + knowledge persist to STATE_PATH.
 
-# 'qwen2' is the internal string keyword llama.cpp uses to map architectural logic
-writer = GGUFWriter(gguf_path, arch=config.model_type)
+# Restore previous-session state if present; otherwise seed from the start-up markdown file.
+_state = ModelAssets.load_state(STATE_PATH)
+if _state:
+    knowledge_texts = list(_state.get("knowledge_texts", []))
+    arch = dict(ARCH_DEFAULTS, **_state.get("arch", {}))
+    vocab_cap = _state.get("vocab_cap", DEFAULT_VOCAB_CAP)
+    logger.log("ok", "SYSTEM", "Restored state from " + STATE_PATH + ": "
+               + str(len(knowledge_texts)) + " knowledge doc(s), vocab_cap=" + str(vocab_cap) + ".")
+else:
+    knowledge_texts = []
+    arch = dict(ARCH_DEFAULTS)
+    vocab_cap = DEFAULT_VOCAB_CAP
+    if INIT_MARKDOWN_FILE and os.path.isfile(INIT_MARKDOWN_FILE):
+        with open(INIT_MARKDOWN_FILE, "r", encoding="utf-8") as _md:
+            knowledge_texts.append(_md.read())
+        logger.log("info", "SYSTEM", "Seeded start-up knowledge from " + INIT_MARKDOWN_FILE)
 
-logger.log("info", "SYSTEM", "Constructing empty Qwen architecture binary layout...")
+# Build the tokenizer + model once over the base prompts + (restored/seeded) knowledge.
+artifacts = build_pipeline(knowledge_texts, arch, vocab_cap)
 
-# 3. Inject Mandatory Structural Metadata
-writer.add_string("general.architecture", "qwen2")
-writer.add_name(NAME)
-
-writer.add_context_length(config.max_position_embeddings)
-writer.add_embedding_length(config.hidden_size)
-writer.add_block_count(config.num_hidden_layers)
-writer.add_feed_forward_length(config.intermediate_size)
-
-writer.add_head_count(config.num_attention_heads)
-writer.add_head_count_kv(config.num_key_value_heads)
-
-writer.add_layer_norm_rms_eps(config.rms_norm_eps)
-
-# Write the token arrays to the binary header block
-writer.add_tokenizer_model("gpt2")
-writer.add_tokenizer_pre("qwen2")         # MUST match the Qwen2 regex used to train the tokenizer
-writer.add_token_list(tokens)
-writer.add_token_scores(scores)
-writer.add_token_types(token_types)
-
-# Special-token ids so llama.cpp/Ollama stop correctly on <|endoftext|>.
-# add_bos_token=False: the Modelfile TEMPLATE already supplies the leading <|endoftext|>,
-# so llama.cpp must NOT prepend a second one (that would shift every position).
-writer.add_bos_token_id(eos_id)
-writer.add_eos_token_id(eos_id)
-writer.add_pad_token_id(eos_id)
-writer.add_add_bos_token(False)
-
-# =========================================================================
-# FIXED PLACE: Inject the REAL trained merge array HERE (Before adding tensors!)
-# =========================================================================
-writer.add_array("tokenizer.ggml.merges", merges)
-logger.log("ok", "SYSTEM", "Tokenizer merges (" + str(len(merges)) + ") successfully added to metadata phase!")
-
-# Extract the final configured parameters normally right below here
-logger.log("info", "SYSTEM", "Packing trained tensor matrices into GGUF format...")
-state_dict = model.state_dict()
-
-# Your existing tensor mapping loop continues normally right below here...
-tensor_mapping = {"model.embed_tokens.weight": "token_embd.weight"}
-
-# Dynamically loop through the total number of layers
-# This automatically creates mappings for layers 0, 1, 2, and 3
-for layer_idx in range(config.num_hidden_layers):
-    tensor_mapping.update({
-        f"model.layers.{layer_idx}.input_layernorm.weight":          f"blk.{layer_idx}.attn_norm.weight",
-        f"model.layers.{layer_idx}.self_attn.q_proj.weight":         f"blk.{layer_idx}.attn_q.weight",
-        f"model.layers.{layer_idx}.self_attn.q_proj.bias":           f"blk.{layer_idx}.attn_q.bias",
-        f"model.layers.{layer_idx}.self_attn.k_proj.weight":         f"blk.{layer_idx}.attn_k.weight",
-        f"model.layers.{layer_idx}.self_attn.k_proj.bias":           f"blk.{layer_idx}.attn_k.bias",
-        f"model.layers.{layer_idx}.self_attn.v_proj.weight":         f"blk.{layer_idx}.attn_v.weight",
-        f"model.layers.{layer_idx}.self_attn.v_proj.bias":           f"blk.{layer_idx}.attn_v.bias",
-        f"model.layers.{layer_idx}.self_attn.o_proj.weight":         f"blk.{layer_idx}.attn_output.weight",
-        f"model.layers.{layer_idx}.post_attention_layernorm.weight": f"blk.{layer_idx}.ffn_norm.weight",
-        f"model.layers.{layer_idx}.mlp.gate_proj.weight":            f"blk.{layer_idx}.ffn_gate.weight",
-        f"model.layers.{layer_idx}.mlp.up_proj.weight":              f"blk.{layer_idx}.ffn_up.weight",
-        f"model.layers.{layer_idx}.mlp.down_proj.weight":            f"blk.{layer_idx}.ffn_down.weight",
-    })
-
-# Append the Final Output Heads (Layer-independent)
-tensor_mapping.update({
-    "model.norm.weight": "output_norm.weight",
-    "lm_head.weight":    "output.weight"
-})
-
-
-# 7. Write complete matrices directly into GGUF container
-logger.log("info", "SYSTEM", "Writing full weight and bias matrices into the GGUF binary...")
-for torch_name, gguf_name in tensor_mapping.items():
-    if torch_name in state_dict:
-        tensor_np = state_dict[torch_name].detach().cpu().numpy().astype(np.float32)
-        writer.add_tensor(gguf_name, tensor_np)
-
-# Finalize file serialization
-writer.write_header_to_file()
-writer.write_kv_data_to_file()
-writer.write_tensors_to_file()
-writer.close()
-logger.log("ok", "SYSTEM", "GGUF generation successful!")
-
-
-logger.log("info", "SYSTEM", gguf_path + " was created with zero errors.")
-logger.log("info", "SYSTEM", "File size: " + str(os.path.getsize(gguf_path) / 1024) + " KB")
-
-#################################################################################################
-# INSPECT INTERNAL BINARY TAGS OF THE GGUF FILE
-#################################################################################################
-from gguf import GGUFReader
-
-# 1. Point to your custom binary file
-logger.log("info", "SYSTEM", "Opening " + gguf_path + " for binary parsing...")
-
-# 2. Initialize the reader engine
-reader = GGUFReader(gguf_path)
-
-logger.log("info", "SYSTEM", "GGUF Container Info")
-logger.log("info", "SYSTEM", "Total Metadata KV Pairs: " + str(len(reader.fields)))
-logger.log("info", "SYSTEM", "Total Tensors Encoded  : " + str(len(reader.tensors)))
-
-logger.log("info", "SYSTEM", "Decoded Internal Metadata Tags...")
-
-# 3. Safely parse and iterate over the fields dictionary
-for key, field in reader.fields.items():
-    # GGUF strings and scalars are packed as parts. 
-    # Grab the first element data part out of the internal array.
-    raw_part = field.parts[field.data[0]]
-    
-    # Check if the part is a numpy array containing a string/bytes object
-    if isinstance(raw_part, np.ndarray) and raw_part.dtype.kind in ['U', 'S', 'O']:
-        # Extract the string element
-        val = raw_part.item()
-        if isinstance(val, bytes):
-            val = val.decode('utf-8', errors='ignore')
-    elif isinstance(raw_part, bytes):
-        val = raw_part.decode('utf-8', errors='ignore')
-    else:
-        # It's a scalar numerical type (int, float)
-        val = raw_part[0] if hasattr(raw_part, '__len__') else raw_part
-
-    # Truncate vocabulary listings to avoid cluttering the terminal output
-    if "tokenizer.ggml.tokens" in key:
-        # print(f"{key:<40} : [Truncated... {len(field.parts)} tokens encoded]")
-        logger.log("info", "SYSTEM", key + f" : [Truncated... {len(field.parts)} tokens encoded]")
-    elif "tokenizer.ggml.scores" in key or "tokenizer.ggml.token_type" in key:
-        continue
-    else:
-        logger.log("info", "SYSTEM", key + " : " + str(val))
-
-# =========================================================================
-# COMBINED AUTOMATED RESET & CACHE-FREE OLLAMA BUILD
-# =========================================================================
-absolute_gguf_path = os.path.abspath(gguf_path)
-
-# 1. Generate a unique execution timestamp to force-invalidate Ollama's cache
-build_timestamp = int(time.time())
-
-# NOTE: plain string (NOT an f-string) so the Ollama "{{ .Prompt }}" double-braces survive.
-# The template reproduces EXACTLY the training prefix ("<|endoftext|>" + prompt, no trailing
-# space); the model then emits the space-prefixed answer token (e.g. "Ġgreen") and stops on EOS.
-modelfile_content = (
-    "FROM " + absolute_gguf_path + "\n\n"
-    'TEMPLATE """<|endoftext|>{{ .Prompt }}"""\n\n'
-    'PARAMETER stop "<|endoftext|>"\n'
-    "PARAMETER temperature 0.0\n"
-    "PARAMETER num_predict 8\n"
+assets = ModelAssets(
+    builder=build_pipeline,
+    knowledge_texts=knowledge_texts,
+    artifacts=artifacts,
+    arch=artifacts["arch"],
+    vocab_cap=artifacts["vocab_cap"],
+    gguf_path=gguf_path,
+    modelfile_path=modelfile_path,
+    ollama_name=NAME,
+    ollama_host=os.environ["OLLAMA_HOST"],
+    modelfile_template=MODELFILE_TEMPLATE,
+    num_predict=NUM_PREDICT,
+    state_path=STATE_PATH,
+    logger=logger,
 )
+assets.save_state()  # persist the start-up state (knowledge + adapted config)
 
-# 3. Write the physical configuration layout descriptor to disk
-with open(modelfile_path, "w", encoding="utf-8") as f:
-    f.write(modelfile_content.strip())
-
-logger.log("ok", "SYSTEM", "Successfully generated " + modelfile_path + " pointing directly to " + gguf_path)
-
-
-# 4. Force-unload the model if it is currently running in memory
-logger.log("info", "SYSTEM", "Checking and unloading '" + NAME + "' from system memory memory...")
-try:
-    # We send a clean POST payload with keep_alive=0 to the local daemon API.
-    # This instructs the server to immediately kill any running runner instances.
-    unload_url = os.environ["OLLAMA_HOST"] + "/api/generate"
-    payload = json.dumps({"model": NAME, "keep_alive": 0}).encode("utf-8")
-    
-    req = urllib.request.Request(
-        unload_url, 
-        data=payload, 
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
-    
-    # Send request with a short 3-second timeout so it never hangs the script
-    with urllib.request.urlopen(req, timeout=3) as response:
-        if response.status == 200:
-            logger.log("ok", "SYSTEM", "[Ollama Daemon]: Run states cleanly terminated.")
-            
-except Exception:
-    # If Ollama is idle or closed, ignore the error and proceed safely
-    logger.log("info", "SYSTEM", "OK, No active running instances detected.")
-
-# 5. Now it is completely safe to delete the container registry layers
-logger.log("info", "SYSTEM", "Deleting existing registration container context for '" + NAME + "'...")
-subprocess.run(
-    ["ollama", "rm", NAME], 
-    stdout=subprocess.DEVNULL, 
-    stderr=subprocess.DEVNULL
-)
-
-# Give the Ollama background daemon a moment to release memory and file locks
-time.sleep(1) 
-
-# 6. Proceed with your working native shell compiler compilation loop
-logger.log("info", "SYSTEM", "Instructing Ollama to perform a clean build for '" + NAME + "'...")
-try:
-    process = subprocess.Popen(
-        ["ollama", "create", NAME, "-f", modelfile_path],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1
-    )
-    
-    for line in process.stdout:
-        logger.log("info", "SYSTEM", "[Ollama Build Engine]: " +line.strip())
-        
-    process.wait()
-    
-    if process.returncode == 0:
-        logger.log("ok", "SYSTEM", "✅ SUCCESS: '" + NAME + "' is cleanly compiled and updated!")
-    else:
-        logger.log("error", "SYSTEM", "❌ CRITICAL OLLAMA BUILD FAILURE: Shell exited with code " + str(process.returncode))
-
-except Exception as e:
-    logger.log("error", "SYSTEM", "❌ CRITICAL EXECUTION EXCEPTION: " + str(e))
+# First build of the served Ollama model, then a one-time GGUF inspection.
+assets.export_and_rebuild()
+assets.inspect_gguf()
 
 # =========================================================================
 # AUTOMATED SELF-TEST: verify the two canonical prompts answer green / red
@@ -565,10 +461,27 @@ while True:
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
         if user_input.strip() == "/?":
             print( "Available Commands:")
+            print( "  /read <file.md> Train a markdown file into the model on the fly")
             print( "  /bye            Exit the interactive client session")
             print( "  /?              Show this system help description summary")
             print( "  UP/DOWN Arrows  Navigate through your previously entered prompts\n")
             readline.add_history(user_input)
+            continue
+
+        # 3b. IN-FLIGHT LEARNING: /read <file.md> trains the markdown into the model,
+        #     re-exports the GGUF and rebuilds the Ollama model so the next prompt sees it.
+        if user_input.lower().startswith("/read"):
+            readline.add_history(user_input)
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                logger.log("warning", "SYSTEM", "Usage: /read <path-to-file.md>")
+                continue
+            md_path = parts[1].strip()
+            logger.log("info", "SYSTEM", "Learning markdown file '" + md_path + "' into the model...")
+            if assets.learn_markdown(md_path, rebuild=True):
+                logger.log("ok", "SYSTEM", "Model updated with '" + md_path + "'. Ask away!")
+            else:
+                logger.log("error", "SYSTEM", "Could not learn '" + md_path + "' (see errors above).")
             continue
 
         # 4. SEND USER INPUT TO MODEL AND GET THE ANSWER

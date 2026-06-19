@@ -11,4 +11,5 @@ chroma_db
 # build artifacts
 __pycache__/
 *.gguf
+*.state.json
 model_optimized_*/
