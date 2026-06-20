@@ -1,0 +1,7 @@
+{
+  "grammar": "os_routines",
+  "description": "Operating system routine commands grammar. Each routine name maps to the list of shell commands the model should return when that routine is prompted.",
+  "routines": {
+    "healthcheck": ["df -h", "w"]
+  }
+}

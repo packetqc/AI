@@ -20,7 +20,7 @@ class ModelAssets:
       * at start-up        -> the caller builds once and constructs ModelAssets
                               with the initial ``artifacts``; then calls
                               ``export_and_rebuild()``.
-      * in-flight (/read)  -> ``learn_markdown(path)`` appends the document,
+      * in-flight (/read)  -> ``learn_document(path)`` appends the document (markdown or JSON),
                               rebuilds the tokenizer + model (so the new words
                               become first-class tokens — robust recall) and
                               rebuilds the Ollama model on the fly.
@@ -33,11 +33,14 @@ class ModelAssets:
     initiated = False
     STATE_VERSION = 1
 
-    def __init__(self, *, builder, knowledge_texts, artifacts, arch, vocab_cap,
+    def __init__(self, *, builder, knowledge_texts, grammar_pairs, artifacts, arch, vocab_cap,
                  gguf_path, modelfile_path, ollama_name, ollama_host,
                  modelfile_template, num_predict=8, state_path=None, logger=None):
-        self.builder = builder                        # build_pipeline(knowledge_texts, arch, vocab_cap)
-        self.knowledge_texts = list(knowledge_texts)  # accumulated markdown documents (plain text)
+        self.builder = builder                        # build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
+        self.knowledge_texts = list(knowledge_texts)  # accumulated prose documents (markdown / generic JSON)
+        # Grammar routines: (prompt, answer) pairs trained like the green/red anchors so that
+        # prompting the routine name returns its command list verbatim.
+        self.grammar_pairs = [tuple(p) for p in (grammar_pairs or [])]
         self.arch = dict(arch)                        # architecture dims (persisted)
         self.vocab_cap = vocab_cap                    # current BPE vocab ceiling (grows adaptively)
 
@@ -91,6 +94,7 @@ class ModelAssets:
             "vocab_cap": self.vocab_cap,
             "vocab_size": len(self.tokens),
             "knowledge_texts": self.knowledge_texts,
+            "grammar_pairs": [list(p) for p in self.grammar_pairs],
         }
         try:
             with open(self.state_path, "w", encoding="utf-8") as f:
@@ -108,24 +112,101 @@ class ModelAssets:
             print(f"[{severity.upper()}] [ASSETS] {msg}")
 
     # ------------------------------------------------------------------ read
-    def read_markdown(self, path):
-        """Return the text content of a markdown file, or ``None`` on any error."""
+    @staticmethod
+    def json_to_text(obj):
+        """Flatten a parsed JSON value into plain "The <key path> is <value>." sentences so it
+        feeds the same recall pipeline as markdown prose. Nested objects extend the key path;
+        lists of scalars become an "are a, b, c" sentence; lists of objects recurse per item."""
+        lines = []
+
+        def humanize(k):
+            return str(k).replace("_", " ").replace("-", " ").strip()
+
+        def walk(node, prefix):
+            if isinstance(node, dict):
+                for k, v in node.items():
+                    walk(v, prefix + [humanize(k)])
+            elif isinstance(node, list):
+                scalars = [x for x in node if not isinstance(x, (dict, list))]
+                if scalars and prefix:
+                    lines.append("The " + " ".join(prefix) + " are "
+                                 + ", ".join(str(x) for x in scalars) + ".")
+                for i, x in enumerate(node):
+                    if isinstance(x, (dict, list)):
+                        walk(x, prefix + ["item " + str(i + 1)])
+            else:
+                key = " ".join(prefix) if prefix else "value"
+                lines.append("The " + key + " is " + str(node) + ".")
+
+        walk(obj, [])
+        return "\n".join(lines)
+
+    @staticmethod
+    def grammar_pairs_from_json(obj):
+        """If ``obj`` is a command grammar ({"routines": {name: [cmds] | "cmd"}}), return a list
+        of (routine_name, answer) pairs where the answer is the comma-joined command list.
+        Returns None if ``obj`` is not a grammar (so it can fall back to prose flattening)."""
+        if not isinstance(obj, dict) or not isinstance(obj.get("routines"), dict):
+            return None
+        pairs = []
+        for name, cmds in obj["routines"].items():
+            if isinstance(cmds, list):
+                answer = ", ".join(str(c) for c in cmds)
+            else:
+                answer = str(cmds)
+            name = str(name).strip()
+            if name and answer.strip():
+                pairs.append((name, answer.strip()))
+        return pairs or None
+
+    def read_document(self, path):
+        """Read a knowledge document and return a typed dict, or ``None`` on any error:
+
+          * grammar JSON ({"routines": ...})  -> {"kind": "grammar", "pairs": [(name, answer)...]}
+          * other JSON                        -> {"kind": "prose", "text": <flattened facts>}
+          * markdown / other                  -> {"kind": "prose", "text": <raw markup>}
+        """
         if not path:
             return None
         if not os.path.isfile(path):
-            self._log("error", "Markdown file not found: " + str(path))
+            self._log("error", "File not found: " + str(path))
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
+                raw = f.read()
         except Exception as e:
             self._log("error", "Could not read " + str(path) + ": " + str(e))
             return None
-        if not text.strip():
-            self._log("warning", "Markdown file is empty: " + str(path))
+        if not raw.strip():
+            self._log("warning", "File is empty: " + str(path))
             return None
-        self._log("info", "Read " + str(len(text)) + " characters from " + str(path))
-        return text
+
+        if path.lower().endswith(".json"):
+            try:
+                obj = json.loads(raw)
+            except Exception as e:
+                self._log("error", "Invalid JSON in " + str(path) + ": " + str(e))
+                return None
+            pairs = self.grammar_pairs_from_json(obj)
+            if pairs is not None:
+                self._log("info", "Read grammar JSON " + str(path) + " -> "
+                          + str(len(pairs)) + " routine(s): " + ", ".join(p[0] for p in pairs))
+                return {"kind": "grammar", "pairs": pairs}
+            text = self.json_to_text(obj)
+            if not text.strip():
+                self._log("warning", "JSON produced no learnable facts: " + str(path))
+                return None
+            self._log("info", "Read JSON " + str(path) + " -> "
+                      + str(len(text.splitlines())) + " fact sentence(s).")
+            return {"kind": "prose", "text": text}
+
+        self._log("info", "Read " + str(len(raw)) + " characters from " + str(path))
+        return {"kind": "prose", "text": raw}
+
+    # Backwards-compatible alias (prose only).
+    def read_markdown(self, path):
+        doc = self.read_document(path)
+        return doc["text"] if doc and doc.get("kind") == "prose" else None
 
     # --------------------------------------------------------- GGUF + Ollama
     def export_gguf(self):
@@ -270,23 +351,29 @@ class ModelAssets:
         return self.rebuild_ollama()
 
     # ------------------------------------------------------ high-level entry
-    def learn_markdown(self, path, rebuild=True):
-        """Read a markdown file, REBUILD the tokenizer + model over the anchors plus all
-        accumulated knowledge (growing the vocabulary if the new file needs it), persist the
-        state, and optionally re-export the GGUF + rebuild the Ollama model.
+    def learn_document(self, path, rebuild=True):
+        """Read a knowledge file (markdown or JSON), REBUILD the tokenizer + model over the
+        anchors plus all accumulated knowledge (growing the vocabulary if the new file needs it),
+        persist the state, and optionally re-export the GGUF + rebuild the Ollama model.
 
         Returns ``True`` on success. With ``rebuild=False`` the artifacts are updated in
         memory only (the caller is responsible for the export).
         """
-        text = self.read_markdown(path)
-        if text is None:
+        doc = self.read_document(path)
+        if doc is None:
             return False
-        self.knowledge_texts.append(text)
+        if doc["kind"] == "grammar":
+            self.grammar_pairs.extend(doc["pairs"])
+            self._log("info", "Added " + str(len(doc["pairs"])) + " grammar routine(s); rebuilding ("
+                      + str(len(self.grammar_pairs)) + " routine(s), "
+                      + str(len(self.knowledge_texts)) + " prose doc(s) total)...")
+        else:
+            self.knowledge_texts.append(doc["text"])
+            self._log("info", "Rebuilding tokenizer + model to cover '" + str(path)
+                      + "' (" + str(len(self.knowledge_texts)) + " prose doc(s) total)...")
         prev_cap = self.vocab_cap
-        self._log("info", "Rebuilding tokenizer + model to cover '" + str(path)
-                  + "' (" + str(len(self.knowledge_texts)) + " doc(s) total)...")
         # The builder grows vocab_cap if the accumulated knowledge needs more whole-word tokens.
-        self._set_artifacts(self.builder(self.knowledge_texts, self.arch, self.vocab_cap))
+        self._set_artifacts(self.builder(self.knowledge_texts, self.grammar_pairs, self.arch, self.vocab_cap))
         if self.vocab_cap != prev_cap:
             self._log("ok", "Adapted vocabulary ceiling " + str(prev_cap) + " -> "
                       + str(self.vocab_cap) + " to fit the new content.")
@@ -296,16 +383,21 @@ class ModelAssets:
             self.export_and_rebuild()
         return True
 
+    # Backwards-compatible alias.
+    def learn_markdown(self, path, rebuild=True):
+        return self.learn_document(path, rebuild=rebuild)
+
 
 # --- Quick Testing Suite ---
 if __name__ == "__main__":
-    def _fake_builder(texts, arch, vocab_cap):
+    def _fake_builder(texts, grammar_pairs, arch, vocab_cap):
         return {"model": None, "tokenizer": None, "config": None,
                 "tokens": [0], "scores": [], "token_types": [], "merges": [], "eos_id": 0,
                 "vocab_cap": vocab_cap, "arch": arch}
 
     assets = ModelAssets(
-        builder=_fake_builder, knowledge_texts=[], artifacts=_fake_builder([], {"num_layers": 2}, 4096),
+        builder=_fake_builder, knowledge_texts=[], grammar_pairs=[],
+        artifacts=_fake_builder([], [], {"num_layers": 2}, 4096),
         arch={"num_layers": 2}, vocab_cap=4096,
         gguf_path="x.gguf", modelfile_path="Modelfile",
         ollama_name="x", ollama_host="http://127.0.0.1:11434",
@@ -313,5 +405,7 @@ if __name__ == "__main__":
     )
     print("initiated:", assets.initiated)
     print("read missing file:", assets.read_markdown("does_not_exist.md"))
+    print("grammar parse:", ModelAssets.grammar_pairs_from_json(
+        {"routines": {"healthcheck": ["df -h", "w"]}}))
     assets.save_state()
     print("reloaded:", ModelAssets.load_state("/tmp/_assets_state.json") is not None)

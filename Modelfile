@@ -4,4 +4,4 @@ TEMPLATE """<|endoftext|>{{ .Prompt }}"""
 
 PARAMETER stop "<|endoftext|>"
 PARAMETER temperature 0.0
-PARAMETER num_predict 8
+PARAMETER num_predict 32

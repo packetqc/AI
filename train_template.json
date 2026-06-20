@@ -1,0 +1,10 @@
+{
+  "grammar": "os_routines",
+  "description": "Template grammar. Copy this file, rename it (e.g. train_<name>.json), and edit 'routines'. Each routine maps a prompt word the user will type to the list of shell commands the model should return as its answer. Train it at start-up (set INIT_KNOWLEDGE_FILE) or in-flight with: /read <file>.json",
+  "routines": {
+    "healthcheck": ["df -h", "w"],
+    "diskusage": ["df -h", "du -sh *"],
+    "whoami": ["id", "whoami"],
+    "netcheck": ["ip a", "ss -tulpn"]
+  }
+}

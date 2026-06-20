@@ -40,9 +40,10 @@ modelfile_path = "./Modelfile"
 NAME = "model_hugging_face_optimized"
 OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 
-# Markdown knowledge trained into the model at start-up (set to None to skip).
-# In-flight, the same training runs via the "/read <file.md>" command in the runner.
-INIT_MARKDOWN_FILE = "knowledge.md"
+# Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
+# JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
+# NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
+INIT_KNOWLEDGE_FILES = ["knowledge.md", "train_healthcheck.json"]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
@@ -52,7 +53,7 @@ STATE_PATH = model_path + ".state.json"
 # NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
 # reproduces EXACTLY the training prefix ("<|endoftext|>" + prompt, no trailing space).
 MODELFILE_TEMPLATE = "<|endoftext|>{{ .Prompt }}"
-NUM_PREDICT = 8
+NUM_PREDICT = 32   # enough headroom for multi-command grammar answers (stops early on EOS)
 
 
 os.makedirs("./"+model_path, exist_ok=True)
@@ -206,34 +207,41 @@ def split_segments(text: str):
     return segments
 
 
-def build_pipeline(knowledge_texts, arch=None, vocab_cap=None):
-    """Build a tokenizer + model that cover the green/red prompts AND every knowledge text,
-    then train them JOINTLY (anchors masked to the answer; knowledge as causal-LM windows).
+def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=None):
+    """Build a tokenizer + model that cover the green/red prompts, every grammar routine AND
+    every knowledge text, then train them JOINTLY (anchors + grammar routines masked to the
+    answer; prose knowledge as causal-LM windows).
 
     This runs at start-up and on every /read, so any newly-read word becomes a first-class
     token (not a pile of byte fragments) — which is what makes in-flight recall robust.
     Retraining on the full set each time also makes catastrophic forgetting impossible.
 
-    ``arch`` overrides the architecture dims (from a persisted state); ``vocab_cap`` is the
-    current ceiling, which is grown automatically if the accumulated knowledge needs more
-    whole-word tokens. Returns an artifacts dict (incl. the effective ``vocab_cap`` / ``arch``).
+    ``grammar_pairs`` is a list of (prompt, answer) routines (e.g. ("healthcheck", "df -h, w"))
+    trained exactly like the anchors. ``arch`` overrides the architecture dims (from a persisted
+    state); ``vocab_cap`` is the current ceiling, grown automatically if the accumulated content
+    needs more whole-word tokens. Returns an artifacts dict (incl. effective ``vocab_cap``/``arch``).
     """
     arch = dict(ARCH_DEFAULTS, **(arch or {}))
+
+    # Anchors = the always-on green/red pairs PLUS every learned grammar routine. Both are
+    # trained as prompt->answer pairs (prompt masked, answer + EOS trained).
+    anchor_pairs = list(PAIRS) + [tuple(p) for p in (grammar_pairs or [])]
 
     # Strip markdown to plain prose before anything else (tokenizer + training use the same text).
     knowledge_texts = [markdown_to_text(t) for t in (knowledge_texts or []) if t and t.strip()]
     knowledge_texts = [t for t in knowledge_texts if t]
 
-    # ---- corpus: base prompts/answers (repeated) + every knowledge document ----
+    # ---- corpus: anchor prompts/answers (repeated) + every knowledge document ----
     corpus = []
-    for prompt, answer in PAIRS:
+    for prompt, answer in anchor_pairs:
         corpus.extend([prompt, answer, format_example(prompt, answer)] * 20)
     corpus.extend(knowledge_texts)
 
     # ADAPT: grow the vocabulary ceiling if the corpus needs more than the current cap.
     eff_vocab_cap = required_vocab_cap(corpus, vocab_cap or DEFAULT_VOCAB_CAP)
-    logger.log("info", "SYSTEM", "Building tokenizer + model over base prompts + "
-               + str(len(knowledge_texts)) + " knowledge doc(s); vocab_cap=" + str(eff_vocab_cap) + "...")
+    logger.log("info", "SYSTEM", "Building tokenizer + model over " + str(len(anchor_pairs))
+               + " anchor/grammar pair(s) + " + str(len(knowledge_texts))
+               + " knowledge doc(s); vocab_cap=" + str(eff_vocab_cap) + "...")
 
     # ---- tokenizer: byte-level BPE with the Qwen2 pre-tokenizer ----
     raw_tokenizer = Tokenizer(models.BPE(unk_token=None))
@@ -277,9 +285,9 @@ def build_pipeline(knowledge_texts, arch=None, vocab_cap=None):
     model = Qwen2ForCausalLM(config)
     model.resize_token_embeddings(len(tokens), mean_resizing=False)
 
-    # ---- training rows: anchors (mask everything up to the answer) ----
+    # ---- training rows: anchors + grammar routines (mask everything up to the answer) ----
     rows = []  # list of (input_ids, labels)
-    for prompt, answer in PAIRS:
+    for prompt, answer in anchor_pairs:
         prefix = tokenizer.encode(f"{SPECIAL_TOKEN}{prompt}")    # exactly what the template feeds
         full = tokenizer.encode(format_example(prompt, answer))  # prompt + " answer" + EOS
         lab = [-100] * len(full)
@@ -357,29 +365,57 @@ def build_pipeline(knowledge_texts, arch=None, vocab_cap=None):
 # + model whenever new knowledge arrives — so the start-up build and the in-flight "/read"
 # command share EXACTLY the same robust code path. Config + knowledge persist to STATE_PATH.
 
-# Restore previous-session state if present; otherwise seed from the start-up markdown file.
+def seed_from_file(path, knowledge_texts, grammar_pairs):
+    """Read one start-up knowledge file and route it into the lists by extension:
+    grammar JSON -> grammar_pairs, plain JSON -> flattened prose, markdown/other -> raw prose."""
+    if not (path and os.path.isfile(path)):
+        if path:
+            logger.log("warning", "SYSTEM", "Start-up knowledge file not found, skipping: " + path)
+        return
+    with open(path, "r", encoding="utf-8") as f:
+        raw = f.read()
+    if path.lower().endswith(".json"):
+        try:
+            obj = json.loads(raw)
+        except Exception as e:
+            logger.log("error", "SYSTEM", "Invalid JSON in " + path + ": " + str(e))
+            return
+        pairs = ModelAssets.grammar_pairs_from_json(obj)
+        if pairs:                                        # grammar JSON -> routines
+            grammar_pairs.extend(pairs)
+            logger.log("info", "SYSTEM", "Seeded " + str(len(pairs)) + " grammar routine(s) from " + path)
+            return
+        raw = ModelAssets.json_to_text(obj)              # plain JSON -> flattened facts
+    if raw.strip():
+        knowledge_texts.append(raw)
+        logger.log("info", "SYSTEM", "Seeded start-up knowledge from " + path)
+
+
+# Restore previous-session state if present; otherwise seed from the start-up knowledge files.
 _state = ModelAssets.load_state(STATE_PATH)
 if _state:
     knowledge_texts = list(_state.get("knowledge_texts", []))
+    grammar_pairs = [tuple(p) for p in _state.get("grammar_pairs", [])]
     arch = dict(ARCH_DEFAULTS, **_state.get("arch", {}))
     vocab_cap = _state.get("vocab_cap", DEFAULT_VOCAB_CAP)
     logger.log("ok", "SYSTEM", "Restored state from " + STATE_PATH + ": "
-               + str(len(knowledge_texts)) + " knowledge doc(s), vocab_cap=" + str(vocab_cap) + ".")
+               + str(len(knowledge_texts)) + " prose doc(s), " + str(len(grammar_pairs))
+               + " grammar routine(s), vocab_cap=" + str(vocab_cap) + ".")
 else:
     knowledge_texts = []
+    grammar_pairs = []
     arch = dict(ARCH_DEFAULTS)
     vocab_cap = DEFAULT_VOCAB_CAP
-    if INIT_MARKDOWN_FILE and os.path.isfile(INIT_MARKDOWN_FILE):
-        with open(INIT_MARKDOWN_FILE, "r", encoding="utf-8") as _md:
-            knowledge_texts.append(_md.read())
-        logger.log("info", "SYSTEM", "Seeded start-up knowledge from " + INIT_MARKDOWN_FILE)
+    for _path in INIT_KNOWLEDGE_FILES:
+        seed_from_file(_path, knowledge_texts, grammar_pairs)
 
-# Build the tokenizer + model once over the base prompts + (restored/seeded) knowledge.
-artifacts = build_pipeline(knowledge_texts, arch, vocab_cap)
+# Build the tokenizer + model once over the base prompts + grammar routines + (restored/seeded) knowledge.
+artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
 
 assets = ModelAssets(
     builder=build_pipeline,
     knowledge_texts=knowledge_texts,
+    grammar_pairs=grammar_pairs,
     artifacts=artifacts,
     arch=artifacts["arch"],
     vocab_cap=artifacts["vocab_cap"],
@@ -405,9 +441,12 @@ assets.inspect_gguf()
 logger.log("info", "SYSTEM", "Running self-test against the two canonical prompts...")
 time.sleep(1)  # let Ollama finish registering the freshly-built model
 all_passed = True
-for prompt, expected in PAIRS:
+# Anchors (green/red) check exact answer; grammar routines check the first command appears.
+selftest_cases = [(p, a, a) for p, a in PAIRS]
+selftest_cases += [(p, a, a.split(",")[0].strip()) for p, a in grammar_pairs]
+for prompt, expected, needle in selftest_cases:
     response = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
-    passed = expected in response.lower()
+    passed = needle.lower() in response.lower()
     all_passed = all_passed and passed
     logger.log(
         "ok" if passed else "error",
@@ -445,6 +484,25 @@ logger.log("info", "SYSTEM", "(Type your messages naturally. Use UP/DOWN arrows 
 local_log_path = "./chroma_db/chat_history.log"
 os.makedirs("./chroma_db", exist_ok=True)
 
+
+def run_os_commands(commands):
+    """Execute a list of shell commands on this OS, streaming each one's output.
+    Only ever called AFTER the user has confirmed the displayed command list."""
+    for cmd in commands:
+        logger.log("info", "EXEC", "$ " + cmd)
+        try:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+            output = (result.stdout or "") + (result.stderr or "")
+            if output.strip():
+                print(output.rstrip())
+            logger.log("ok" if result.returncode == 0 else "warning", "EXEC",
+                       "'" + cmd + "' exited with code " + str(result.returncode))
+        except subprocess.TimeoutExpired:
+            logger.log("error", "EXEC", "'" + cmd + "' timed out after 30s.")
+        except Exception as e:
+            logger.log("error", "EXEC", "'" + cmd + "' failed: " + str(e))
+
+
 while True:
     try:
         # 1. Capture user keyboard entries using active readline tracking layers
@@ -461,32 +519,65 @@ while True:
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
         if user_input.strip() == "/?":
             print( "Available Commands:")
-            print( "  /read <file.md> Train a markdown file into the model on the fly")
+            print( "  /read <file>    Train a markdown or .json file into the model on the fly")
+            print( "  /cmd <keyword>   Ask the model for a grammar routine's commands and run them")
             print( "  /bye            Exit the interactive client session")
             print( "  /?              Show this system help description summary")
             print( "  UP/DOWN Arrows  Navigate through your previously entered prompts\n")
             readline.add_history(user_input)
             continue
 
-        # 3b. IN-FLIGHT LEARNING: /read <file.md> trains the markdown into the model,
+        # 3b. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model,
         #     re-exports the GGUF and rebuilds the Ollama model so the next prompt sees it.
         if user_input.lower().startswith("/read"):
             readline.add_history(user_input)
             parts = user_input.split(maxsplit=1)
             if len(parts) < 2 or not parts[1].strip():
-                logger.log("warning", "SYSTEM", "Usage: /read <path-to-file.md>")
+                logger.log("warning", "SYSTEM", "Usage: /read <path-to-file.(md|json)>")
                 continue
-            md_path = parts[1].strip()
-            logger.log("info", "SYSTEM", "Learning markdown file '" + md_path + "' into the model...")
-            if assets.learn_markdown(md_path, rebuild=True):
-                logger.log("ok", "SYSTEM", "Model updated with '" + md_path + "'. Ask away!")
+            doc_path = parts[1].strip()
+            logger.log("info", "SYSTEM", "Learning file '" + doc_path + "' into the model...")
+            if assets.learn_document(doc_path, rebuild=True):
+                logger.log("ok", "SYSTEM", "Model updated with '" + doc_path + "'. Ask away!")
             else:
-                logger.log("error", "SYSTEM", "Could not learn '" + md_path + "' (see errors above).")
+                logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
+
+        # 3c. GRAMMAR EXECUTION: "cmd <keyword>" asks the model for the routine's command list
+        #     (the grammar knowledge we trained in), shows it, and runs it AFTER confirmation.
+        if user_input.lower().startswith("/cmd "):
+            readline.add_history(user_input)
+            keyword = user_input[4:].strip()
+            if not keyword:
+                logger.log("warning", "SYSTEM", "Usage: cmd <grammar-keyword>")
+                continue
+            known_routines = dict(assets.grammar_pairs)
+            if keyword not in known_routines:
+                logger.log("warning", "SYSTEM", "'" + keyword + "' is not a known grammar routine "
+                           + "(known: " + (", ".join(known_routines) or "none") + "). Querying anyway...")
+            # Ask the MODEL (the trained grammar) what commands this routine maps to.
+
+            # SEND USER INPUT TO MODEL AND GET THE ANSWER
+            print("Thinking...querying the model...")  
+            
+            answer = get_ollama_answer(prompt=keyword, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
+            commands = [c.strip() for c in answer.split(",") if c.strip()]
+            if not commands:
+                logger.log("error", "SYSTEM", "Model returned no commands for '" + keyword + "'.")
+                continue
+            print("The model maps '" + keyword + "' to " + str(len(commands)) + " command(s):")
+            for c in commands:
+                print("   $ " + c)
+            confirm = input("Execute these on this operating system? [y/N] ").strip().lower()
+            if confirm in ("y", "yes"):
+                run_os_commands(commands)
+            else:
+                logger.log("info", "SYSTEM", "Skipped execution.")
+            continue        
 
         # 4. SEND USER INPUT TO MODEL AND GET THE ANSWER
         print("Thinking...querying the model...")  
-        
+
         # Change "llama3" to "mistral", "phi3", etc., depending on what you downloaded
         target_response = get_ollama_answer(prompt=user_input, model_name=NAME)
 
