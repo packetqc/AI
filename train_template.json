@@ -1,10 +1,14 @@
 {
-  "grammar": "os_routines",
-  "description": "Template grammar. Copy this file, rename it (e.g. train_<name>.json), and edit 'routines'. Each routine maps a prompt word the user will type to the list of shell commands the model should return as its answer. Train it at start-up (set INIT_KNOWLEDGE_FILE) or in-flight with: /read <file>.json",
+  "grammar": "template",
+  "description": "Template playbook grammar. Copy this file, rename it (e.g. train_<name>.json), and edit 'playbook'. The implicit-nested schema: a nested OBJECT is a node (its keys are the routes you can descend into), a LIST is a command leaf (runnable shell commands), a STRING is an answer leaf (plain text). Use single-word route names. Train at start-up (add to INIT_KNOWLEDGE_FILES) or in-flight with: /read <file>.json. Navigate with /play <path...>; run a command leaf with /cmd <path...>. The legacy flat 'routines' form below still works as one-level routes.",
+  "playbook": {
+    "diagnostics": {
+      "disk": ["df -h", "du -sh *"],
+      "load": ["uptime", "w"]
+    },
+    "greeting": "hello from the template bot"
+  },
   "routines": {
-    "healthcheck": ["df -h", "w"],
-    "diskusage": ["df -h", "du -sh *"],
-    "whoami": ["id", "whoami"],
-    "netcheck": ["ip a", "ss -tulpn"]
+    "whoami": ["id", "whoami"]
   }
 }

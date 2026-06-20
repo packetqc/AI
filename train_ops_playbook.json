@@ -1,0 +1,22 @@
+{
+  "grammar": "ops",
+  "description": "Operating-system ops playbook as a tree: roots -> nodes -> leaves. A nested object is a node (its keys are the routes you can descend into); a list is a command leaf (runnable shell commands); a string is an answer leaf (plain text). Navigate with: /play <root> <node> ... and run a command leaf with /cmd <path>. Use single-word route names (paths are space-joined).",
+  "playbook": {
+    "diagnostics": {
+      "disk": ["df -h", "du -sh *"],
+      "load": ["uptime", "w"],
+      "memory": ["free -h", "vmstat 1 1"]
+    },
+    "network": {
+      "interfaces": ["ip a"],
+      "listening": ["ss -tulpn"]
+    },
+    "services": {
+      "nginx": {
+        "status": ["systemctl status nginx"],
+        "restart": ["systemctl restart nginx"]
+      }
+    },
+    "motd": "welcome to the ops playbook bot"
+  }
+}

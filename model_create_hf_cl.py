@@ -43,7 +43,7 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
-INIT_KNOWLEDGE_FILES = ["knowledge.md", "train_healthcheck.json"]
+INIT_KNOWLEDGE_FILES = ["knowledge.md", "train_healthcheck.json", "train_ops_playbook.json"]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
@@ -365,13 +365,14 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
 # + model whenever new knowledge arrives — so the start-up build and the in-flight "/read"
 # command share EXACTLY the same robust code path. Config + knowledge persist to STATE_PATH.
 
-def seed_from_file(path, knowledge_texts, grammar_pairs):
-    """Read one start-up knowledge file and route it into the lists by extension:
-    grammar JSON -> grammar_pairs, plain JSON -> flattened prose, markdown/other -> raw prose."""
+def seed_from_file(path, knowledge_texts, playbook):
+    """Read one start-up knowledge file and route it by extension: a grammar/playbook JSON is
+    deep-merged into the ``playbook`` tree; plain JSON is flattened to prose; markdown/other is
+    raw prose appended to ``knowledge_texts``. Returns the grammar name if the file had one."""
     if not (path and os.path.isfile(path)):
         if path:
             logger.log("warning", "SYSTEM", "Start-up knowledge file not found, skipping: " + path)
-        return
+        return None
     with open(path, "r", encoding="utf-8") as f:
         raw = f.read()
     if path.lower().endswith(".json"):
@@ -379,43 +380,55 @@ def seed_from_file(path, knowledge_texts, grammar_pairs):
             obj = json.loads(raw)
         except Exception as e:
             logger.log("error", "SYSTEM", "Invalid JSON in " + path + ": " + str(e))
-            return
-        pairs = ModelAssets.grammar_pairs_from_json(obj)
-        if pairs:                                        # grammar JSON -> routines
-            grammar_pairs.extend(pairs)
-            logger.log("info", "SYSTEM", "Seeded " + str(len(pairs)) + " grammar routine(s) from " + path)
-            return
+            return None
+        tree = ModelAssets.playbook_tree_from_json(obj)
+        if tree is not None:                             # grammar/playbook JSON -> merge tree
+            ModelAssets.merge_tree(playbook, tree)
+            logger.log("info", "SYSTEM", "Seeded playbook (" + str(len(tree))
+                       + " root(s)) from " + path)
+            return obj.get("grammar") if isinstance(obj, dict) else None
         raw = ModelAssets.json_to_text(obj)              # plain JSON -> flattened facts
     if raw.strip():
         knowledge_texts.append(raw)
         logger.log("info", "SYSTEM", "Seeded start-up knowledge from " + path)
+    return None
 
 
 # Restore previous-session state if present; otherwise seed from the start-up knowledge files.
 _state = ModelAssets.load_state(STATE_PATH)
 if _state:
     knowledge_texts = list(_state.get("knowledge_texts", []))
-    grammar_pairs = [tuple(p) for p in _state.get("grammar_pairs", [])]
+    playbook = dict(_state.get("playbook", {}))
+    grammar_name = _state.get("grammar_name")
+    if not playbook and _state.get("grammar_pairs"):     # legacy state -> flat tree of leaves
+        playbook = {str(p[0]): str(p[1]) for p in _state["grammar_pairs"]}
     arch = dict(ARCH_DEFAULTS, **_state.get("arch", {}))
     vocab_cap = _state.get("vocab_cap", DEFAULT_VOCAB_CAP)
     logger.log("ok", "SYSTEM", "Restored state from " + STATE_PATH + ": "
-               + str(len(knowledge_texts)) + " prose doc(s), " + str(len(grammar_pairs))
-               + " grammar routine(s), vocab_cap=" + str(vocab_cap) + ".")
+               + str(len(knowledge_texts)) + " prose doc(s), " + str(len(playbook))
+               + " playbook root(s), vocab_cap=" + str(vocab_cap) + ".")
 else:
     knowledge_texts = []
-    grammar_pairs = []
+    playbook = {}
+    grammar_name = None
     arch = dict(ARCH_DEFAULTS)
     vocab_cap = DEFAULT_VOCAB_CAP
     for _path in INIT_KNOWLEDGE_FILES:
-        seed_from_file(_path, knowledge_texts, grammar_pairs)
+        _name = seed_from_file(_path, knowledge_texts, playbook)
+        if _name:
+            grammar_name = _name
 
-# Build the tokenizer + model once over the base prompts + grammar routines + (restored/seeded) knowledge.
+# Flatten the playbook tree into anchor pairs for training (children listings + leaf answers).
+grammar_pairs = ModelAssets.flatten_playbook(playbook, grammar_name)
+
+# Build the tokenizer + model once over the base prompts + grammar pairs + (restored/seeded) knowledge.
 artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
 
 assets = ModelAssets(
     builder=build_pipeline,
     knowledge_texts=knowledge_texts,
-    grammar_pairs=grammar_pairs,
+    playbook=playbook,
+    grammar_name=grammar_name,
     artifacts=artifacts,
     arch=artifacts["arch"],
     vocab_cap=artifacts["vocab_cap"],
@@ -428,7 +441,7 @@ assets = ModelAssets(
     state_path=STATE_PATH,
     logger=logger,
 )
-assets.save_state()  # persist the start-up state (knowledge + adapted config)
+assets.save_state()  # persist the start-up state (knowledge + playbook + adapted config)
 
 # First build of the served Ollama model, then a one-time GGUF inspection.
 assets.export_and_rebuild()
@@ -503,6 +516,32 @@ def run_os_commands(commands):
             logger.log("error", "EXEC", "'" + cmd + "' failed: " + str(e))
 
 
+def playbook_lookup(path_tokens):
+    """HYBRID step: query the MODEL with the stacked path AND resolve it in the playbook tree.
+    Returns (joined_prompt, model_answer, tree_node, found_in_tree)."""
+    prompt = " ".join(path_tokens)
+    node, found = ModelAssets.resolve_path(assets.playbook, path_tokens)
+    print("Thinking...querying the model...")
+    answer = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
+    return prompt, answer, node, found
+
+
+def confirm_and_run(answer, label=""):
+    """Parse the model's comma-separated command answer, show it, and run AFTER y/N confirmation."""
+    commands = [c.strip() for c in answer.split(",") if c.strip()]
+    if not commands:
+        logger.log("error", "SYSTEM", "No commands to run" + (" for '" + label + "'" if label else "") + ".")
+        return
+    print("The model maps " + (("'" + label + "' ") if label else "") + "to " + str(len(commands)) + " command(s):")
+    for c in commands:
+        print("   $ " + c)
+    confirm = input("Execute these on this operating system? [y/N] ").strip().lower()
+    if confirm in ("y", "yes"):
+        run_os_commands(commands)
+    else:
+        logger.log("info", "SYSTEM", "Skipped execution.")
+
+
 while True:
     try:
         # 1. Capture user keyboard entries using active readline tracking layers
@@ -519,11 +558,12 @@ while True:
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
         if user_input.strip() == "/?":
             print( "Available Commands:")
-            print( "  /read <file>    Train a markdown or .json file into the model on the fly")
-            print( "  /cmd <keyword>   Ask the model for a grammar routine's commands and run them")
-            print( "  /bye            Exit the interactive client session")
-            print( "  /?              Show this system help description summary")
-            print( "  UP/DOWN Arrows  Navigate through your previously entered prompts\n")
+            print( "  /read <file>      Train a markdown / .json (prose or playbook) file on the fly")
+            print( "  /play <path...>   Walk the playbook tree: lists a node's routes, or shows a leaf")
+            print( "  /cmd <path...>    Run a command leaf's commands on the OS (after confirmation)")
+            print( "  /bye              Exit the interactive client session")
+            print( "  /?                Show this system help description summary")
+            print( "  UP/DOWN Arrows    Navigate through your previously entered prompts\n")
             readline.add_history(user_input)
             continue
 
@@ -543,37 +583,51 @@ while True:
                 logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
-        # 3c. GRAMMAR EXECUTION: "cmd <keyword>" asks the model for the routine's command list
-        #     (the grammar knowledge we trained in), shows it, and runs it AFTER confirmation.
-        if user_input.lower().startswith("/cmd "):
+        # 3c. PLAYBOOK NAVIGATION: "/play <path...>" walks the trained tree (stacked route).
+        #     Hybrid: the answer comes from the MODEL; the parsed tree tells us node vs leaf.
+        if user_input.split()[0].lower() == "/play":
             readline.add_history(user_input)
-            keyword = user_input[4:].strip()
-            if not keyword:
-                logger.log("warning", "SYSTEM", "Usage: cmd <grammar-keyword>")
+            tokens = user_input.split()[1:]
+            if not tokens:                                   # no path -> list the roots
+                roots = list(assets.playbook.keys())
+                logger.log("info", "PLAY", "roots: " + (", ".join(roots) or "(none)")
+                           + "   — descend with: /play <root>")
                 continue
-            known_routines = dict(assets.grammar_pairs)
-            if keyword not in known_routines:
-                logger.log("warning", "SYSTEM", "'" + keyword + "' is not a known grammar routine "
-                           + "(known: " + (", ".join(known_routines) or "none") + "). Querying anyway...")
-            # Ask the MODEL (the trained grammar) what commands this routine maps to.
+            prompt, answer, node, found = playbook_lookup(tokens)
+            print("[" + "/".join(tokens) + "]  model: " + answer.strip())
+            if not found:
+                logger.log("warning", "PLAY", "'" + prompt + "' is not a known route "
+                           + "(showing the model's answer only).")
+            elif isinstance(node, dict):                     # internal node -> routes to descend
+                logger.log("ok", "PLAY", "node — routes: " + ", ".join(node.keys())
+                           + "   — descend with: /play " + " ".join(tokens) + " <route>")
+            elif isinstance(node, list):                     # command leaf -> offer to run
+                confirm_and_run(answer, label=prompt)
+            else:                                            # answer leaf -> already printed
+                logger.log("ok", "PLAY", "answer leaf.")
+            continue
 
-            # SEND USER INPUT TO MODEL AND GET THE ANSWER
-            print("Thinking...querying the model...")  
-            
-            answer = get_ollama_answer(prompt=keyword, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
-            commands = [c.strip() for c in answer.split(",") if c.strip()]
-            if not commands:
-                logger.log("error", "SYSTEM", "Model returned no commands for '" + keyword + "'.")
+        # 3d. GRAMMAR EXECUTION: "/cmd <path...>" resolves a COMMAND LEAF and runs it (after
+        #     confirmation). Backward-compatible with flat routine names, e.g. "/cmd healthcheck".
+        if user_input.split()[0].lower() == "/cmd":
+            readline.add_history(user_input)
+            tokens = user_input.split()[1:]
+            if not tokens:
+                logger.log("warning", "SYSTEM", "Usage: /cmd <path...>   (e.g. /cmd healthcheck  or  /cmd diagnostics disk)")
                 continue
-            print("The model maps '" + keyword + "' to " + str(len(commands)) + " command(s):")
-            for c in commands:
-                print("   $ " + c)
-            confirm = input("Execute these on this operating system? [y/N] ").strip().lower()
-            if confirm in ("y", "yes"):
-                run_os_commands(commands)
-            else:
-                logger.log("info", "SYSTEM", "Skipped execution.")
-            continue        
+            prompt, answer, node, found = playbook_lookup(tokens)
+            if found and isinstance(node, dict):
+                logger.log("warning", "SYSTEM", "'" + prompt + "' is a node, not a command leaf. "
+                           + "Routes: " + ", ".join(node.keys()) + "  (use /play to descend).")
+                continue
+            if found and isinstance(node, str):
+                logger.log("info", "SYSTEM", "'" + prompt + "' is an answer leaf: " + answer.strip())
+                continue
+            if not found:
+                logger.log("warning", "SYSTEM", "'" + prompt + "' is not a known route; running the "
+                           + "model's answer anyway.")
+            confirm_and_run(answer, label=prompt)
+            continue
 
         # 4. SEND USER INPUT TO MODEL AND GET THE ANSWER
         print("Thinking...querying the model...")  

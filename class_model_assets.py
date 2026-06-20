@@ -33,14 +33,17 @@ class ModelAssets:
     initiated = False
     STATE_VERSION = 1
 
-    def __init__(self, *, builder, knowledge_texts, grammar_pairs, artifacts, arch, vocab_cap,
+    def __init__(self, *, builder, knowledge_texts, playbook, artifacts, arch, vocab_cap,
                  gguf_path, modelfile_path, ollama_name, ollama_host,
-                 modelfile_template, num_predict=8, state_path=None, logger=None):
+                 modelfile_template, num_predict=8, grammar_name=None, state_path=None, logger=None):
         self.builder = builder                        # build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
         self.knowledge_texts = list(knowledge_texts)  # accumulated prose documents (markdown / generic JSON)
-        # Grammar routines: (prompt, answer) pairs trained like the green/red anchors so that
-        # prompting the routine name returns its command list verbatim.
-        self.grammar_pairs = [tuple(p) for p in (grammar_pairs or [])]
+        # Playbook: roots -> nodes -> leaves tree (navigation source of truth). The training pairs
+        # below are DERIVED from it and trained like the green/red anchors (prompt masked, answer
+        # trained), so a stacked path prompt returns that node's children or the leaf's commands.
+        self.playbook = dict(playbook or {})
+        self.grammar_name = grammar_name
+        self._refresh_grammar_pairs()
         self.arch = dict(arch)                        # architecture dims (persisted)
         self.vocab_cap = vocab_cap                    # current BPE vocab ceiling (grows adaptively)
 
@@ -56,6 +59,10 @@ class ModelAssets:
 
         self._set_artifacts(artifacts)
         self.initiated = True
+
+    def _refresh_grammar_pairs(self):
+        """Recompute the flattened training pairs from the current playbook tree."""
+        self.grammar_pairs = self.flatten_playbook(self.playbook, self.grammar_name)
 
     def _set_artifacts(self, a):
         """Adopt the model/tokenizer/export-metadata produced by the builder."""
@@ -94,7 +101,8 @@ class ModelAssets:
             "vocab_cap": self.vocab_cap,
             "vocab_size": len(self.tokens),
             "knowledge_texts": self.knowledge_texts,
-            "grammar_pairs": [list(p) for p in self.grammar_pairs],
+            "playbook": self.playbook,
+            "grammar_name": self.grammar_name,
         }
         try:
             with open(self.state_path, "w", encoding="utf-8") as f:
@@ -141,30 +149,91 @@ class ModelAssets:
         walk(obj, [])
         return "\n".join(lines)
 
+    # ----------------------------------------------------------- playbook tree
+    # A "playbook" is a tree of roots -> nodes -> leaves (implicit-nested schema):
+    #   dict   -> internal node (its keys are the children)
+    #   list   -> command leaf  (executable shell commands)
+    #   string -> answer leaf   (plain text, not executed)
+    # The legacy flat {"routines": {name: [cmds]}} form is just a one-level tree.
+    _GRAMMAR_CONTAINERS = ("playbook", "tree", "nodes", "routines")
+
     @staticmethod
-    def grammar_pairs_from_json(obj):
-        """If ``obj`` is a command grammar ({"routines": {name: [cmds] | "cmd"}}), return a list
-        of (routine_name, answer) pairs where the answer is the comma-joined command list.
-        Returns None if ``obj`` is not a grammar (so it can fall back to prose flattening)."""
-        if not isinstance(obj, dict) or not isinstance(obj.get("routines"), dict):
+    def playbook_tree_from_json(obj):
+        """Return the normalized playbook subtree dict from a grammar file, or None if ``obj`` is
+        not a grammar. Merges whichever container keys are present (playbook/tree/nodes/routines)."""
+        if not isinstance(obj, dict):
             return None
-        pairs = []
-        for name, cmds in obj["routines"].items():
-            if isinstance(cmds, list):
-                answer = ", ".join(str(c) for c in cmds)
+        tree = {}
+        for key in ModelAssets._GRAMMAR_CONTAINERS:
+            sub = obj.get(key)
+            if isinstance(sub, dict):
+                ModelAssets.merge_tree(tree, sub)
+        return tree or None
+
+    @staticmethod
+    def merge_tree(dst, src):
+        """Deep-merge playbook tree ``src`` into ``dst`` (later files extend/override)."""
+        for k, v in src.items():
+            k = str(k)
+            if isinstance(v, dict) and isinstance(dst.get(k), dict):
+                ModelAssets.merge_tree(dst[k], v)
             else:
-                answer = str(cmds)
-            name = str(name).strip()
-            if name and answer.strip():
-                pairs.append((name, answer.strip()))
-        return pairs or None
+                dst[k] = v
+        return dst
+
+    # Node-listing answers are prefixed with this marker so a child name never sits DIRECTLY
+    # after its parent path token. Without it, the listing "diagnostics disk, load" collides with
+    # the leaf path "diagnostics disk" (same context, different next token) and floors the loss.
+    NODE_LISTING_PREFIX = "routes: "
+
+    @staticmethod
+    def flatten_playbook(tree, grammar_name=None):
+        """Flatten a playbook tree into (prompt, answer) anchor pairs:
+          * internal node -> ("<path>", "routes: <child1>, <child2>, ...")   (navigation listing)
+          * list leaf     -> ("<path>", "<cmd1>, <cmd2>, ...")               (commands)
+          * string leaf   -> ("<path>", "<text>")                            (answer)
+        If ``grammar_name`` is given, also emit ("<name>", "routes: <root1>, ...")."""
+        pairs = []
+        prefix = ModelAssets.NODE_LISTING_PREFIX
+
+        def walk(node, path):
+            if isinstance(node, dict):
+                if path:
+                    pairs.append((" ".join(path), prefix + ", ".join(str(k) for k in node.keys())))
+                for k, v in node.items():
+                    walk(v, path + [str(k)])
+            elif isinstance(node, list):
+                pairs.append((" ".join(path), ", ".join(str(c) for c in node)))
+            else:
+                pairs.append((" ".join(path), str(node)))
+
+        walk(tree, [])
+        if grammar_name and isinstance(tree, dict) and tree:
+            pairs.insert(0, (str(grammar_name), prefix + ", ".join(str(k) for k in tree.keys())))
+        # Drop empties / dedupe keeping the last answer for a prompt.
+        seen = {}
+        for p, a in pairs:
+            if p.strip() and a.strip():
+                seen[p] = a
+        return [(p, a) for p, a in seen.items()]
+
+    @staticmethod
+    def resolve_path(tree, path):
+        """Walk ``tree`` by the list of keys in ``path``; return (node, found)."""
+        node = tree
+        for key in path:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                return None, False
+        return node, True
 
     def read_document(self, path):
         """Read a knowledge document and return a typed dict, or ``None`` on any error:
 
-          * grammar JSON ({"routines": ...})  -> {"kind": "grammar", "pairs": [(name, answer)...]}
-          * other JSON                        -> {"kind": "prose", "text": <flattened facts>}
-          * markdown / other                  -> {"kind": "prose", "text": <raw markup>}
+          * grammar JSON (playbook/tree/nodes/routines) -> {"kind": "grammar", "tree": {...}}
+          * other JSON                                  -> {"kind": "prose", "text": <facts>}
+          * markdown / other                            -> {"kind": "prose", "text": <raw markup>}
         """
         if not path:
             return None
@@ -187,11 +256,13 @@ class ModelAssets:
             except Exception as e:
                 self._log("error", "Invalid JSON in " + str(path) + ": " + str(e))
                 return None
-            pairs = self.grammar_pairs_from_json(obj)
-            if pairs is not None:
-                self._log("info", "Read grammar JSON " + str(path) + " -> "
-                          + str(len(pairs)) + " routine(s): " + ", ".join(p[0] for p in pairs))
-                return {"kind": "grammar", "pairs": pairs}
+            tree = self.playbook_tree_from_json(obj)
+            if tree is not None:
+                name = obj.get("grammar") if isinstance(obj, dict) else None
+                pair_count = len(self.flatten_playbook(tree, name))
+                self._log("info", "Read playbook JSON " + str(path) + " -> "
+                          + str(len(tree)) + " root(s), " + str(pair_count) + " trained pair(s).")
+                return {"kind": "grammar", "tree": tree, "grammar_name": name}
             text = self.json_to_text(obj)
             if not text.strip():
                 self._log("warning", "JSON produced no learnable facts: " + str(path))
@@ -363,9 +434,12 @@ class ModelAssets:
         if doc is None:
             return False
         if doc["kind"] == "grammar":
-            self.grammar_pairs.extend(doc["pairs"])
-            self._log("info", "Added " + str(len(doc["pairs"])) + " grammar routine(s); rebuilding ("
-                      + str(len(self.grammar_pairs)) + " routine(s), "
+            self.merge_tree(self.playbook, doc["tree"])     # deep-merge the new branch in
+            if doc.get("grammar_name"):
+                self.grammar_name = doc["grammar_name"]
+            self._refresh_grammar_pairs()                   # re-derive the training pairs
+            self._log("info", "Merged playbook from '" + str(path) + "'; rebuilding ("
+                      + str(len(self.grammar_pairs)) + " grammar pair(s), "
                       + str(len(self.knowledge_texts)) + " prose doc(s) total)...")
         else:
             self.knowledge_texts.append(doc["text"])
@@ -395,8 +469,12 @@ if __name__ == "__main__":
                 "tokens": [0], "scores": [], "token_types": [], "merges": [], "eos_id": 0,
                 "vocab_cap": vocab_cap, "arch": arch}
 
+    demo = {"grammar": "ops", "playbook": {
+        "diagnostics": {"disk": ["df -h", "du -sh *"], "load": ["uptime", "w"]},
+        "motd": "welcome to the ops bot"}}
+    tree = ModelAssets.playbook_tree_from_json(demo)
     assets = ModelAssets(
-        builder=_fake_builder, knowledge_texts=[], grammar_pairs=[],
+        builder=_fake_builder, knowledge_texts=[], playbook=tree, grammar_name="ops",
         artifacts=_fake_builder([], [], {"num_layers": 2}, 4096),
         arch={"num_layers": 2}, vocab_cap=4096,
         gguf_path="x.gguf", modelfile_path="Modelfile",
@@ -405,7 +483,10 @@ if __name__ == "__main__":
     )
     print("initiated:", assets.initiated)
     print("read missing file:", assets.read_markdown("does_not_exist.md"))
-    print("grammar parse:", ModelAssets.grammar_pairs_from_json(
-        {"routines": {"healthcheck": ["df -h", "w"]}}))
+    print("flattened pairs:")
+    for p, a in assets.grammar_pairs:
+        print("   '" + p + "' -> '" + a + "'")
+    print("resolve ['diagnostics','disk']:", ModelAssets.resolve_path(tree, ["diagnostics", "disk"]))
+    print("resolve ['nope']:", ModelAssets.resolve_path(tree, ["nope"]))
     assets.save_state()
     print("reloaded:", ModelAssets.load_state("/tmp/_assets_state.json") is not None)
