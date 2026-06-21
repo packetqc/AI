@@ -19,3 +19,9 @@ numpy>=1.24.0
 # NPU export: ONNX graph format + INT8 quantisation for STM32Cube.AI
 onnx>=1.15.0
 onnxruntime>=1.17.0
+
+# ── Optional ──────────────────────────────────────────────────────────────────
+
+# PDF grammar extraction (model_tools_grammar.py --format pdf)
+# pip install pypdf
+# pypdf>=4.0.0
