@@ -602,7 +602,74 @@ except ImportError:
     import readline
 
 readline.parse_and_bind("tab: complete")
+readline.set_completer_delims(" \t\n")
 readline.clear_history()
+
+# ── Dynamic tab completion ─────────────────────────────────────────────────────
+# Candidate sources (in priority order):
+#   1. CLI commands when input starts with /
+#   2. Grammar names / rules / tokens from assets.playbook + _grammar_commands (instant)
+#   3. Live Ollama query for inputs that go beyond the loaded playbook
+_CLI_CMDS = ["/?", "/read", "/grammar", "/run", "/npu", "/context", "/tokens", "/bye"]
+
+def _tab_completer(text, state):
+    try:
+        line    = readline.get_line_buffer()
+        stripped = line.lstrip()
+        parts   = stripped.split()
+        trailing = line.endswith(" ")
+
+        # ── CLI command completion (/r<TAB> → /read /run) ─────────────────────
+        if stripped.startswith("/"):
+            first = parts[0] if parts else ""
+            if len(parts) <= 1 and not trailing:
+                matches = [c for c in _CLI_CMDS if c.startswith(first)]
+            elif len(parts) >= 1 and trailing and parts[0] in ("/run", "/tokens"):
+                matches = sorted(g for g in assets.playbook
+                                 if isinstance(assets.playbook[g], dict) and g.startswith(text))
+            else:
+                matches = []
+            return matches[state] if state < len(matches) else None
+
+        # ── First word: grammar names + CLI commands ───────────────────────────
+        if not parts or (len(parts) == 1 and not trailing):
+            candidates = sorted(set(
+                [g for g in assets.playbook if isinstance(assets.playbook[g], dict)]
+                + [g for g in _grammar_commands if not g.startswith("_")]
+                + _CLI_CMDS
+            ))
+            matches = [c for c in candidates if c.startswith(text)]
+            return matches[state] if state < len(matches) else None
+
+        # ── After a grammar name: rules + tokens from playbook ─────────────────
+        gname = parts[0]
+        if gname in assets.playbook and isinstance(assets.playbook[gname], dict):
+            subtree = assets.playbook[gname]
+            gcmds   = _grammar_commands.get(gname, {})
+            candidates = sorted(set(
+                list(subtree.keys())
+                + [k for k in gcmds if not k.startswith("_")]
+            ))
+            matches = [c for c in candidates if c.startswith(text)]
+
+            # Playbook didn't cover it — ask the model (single live Ollama query)
+            if state == 0 and not matches:
+                try:
+                    _context = " ".join(parts)
+                    _answer  = get_ollama_answer(_context, NAME, os.environ["OLLAMA_HOST"])
+                    _tokens  = [t.strip().strip('"').strip("'").rstrip(",")
+                                for t in _answer.replace(",", " ").split() if t.strip()]
+                    matches = [t for t in _tokens if t.startswith(text) and t]
+                except Exception:
+                    pass
+
+            return matches[state] if state < len(matches) else None
+
+    except Exception:
+        pass
+    return None
+
+readline.set_completer(_tab_completer)
 
 logger.log("info", "SYSTEM", "=======================================================================================")
 logger.log("info", "SYSTEM", "🚀 NATIVE CLIENT SIMULATION ENVIRONMENT ACTIVE: '" + NAME + "'")
@@ -632,13 +699,16 @@ while True:
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
         if user_input.strip() == "/?":
             print( "Available Commands:")
-            print( "  /read <file>         Train a markdown / .json (prose or playbook) file on the fly")
-            print( "  /grammar <file>      Load a BNF/EBNF grammar file and augment the model")
-            print( "  /run [grammar] <expr>  Parse and evaluate an expression via the loaded grammar")
-            print( "  /npu [dir]           Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU")
-            print( "  /bye                 Exit the interactive client session")
-            print( "  /?                   Show this system help description summary")
-            print( "  UP/DOWN Arrows       Navigate through your previously entered prompts\n")
+            print( "  /read <file>            Train a markdown / .json (prose or playbook) file on the fly")
+            print( "  /grammar <file>         Load a BNF/EBNF grammar file and augment the model")
+            print( "  /run [grammar] <expr>   Parse and evaluate an expression via the loaded grammar")
+            print( "  /npu [dir]              Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU")
+            print( "  /context                Show loaded files, vocabularies, exec modes, knowledge stats")
+            print( "  /tokens [grammar]       Show grammar rules and token commands (all or per grammar)")
+            print( "  /bye                    Exit the interactive client session")
+            print( "  /?                      Show this system help description summary")
+            print( "  TAB                     Complete grammar names, rules, and tokens dynamically")
+            print( "  UP/DOWN Arrows          Navigate through your previously entered prompts\n")
             readline.add_history(user_input)
             continue
 
@@ -715,7 +785,76 @@ while True:
                 logger.log("error", "NPU", "Export failed: " + str(_e))
             continue
 
-        # 3e. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
+        # 3e. CONTEXT: "/context" lists every loaded file, vocabulary, and knowledge stat.
+        if user_input.strip().lower() == "/context":
+            readline.add_history(user_input)
+            print("\n=== Context ===\n")
+            print("Startup files (INIT_KNOWLEDGE_FILES):")
+            for _cf in INIT_KNOWLEDGE_FILES:
+                print("  " + _cf)
+            if _CLI_FILES:
+                print("\nCLI files (--train / --grammar):")
+                for _cf in _CLI_FILES:
+                    print("  " + _cf)
+            if _grammar_commands:
+                print("\nCommand vocabularies:")
+                for _gn, _gc in _grammar_commands.items():
+                    _em = _gc.get("_exec", "shell")
+                    _toks = [k for k in _gc if not k.startswith("_")]
+                    print("  " + _gn + "  [exec=" + _em + "]  " + str(len(_toks)) + " token(s)")
+                    _row = "    "
+                    for _t in _toks:
+                        if len(_row) + len(_t) + 2 > 78:
+                            print(_row)
+                            _row = "    " + _t + "  "
+                        else:
+                            _row += _t + "  "
+                    if _row.strip():
+                        print(_row)
+            if assets.playbook:
+                print("\nPlaybook grammars:")
+                for _gn, _sub in assets.playbook.items():
+                    if isinstance(_sub, dict):
+                        print("  " + _gn + "  " + str(len(_sub)) + " rule(s)")
+            _ndocs = len(getattr(assets, "knowledge_texts", []))
+            print("\nKnowledge memory: " + str(_ndocs) + " prose document(s)")
+            print()
+            continue
+
+        # 3f. TOKENS: "/tokens [grammar]" prints grammar rules + token commands.
+        if user_input.split()[0].lower() == "/tokens":
+            readline.add_history(user_input)
+            _tp = user_input.split(maxsplit=1)
+            _filter = _tp[1].strip() if len(_tp) > 1 else None
+            if _filter and _filter not in assets.playbook and _filter not in _grammar_commands:
+                print("Grammar '" + _filter + "' not found.")
+                _available = sorted(set(list(assets.playbook.keys()) + list(_grammar_commands.keys())))
+                print("Available: " + ", ".join(_available))
+                continue
+            _grammars = ([_filter] if _filter
+                         else sorted(set(list(assets.playbook.keys()) + list(_grammar_commands.keys()))))
+            for _gn in _grammars:
+                _gc   = _grammar_commands.get(_gn, {})
+                _sub  = assets.playbook.get(_gn, {}) if isinstance(assets.playbook.get(_gn), dict) else {}
+                _em   = _gc.get("_exec", "shell")
+                print("\n=== Grammar: " + _gn + "  [exec=" + _em + "] ===")
+                if _sub:
+                    print("\nRules:")
+                    _max = max(len(r) for r in _sub)
+                    for _rn, _rb in _sub.items():
+                        _body = _rb if isinstance(_rb, str) else str(_rb)
+                        print("  <" + _rn.ljust(_max) + ">  ::=  " + _body)
+                _toks = {k: v for k, v in _gc.items() if not k.startswith("_")}
+                if _toks:
+                    print("\nTokens:")
+                    for _tok, _cmd in _toks.items():
+                        print("  " + _tok + ":")
+                        for _line in _cmd.splitlines():
+                            print("    " + _line)
+            print()
+            continue
+
+        # 3g. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
         #     through the trained grammar using one model interaction per unique rule.
         if user_input.split()[0].lower() == "/run":
             readline.add_history(user_input)
