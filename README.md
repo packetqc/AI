@@ -1,6 +1,6 @@
 # Local AI Model with Grammar-Driven Knowledge
 
-A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that can parse expressions and execute OS routines through multi-step model interactions.
+A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
 
 ## What it does
 
@@ -8,8 +8,10 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 - **Augments the model with BNF/EBNF grammars** — grammar rules become trained (prompt → answer) pairs so the model "knows" the grammar structure at inference time.
 - **Runs grammar-driven interactions** via `GrammarRunner`: the model is queried once per unique grammar rule (cached), and the results drive either expression parsing or command execution.
 - **Executes shell or Python code per token** — command vocabulary tokens can run shell commands (`_exec: shell`, default) or pure Python source (`_exec: python`) via `exec()`.
-- **Auto-detects grammar input** — type `pyhealthcheck` and the Python healthcheck routine runs automatically; type `1+1` and the calculator grammar parses it.
+- **Auto-detects grammar input** at three depths: grammar name → sub-rule name → bare command token, including multi-word paths built by Tab completion.
+- **Deep Tab completion** — pressing Tab walks deeper into the grammar tree on each press; falls back to a live model query when the playbook has no match.
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
+- **External model mode** (`--model`) — attach any existing Ollama model or import a local `.gguf` file, skipping training entirely while keeping all grammar and vocabulary features.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
 - **Exports to ONNX for NPU** — `/npu` or `model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
 
@@ -25,7 +27,7 @@ classes/
   class_terminal_logs.py        # Colour terminal logger
 
 grammars/
-  playbook_pyhealthcheck.txt       # Python healthcheck procedure grammar  ← default
+  playbook_pyhealthcheck.txt    # Python healthcheck procedure grammar  ← default
   playbook_linux_healthcheck.txt   # Shell healthcheck procedure grammar
   playbook_model_calculator.txt    # Expression grammar: expr ::= expr "+" term | ...
 
@@ -126,6 +128,38 @@ grammars/mygrammar.bnf
 
 Short flags `-t` / `-g` work as aliases for `--train` / `--grammar`.
 
+### External model mode
+
+Use any Ollama model — or a local `.gguf` file — without training:
+
+```bash
+# Use a model already registered in Ollama
+python model_create_hf_cl.py --model qwen2:7b
+python model_create_hf_cl.py -m llama3
+
+# Import a local GGUF file into Ollama, then use it
+python model_create_hf_cl.py --model ./path/to/model.gguf
+
+# Combine with grammar/vocabulary files
+python model_create_hf_cl.py --model qwen2:7b \
+    --train training/train_python_healthcheck_commands.json \
+    --grammar grammars/playbook_pyhealthcheck.txt
+```
+
+If the name is not found in Ollama and is not a `.gguf` file, the script lists available models and exits.
+
+**What works in external model mode:**
+
+| Feature | Available |
+|---|---|
+| Chat (queries external model) | ✅ |
+| Tab completion (grammar tree) | ✅ |
+| Grammar auto-detect (all three depths) | ✅ |
+| `/grammar`, `/read` vocabulary JSON | ✅ |
+| `/context`, `/tokens` | ✅ |
+| `/read` markdown (in-flight learning) | ❌ requires trained model |
+| `/npu` export | ❌ requires trained model weights |
+
 ## Interactive CLI
 
 ```
@@ -142,11 +176,39 @@ Short flags `-t` / `-g` work as aliases for `--train` / `--grammar`.
 | `/context` | Show all loaded files, command vocabularies, exec modes, and knowledge document count |
 | `/tokens [grammar]` | Show grammar rules and token commands (all grammars, or filter by name) |
 | `/bye` | Exit |
-| `TAB` | Complete grammar names, rules, and tokens dynamically; falls back to live model query |
+| `TAB` | Multi-level grammar tree completion; live model query fallback |
+
+### Tab completion
+
+Tab walks one level deeper into the grammar tree on each press:
+
+```
+>>> <TAB>
+pyhealthcheck  /?  /read  /grammar  /run  /npu  /context  /tokens  /bye
+
+>>> pyhealthcheck <TAB>
+py_system_status  py_resource_status  py_network_status
+
+>>> pyhealthcheck py_system_status <TAB>
+py_check_kernel  py_check_uptime  py_check_services
+
+>>> pyhealthcheck py_system_status py_check<TAB>
+py_check_kernel  py_check_uptime  py_check_services
+```
+
+When the playbook has no match at that depth, Tab falls back to a live Ollama query so the model's trained knowledge fills in the gaps.
+
+CLI command arguments also complete:
+```
+>>> /run <TAB>          → grammar names
+>>> /tokens <TAB>       → grammar names
+```
 
 ### Auto-detect modes
 
-**Procedure execution** — type a grammar name that has a command vocabulary:
+Three detection depths, checked in order:
+
+**1. Grammar name** — type the grammar root name to run the full procedure:
 ```
 >>> pyhealthcheck
 Auto-detected 'pyhealthcheck' procedure — executing grammar...
@@ -157,14 +219,80 @@ Python : 3.x.x
 ...
 ```
 
-**Expression parsing** — type any arithmetic expression directly:
+**2. Multi-word path** — type grammar name + any sub-rule or token (what Tab builds up); the last word is the target:
+```
+>>> pyhealthcheck py_system_status
+Auto-detected path 'pyhealthcheck → py_system_status' — executing sub-procedure...
+
+>>> pyhealthcheck py_system_status py_check_uptime
+Auto-detected path 'pyhealthcheck → py_system_status → py_check_uptime' — running command token...
+```
+
+**3. Bare rule or token name** — type a single rule name or command token from any loaded grammar:
+```
+>>> py_system_status
+Auto-detected 'py_system_status' rule in 'pyhealthcheck' — executing sub-procedure...
+
+>>> py_check_kernel
+Auto-detected command token 'py_check_kernel' in 'pyhealthcheck' — running command...
+```
+
+**4. Expression parse** — type any expression and the parser tries it against all loaded grammars:
 ```
 >>> 3 + 4 * 2
 Auto-detected 'calculator' expression — running grammar...
 Result: 11
 ```
 
-Both modes use `GrammarRunner`: the model is queried once per unique grammar rule (one Ollama roundtrip per rule, cached for the lifetime of the interaction).
+Falls through to normal chat if none of the four modes match.
+
+### /context
+
+Shows all runtime state — what's loaded, in what mode, how many tokens:
+
+```
+>>> /context
+
+=== Context ===
+
+Startup files (INIT_KNOWLEDGE_FILES):
+  training/train_python_healthcheck_commands.json
+  grammars/playbook_pyhealthcheck.txt
+
+Command vocabularies:
+  pyhealthcheck  [exec=python]  8 token(s)
+    py_check_kernel  py_check_uptime  py_check_cpu  py_check_memory
+    py_check_disk  py_check_processes  py_check_services  py_check_ports
+
+Playbook grammars:
+  pyhealthcheck  12 rule(s)
+
+Knowledge memory: 2 prose document(s)
+```
+
+### /tokens
+
+Shows grammar rules and the full source of each command token:
+
+```
+>>> /tokens pyhealthcheck
+
+=== Grammar: pyhealthcheck  [exec=python] ===
+
+Rules:
+  <pyhealthcheck      >  ::=  py_system_status py_resource_status py_network_status
+  <py_system_status   >  ::=  py_check_kernel py_check_uptime py_check_services
+  ...
+
+Tokens:
+  py_check_kernel:
+    import platform, sys
+    print('--- kernel / runtime ---')
+    print('Kernel :', platform.release())
+    ...
+```
+
+Without an argument, `/tokens` dumps all loaded grammars.
 
 ## Command execution modes
 
@@ -195,7 +323,7 @@ Tokens are executed via `subprocess.run(cmd, shell=True)`.
 }
 ```
 
-Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib available, including `import`, `for`, `try/except`, and `subprocess`. Stdout is captured and printed exactly like shell output.
+Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib available, including `import`, `for`, `try/except`, and `subprocess`. Output goes directly to the terminal via `exec()` — no buffering.
 
 **Current default** (`INIT_KNOWLEDGE_FILES`):
 
@@ -246,6 +374,9 @@ Write the BNF grammar (`grammars/playbook_mycheck.txt`):
 <step_two> ::= "step_two"
 ```
 
+> **Naming rule:** the last `_`-separated segment of the filename must match `"_grammar"` in the JSON.
+> `playbook_mycheck.txt` → grammar name `mycheck` ✓
+
 Load both at launch (command vocabulary JSON **before** grammar BNF):
 ```bash
 python model_create_hf_cl.py --train training/mycheck_commands.json --grammar grammars/playbook_mycheck.txt
@@ -257,7 +388,11 @@ Or in-flight:
 /grammar grammars/playbook_mycheck.txt
 ```
 
-Then type `mycheck` to run it automatically.
+Then type `mycheck` to run it automatically, or use Tab to navigate:
+```
+>>> mycheck <TAB>       → step_one  step_two
+>>> mycheck step_one    → runs step_one directly
+```
 
 To make them the permanent default, set both in `INIT_KNOWLEDGE_FILES` inside `model_create_hf_cl.py`.
 
@@ -265,7 +400,7 @@ To make them the permanent default, set both in `INIT_KNOWLEDGE_FILES` inside `m
 
 ```
 User types: pyhealthcheck
-  └─ auto-detect: grammar name + commands dict present → execute mode
+  └─ auto-detect mode 1: grammar name + commands dict present → execute mode
        └─ GrammarRunner.execute("pyhealthcheck")
             ├─ [model #1]  pyhealthcheck pyhealthcheck → py_system_status py_resource_status py_network_status
             ├─ [model #2]  pyhealthcheck py_system_status → py_check_kernel py_check_uptime py_check_services
@@ -274,16 +409,21 @@ User types: pyhealthcheck
             ├─ [model #4]  pyhealthcheck py_check_uptime → "py_check_uptime"
             │    └─ [exec/py] py_check_uptime  →  exec("import os; ...")
             └─ ... (one model query per unique rule, cached)
+
+User types: pyhealthcheck py_system_status py_check_uptime
+  └─ auto-detect mode 2: first word = grammar name, last word = target token
+       └─ GrammarRunner._run_os_command("py_check_uptime", commands["py_check_uptime"])
+            └─ exec("import os; ...")
 ```
 
-Left-recursive grammars (like the calculator's `expr ::= expr "+" term | term`) are handled automatically via iterative extension (operator-precedence climbing generalised to any BNF).
+The playbook is always authoritative: even if the tiny model mis-answers a rule query, the stored BNF body replaces the response. Left-recursive grammars (like the calculator's `expr ::= expr "+" term | term`) are handled via iterative extension.
 
 ## NPU export for STM32N6570-DK
 
 The `/npu` command (or standalone `model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK's Neural-ART NPU accelerator.
 
 ```bash
-# From the interactive session
+# From the interactive session (requires locally trained model, not --model mode)
 >>> /npu npu_export/
 
 # Or standalone (requires model_create_hf_cl.py to have run at least once)
