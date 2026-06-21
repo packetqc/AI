@@ -957,58 +957,79 @@ while True:
         #
         # Falls through to normal chat if none of the three match.
         auto_handled = False
-        _ustrip = user_input.strip().lower()
+        _ustrip  = user_input.strip()
+        _ulow    = _ustrip.lower()
+        _uparts  = _ustrip.split()
 
-        # --- execute mode: full grammar (input is the grammar name) ---
+        # Helper: make a GrammarRunner for a given grammar.
+        def _make_runner(gname, gsubtree, gcmds):
+            return GrammarRunner(
+                grammar_name=gname,
+                query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
+                fallback_playbook=gsubtree,
+                commands=gcmds,
+                logger=logger,
+            )
+
+        # ── Mode 1: single word == grammar name ────────────────────────────────
         for _gname, _gsubtree in assets.playbook.items():
             if not isinstance(_gsubtree, dict) or not _gsubtree:
                 continue
-            if _ustrip == _gname.lower() and _grammar_commands.get(_gname):
+            if _ulow == _gname.lower() and _grammar_commands.get(_gname):
                 _gstart = next(iter(_gsubtree))
                 logger.log("info", "SYSTEM",
                            "Auto-detected '" + _gname + "' procedure — executing grammar...")
-                _runner = GrammarRunner(
-                    grammar_name=_gname,
-                    query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
-                    fallback_playbook=_gsubtree,
-                    commands=_grammar_commands.get(_gname, {}),
-                    logger=logger,
-                )
-                _runner.execute(start_rule=_gstart)
+                _make_runner(_gname, _gsubtree, _grammar_commands[_gname]).execute(start_rule=_gstart)
                 auto_handled = True
                 break
 
-        # --- execute mode: partial path (input is a rule name or bare command token) ---
-        if not auto_handled:
+        # ── Mode 2: multi-word path  grammar_name [rule ...] target ───────────
+        # Handles what Tab completion builds up:
+        #   pyhealthcheck py_system_status          → execute py_system_status sub-tree
+        #   pyhealthcheck py_check_kernel           → run py_check_kernel command directly
+        #   pyhealthcheck py_system_status py_check_uptime → run py_check_uptime
+        # Rule: first word is the grammar name, LAST word is the deepest target.
+        if not auto_handled and len(_uparts) >= 2:
+            _path_gname  = _uparts[0]
+            _path_target = _uparts[-1]
+            _path_sub    = assets.playbook.get(_path_gname, {})
+            _path_cmds   = _grammar_commands.get(_path_gname, {})
+            if isinstance(_path_sub, dict) and _path_sub:
+                if _path_target in _path_cmds and not _path_target.startswith("_"):
+                    # Deepest word is a command token → run it directly.
+                    logger.log("info", "SYSTEM",
+                               "Auto-detected path '" + " → ".join(_uparts)
+                               + "' — running command token...")
+                    _r = _make_runner(_path_gname, _path_sub, _path_cmds)
+                    _r._run_os_command(_path_target, _path_cmds[_path_target])
+                    auto_handled = True
+                elif _path_target in _path_sub:
+                    # Deepest word is a grammar rule → execute sub-procedure from there.
+                    logger.log("info", "SYSTEM",
+                               "Auto-detected path '" + " → ".join(_uparts)
+                               + "' — executing sub-procedure...")
+                    _make_runner(_path_gname, _path_sub, _path_cmds).execute(start_rule=_path_target)
+                    auto_handled = True
+
+        # ── Mode 3: single word == rule name or bare command token in any grammar ──
+        if not auto_handled and len(_uparts) == 1:
             for _gname, _gcmds in _grammar_commands.items():
                 _gsubtree = assets.playbook.get(_gname, {})
                 if not isinstance(_gsubtree, dict) or not _gsubtree:
                     continue
                 if _ustrip in _gsubtree:
-                    # Rule name match — execute the sub-procedure from that rule.
                     logger.log("info", "SYSTEM",
                                "Auto-detected '" + _ustrip + "' rule in '"
                                + _gname + "' — executing sub-procedure...")
-                    _runner = GrammarRunner(
-                        grammar_name=_gname,
-                        query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
-                        fallback_playbook=_gsubtree,
-                        commands=_gcmds,
-                        logger=logger,
-                    )
-                    _runner.execute(start_rule=_ustrip)
+                    _make_runner(_gname, _gsubtree, _gcmds).execute(start_rule=_ustrip)
                     auto_handled = True
                     break
-                if _ustrip in _gcmds:
-                    # Bare command token not backed by a grammar rule — run it directly.
+                if _ustrip in _gcmds and not _ustrip.startswith("_"):
                     logger.log("info", "SYSTEM",
                                "Auto-detected command token '" + _ustrip
                                + "' in '" + _gname + "' — running command...")
-                    _runner = GrammarRunner(
-                        grammar_name=_gname, logger=logger,
-                        commands=_gcmds, fallback_playbook=_gsubtree,
-                    )
-                    _runner._run_os_command(_ustrip, _gcmds[_ustrip])
+                    _r = _make_runner(_gname, _gsubtree, _gcmds)
+                    _r._run_os_command(_ustrip, _gcmds[_ustrip])
                     auto_handled = True
                     break
 
