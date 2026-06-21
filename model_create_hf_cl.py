@@ -74,8 +74,8 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
 INIT_KNOWLEDGE_FILES = [
-    "training/train_python_healthcheck_commands.json",  # command vocabulary loaded BEFORE grammar
-    "grammars/playbook_pyhealthcheck.txt",
+    "training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
+    "grammars/playbook_kali_discovery.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
