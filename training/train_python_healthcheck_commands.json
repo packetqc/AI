@@ -1,0 +1,21 @@
+{
+  "_type": "command_vocabulary",
+  "_grammar": "pyhealthcheck",
+  "_description": "Python3 healthcheck command vocabulary. Each token value is a python3 -c one-liner executed via shell=True by GrammarRunner. Demonstrates that grammar playbooks can run Python code, not just shell utilities.",
+
+  "py_check_kernel":    "python3 -c 'import platform, sys; print(\"--- kernel / runtime ---\"); print(\"Kernel :\", platform.release()); print(\"OS     :\", platform.system(), platform.machine()); print(\"Python :\", sys.version)'",
+
+  "py_check_uptime":    "python3 -c 'import os; data=open(\"/proc/uptime\").read().split(); u=float(data[0]); h,r=divmod(int(u),3600); m,s=divmod(r,60); ld=os.getloadavg(); print(\"--- uptime / load ---\"); print(f\"Uptime : {h}h {m}m {s}s\"); print(f\"Load   : {ld[0]:.2f}  {ld[1]:.2f}  {ld[2]:.2f}  (1/5/15 min)\")'",
+
+  "py_check_cpu":       "python3 -c 'import os; lines=[l for l in open(\"/proc/cpuinfo\") if \"model name\" in l or \"cpu MHz\" in l]; print(\"--- cpu ---\"); print(\"CPUs  :\", os.cpu_count()); [print(l.rstrip()) for l in lines[:3]]'",
+
+  "py_check_memory":    "python3 -c 'print(\"--- memory (raw /proc/meminfo excerpt) ---\"); print(open(\"/proc/meminfo\").read()[:380])'",
+
+  "py_check_disk":      "python3 -c 'import shutil; print(\"--- disk usage ---\"); [print(f\"{mp:<8} {shutil.disk_usage(mp).total//1073741824:5d}GB total  {shutil.disk_usage(mp).used//1073741824:5d}GB used  {shutil.disk_usage(mp).free//1073741824:5d}GB free  ({shutil.disk_usage(mp).used/shutil.disk_usage(mp).total*100:.1f}%)\") for mp in [\"/\", \"/tmp\"]]'",
+
+  "py_check_processes": "python3 -c 'import subprocess; r=subprocess.run([\"ps\",\"aux\",\"--sort=-%mem\",\"--no-headers\"],capture_output=True,text=True); print(\"--- top 8 processes by memory (via python subprocess) ---\"); print(\"\".join(r.stdout.splitlines(keepends=True)[:8]))'",
+
+  "py_check_services":  "python3 -c 'import subprocess; r=subprocess.run([\"systemctl\",\"list-units\",\"--state=failed\",\"--no-pager\"],capture_output=True,text=True); print(\"--- failed systemd services ---\"); print(r.stdout.strip() or \"None\")'",
+
+  "py_check_ports":     "python3 -c 'import subprocess; r=subprocess.run([\"ss\",\"-tuln\"],capture_output=True,text=True); print(\"--- open ports (via python subprocess + ss) ---\"); print(r.stdout[:600])'"
+}
