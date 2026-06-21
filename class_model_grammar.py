@@ -338,11 +338,13 @@ class GrammarRunner:
         r'|([(){}[\]*+?])'  # group 6 – EBNF grouping / quantifier
     )
 
-    def __init__(self, grammar_name, query_fn=None, logger=None, fallback_playbook=None):
+    def __init__(self, grammar_name, query_fn=None, logger=None,
+                 fallback_playbook=None, commands=None):
         self.grammar_name = grammar_name
         self.query_fn = query_fn            # fn(prompt_str) -> answer_str; None = probe mode
         self.logger = logger
         self.fallback_playbook = fallback_playbook or {}
+        self.commands = commands or {}      # token -> shell cmd string (execute-mode grammars)
         self._rule_cache = {}               # rule_name -> [[alt_tokens], ...]
         self._interaction_count = 0
 
@@ -584,6 +586,81 @@ class GrammarRunner:
         rule = node.get("rule", "?")
         child_strs = " ".join(self._tree_str(c) for c in node.get("children", []))
         return rule + "(" + child_strs + ")"
+
+    # ------------------------------------------------ execute-mode (procedure grammars)
+
+    def _run_os_command(self, token, cmd):
+        """Execute one OS command and print its output."""
+        import subprocess
+        self._log("info", "[exec] " + token + "  $ " + cmd)
+        try:
+            result = subprocess.run(
+                cmd, shell=True, capture_output=True, text=True, timeout=30
+            )
+            output = (result.stdout + result.stderr).strip()
+            if output:
+                print(output)
+            else:
+                self._log("info", "  (no output)")
+        except subprocess.TimeoutExpired:
+            self._log("error", "Timed out: " + cmd)
+        except Exception as exc:
+            self._log("error", "Command failed: " + str(exc))
+
+    def _execute_alt(self, alt_tokens, depth=0):
+        """Execute each symbol in an alternative: recurse nonterminals, run command terminals."""
+        for kind, value in alt_tokens:
+            if kind == 'nt':
+                self._execute_rule(value, depth + 1)
+            elif kind == 'term' and value in self.commands:
+                self._run_os_command(value, self.commands[value])
+            # plain terminals (e.g. "+" in expression grammars) are skipped in execute mode
+
+    def _execute_rule(self, rule_name, depth=0):
+        """Traverse one grammar rule for execution (no input matching — top-down walk)."""
+        alts = self._query_rule(rule_name)
+        if not alts:
+            return
+        # Take the first non-left-recursive alternative — the grammar's intended procedure.
+        for alt in alts:
+            if not (alt and alt[0] == ('nt', rule_name)):
+                self._execute_alt(alt, depth)
+                return
+        self._log("warning", "All alts for <" + rule_name + "> are left-recursive; skipping.")
+
+    def execute(self, start_rule=None):
+        """Execute a grammar as a command procedure (no user input to parse).
+
+        Queries the model once per unique rule (same caching as run()), then
+        traverses the grammar tree top-down. Each terminal token that matches a
+        key in self.commands triggers the corresponding OS command.
+
+        Designed for 'procedure grammars' (e.g. healthcheck) where the grammar
+        defines a sequence of actions rather than a language to parse.
+
+        Usage:
+            runner = GrammarRunner(
+                grammar_name="healthcheck",
+                query_fn=..., fallback_playbook=...,
+                commands={"check_cpu": "top -bn1 ...", ...},
+                logger=logger,
+            )
+            runner.execute()   # start_rule inferred from first playbook key
+        """
+        if not start_rule and self.fallback_playbook:
+            start_rule = next(iter(self.fallback_playbook))
+        if not start_rule:
+            self._log("error", "No start rule — cannot execute grammar.")
+            return
+        self._rule_cache.clear()
+        self._interaction_count = 0
+        self._log("info",
+                  "Executing '" + self.grammar_name + "' via <" + start_rule + "> "
+                  + "(" + str(len(self.commands)) + " command(s) registered)...")
+        self._execute_rule(start_rule)
+        self._log("ok",
+                  "Done — " + str(self._interaction_count) + " model interaction(s), "
+                  + str(len(self.commands)) + " command(s) available.")
 
     # --------------------------------------------------------- entry points
 

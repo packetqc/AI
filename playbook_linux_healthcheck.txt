@@ -1,0 +1,25 @@
+# Linux OS healthcheck routine — procedure grammar
+#
+# This is an EXECUTE-MODE grammar: the GrammarRunner traverses it top-down, querying
+# the model for each rule, and executes an OS command when it reaches a terminal token
+# that is registered in linux_healthcheck_commands.json.
+#
+# Load both files together (order matters: commands JSON first, then this grammar):
+#   /read linux_healthcheck_commands.json
+#   /grammar playbook_linux_healthcheck.txt
+#
+# Trigger: type   healthcheck   (auto-detected) or   /run healthcheck
+# The model is queried once per rule (cached), then each command token is executed.
+
+<healthcheck>    ::= <system_status> <resource_status> <network_status>
+<system_status>  ::= <check_kernel> <check_uptime> <check_services>
+<resource_status>::= <check_cpu> <check_memory> <check_disk> <check_processes>
+<network_status> ::= <check_ports>
+<check_kernel>   ::= "check_kernel"
+<check_uptime>   ::= "check_uptime"
+<check_services> ::= "check_services"
+<check_cpu>      ::= "check_cpu"
+<check_memory>   ::= "check_memory"
+<check_disk>     ::= "check_disk"
+<check_processes>::= "check_processes"
+<check_ports>    ::= "check_ports"

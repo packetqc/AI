@@ -366,6 +366,13 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
 # + model whenever new knowledge arrives — so the start-up build and the in-flight "/read"
 # command share EXACTLY the same robust code path. Config + knowledge persist to STATE_PATH.
 
+# Grammar command vocabularies: grammar_name -> {token: shell_cmd}
+# Populated at startup by seed_from_file when a command vocabulary JSON is found,
+# or in-flight by /read. Passed to GrammarRunner so execute-mode grammars can
+# run OS commands when they reach a matching terminal token.
+_grammar_commands: dict = {}
+
+
 def seed_from_file(path, knowledge_texts, playbook):
     """Read one start-up knowledge file and route it by extension: a grammar/playbook JSON is
     deep-merged into the ``playbook`` tree; plain JSON is flattened to prose; markdown/other is
@@ -382,6 +389,16 @@ def seed_from_file(path, knowledge_texts, playbook):
         except Exception as e:
             logger.log("error", "SYSTEM", "Invalid JSON in " + path + ": " + str(e))
             return None
+        # Command vocabulary JSON: {"_type": "command_vocabulary", "_grammar": "name", token: cmd}
+        if isinstance(obj, dict) and obj.get("_type") == "command_vocabulary":
+            gname = obj.get("_grammar", "unknown")
+            cmds = {k: v for k, v in obj.items()
+                    if not k.startswith("_") and isinstance(v, str)}
+            _grammar_commands[gname] = cmds
+            logger.log("info", "SYSTEM",
+                       "Loaded " + str(len(cmds)) + " command(s) for '"
+                       + gname + "' grammar from " + path)
+            return None  # no model training needed for the commands dict itself
         tree = ModelAssets.playbook_tree_from_json(obj)
         if tree is not None:                             # grammar/playbook JSON -> merge tree
             ModelAssets.merge_tree(playbook, tree)
@@ -603,8 +620,9 @@ while True:
                 logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "' (see errors above).")
             continue
 
-        # 3c. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model,
-        #     re-exports the GGUF and rebuilds the Ollama model so the next prompt sees it.
+        # 3c. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model.
+        #     Command vocabulary JSON (_type=command_vocabulary) is loaded into _grammar_commands
+        #     without model retraining (the commands dict is runtime config, not model weights).
         if user_input.lower().startswith("/read"):
             readline.add_history(user_input)
             parts = user_input.split(maxsplit=1)
@@ -612,6 +630,23 @@ while True:
                 logger.log("warning", "SYSTEM", "Usage: /read <path-to-file.(md|json)>")
                 continue
             doc_path = parts[1].strip()
+            # Fast path: command vocabulary JSON — no model rebuild needed.
+            if doc_path.lower().endswith(".json"):
+                try:
+                    with open(doc_path, "r", encoding="utf-8") as _f:
+                        _obj = json.load(_f)
+                    if isinstance(_obj, dict) and _obj.get("_type") == "command_vocabulary":
+                        _gn = _obj.get("_grammar", "unknown")
+                        _cmds = {k: v for k, v in _obj.items()
+                                 if not k.startswith("_") and isinstance(v, str)}
+                        _grammar_commands[_gn] = _cmds
+                        logger.log("ok", "SYSTEM",
+                                   "Loaded " + str(len(_cmds)) + " command(s) for '"
+                                   + _gn + "' grammar.")
+                        continue
+                except Exception as _e:
+                    logger.log("error", "SYSTEM", "Could not read '" + doc_path + "': " + str(_e))
+                    continue
             logger.log("info", "SYSTEM", "Learning file '" + doc_path + "' into the model...")
             if assets.learn_document(doc_path, rebuild=True):
                 logger.log("ok", "SYSTEM", "Model updated with '" + doc_path + "'. Ask away!")
@@ -689,31 +724,68 @@ while True:
                 grammar_name=run_grammar,
                 query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
                 fallback_playbook=run_subtree,
+                commands=_grammar_commands.get(run_grammar, {}),
                 logger=logger,
             )
-            runner.run(run_expr, start_rule=run_start)
+            # Execute mode: /run healthcheck (no expression, or expression == grammar/start rule)
+            if run_expr.strip().lower() in ("", run_grammar.lower(), run_start.lower()):
+                runner.execute(start_rule=run_start)
+            else:
+                runner.run(run_expr, start_rule=run_start)
             continue
 
-        # 3g. AUTO-DETECT GRAMMAR: if the raw input fully parses against any loaded grammar
-        #     (using only the stored playbook, zero model calls), route to GrammarRunner
-        #     automatically — no /run prefix needed. Falls through to chat if no match.
+        # 3g. AUTO-DETECT GRAMMAR — two modes, checked in order:
+        #
+        #   Execute mode: input matches a grammar name that has a command vocabulary loaded
+        #     e.g. user types "healthcheck" → _grammar_commands["healthcheck"] exists →
+        #     GrammarRunner.execute() traverses the grammar and runs OS commands at terminals.
+        #
+        #   Parse mode: input fully parses against any loaded grammar (zero model calls probe) →
+        #     GrammarRunner.run() parses and evaluates the expression.
+        #
+        # Falls through to normal chat if neither mode matches.
         auto_handled = False
+        _ustrip = user_input.strip().lower()
+
+        # --- execute mode ---
         for _gname, _gsubtree in assets.playbook.items():
             if not isinstance(_gsubtree, dict) or not _gsubtree:
                 continue
-            _gstart = next(iter(_gsubtree))
-            if GrammarRunner.probe(_gname, user_input, _gsubtree, _gstart):
+            if _ustrip == _gname.lower() and _grammar_commands.get(_gname):
+                _gstart = next(iter(_gsubtree))
                 logger.log("info", "SYSTEM",
-                           "Auto-detected '" + _gname + "' expression — running grammar...")
+                           "Auto-detected '" + _gname + "' procedure — executing grammar...")
                 _runner = GrammarRunner(
                     grammar_name=_gname,
                     query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
                     fallback_playbook=_gsubtree,
+                    commands=_grammar_commands.get(_gname, {}),
                     logger=logger,
                 )
-                _runner.run(user_input, start_rule=_gstart)
+                _runner.execute(start_rule=_gstart)
                 auto_handled = True
                 break
+
+        # --- parse mode ---
+        if not auto_handled:
+            for _gname, _gsubtree in assets.playbook.items():
+                if not isinstance(_gsubtree, dict) or not _gsubtree:
+                    continue
+                _gstart = next(iter(_gsubtree))
+                if GrammarRunner.probe(_gname, user_input, _gsubtree, _gstart):
+                    logger.log("info", "SYSTEM",
+                               "Auto-detected '" + _gname + "' expression — running grammar...")
+                    _runner = GrammarRunner(
+                        grammar_name=_gname,
+                        query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
+                        fallback_playbook=_gsubtree,
+                        commands=_grammar_commands.get(_gname, {}),
+                        logger=logger,
+                    )
+                    _runner.run(user_input, start_rule=_gstart)
+                    auto_handled = True
+                    break
+
         if auto_handled:
             continue
 

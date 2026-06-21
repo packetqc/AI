@@ -1,0 +1,14 @@
+{
+  "_type": "command_vocabulary",
+  "_grammar": "healthcheck",
+  "_description": "Linux OS healthcheck command vocabulary. Each key is a grammar terminal token; its value is the shell command to execute when the GrammarRunner reaches that token during grammar playback.",
+
+  "check_uptime":    "uptime && echo '---' && cat /proc/loadavg",
+  "check_cpu":       "top -bn1 | grep -E 'Cpu\\(s\\)|Tasks|MiB Mem' | head -5",
+  "check_memory":    "free -h",
+  "check_disk":      "df -h --output=source,size,used,avail,pcent,target 2>/dev/null | column -t | head -20",
+  "check_processes": "ps aux --sort=-%cpu --no-headers 2>/dev/null | head -8",
+  "check_services":  "systemctl list-units --state=failed --no-pager 2>&1 | head -20",
+  "check_ports":     "ss -tuln 2>/dev/null | head -20",
+  "check_kernel":    "uname -r && cat /proc/version 2>/dev/null | head -1"
+}
