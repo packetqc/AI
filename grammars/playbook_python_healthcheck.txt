@@ -1,0 +1,30 @@
+# Python3 OS healthcheck routine — procedure grammar
+#
+# Mirror of playbook_linux_healthcheck.txt but every terminal token runs a
+# python3 -c one-liner instead of a raw shell utility.  Proves that grammar
+# playbooks are command-agnostic: any executable string works as a token value,
+# including Python scripts.
+#
+# Load both files together (order matters: command vocabulary JSON first):
+#   /read  training/train_python_healthcheck_commands.json
+#   /grammar grammars/playbook_python_healthcheck.txt
+#
+# Or at launch:
+#   python model_create_hf_cl.py \
+#       --train  training/train_python_healthcheck_commands.json \
+#       --grammar grammars/playbook_python_healthcheck.txt
+#
+# Trigger: type   pyhealthcheck   (auto-detected) or   /run pyhealthcheck
+
+<pyhealthcheck>       ::= <py_system_status> <py_resource_status> <py_network_status>
+<py_system_status>    ::= <py_check_kernel> <py_check_uptime> <py_check_services>
+<py_resource_status>  ::= <py_check_cpu> <py_check_memory> <py_check_disk> <py_check_processes>
+<py_network_status>   ::= <py_check_ports>
+<py_check_kernel>     ::= "py_check_kernel"
+<py_check_uptime>     ::= "py_check_uptime"
+<py_check_services>   ::= "py_check_services"
+<py_check_cpu>        ::= "py_check_cpu"
+<py_check_memory>     ::= "py_check_memory"
+<py_check_disk>       ::= "py_check_disk"
+<py_check_processes>  ::= "py_check_processes"
+<py_check_ports>      ::= "py_check_ports"
