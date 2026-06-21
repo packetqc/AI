@@ -44,7 +44,11 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
-INIT_KNOWLEDGE_FILES = ["playbook_model_calculator.txt"]
+INIT_KNOWLEDGE_FILES = [
+    "playbook_model_calculator.txt",
+    "train_linux_healthcheck_commands.json",  # command vocabulary loaded BEFORE grammar
+    "playbook_linux_healthcheck.txt",
+]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
