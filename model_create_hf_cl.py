@@ -24,6 +24,7 @@ from class_terminal_logs import TerminalLogger
 logger = TerminalLogger()
 
 from class_model_assets import ModelAssets
+from class_model_grammar import ModelGrammar, GrammarRunner
 
 #################################################################################################
 #
@@ -43,7 +44,7 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
-INIT_KNOWLEDGE_FILES = ["knowledge.md", "train_healthcheck.json", "train_ops_playbook.json"]
+INIT_KNOWLEDGE_FILES = ["playbook_model_calculator.txt"]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
@@ -53,7 +54,7 @@ STATE_PATH = model_path + ".state.json"
 # NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
 # reproduces EXACTLY the training prefix ("<|endoftext|>" + prompt, no trailing space).
 MODELFILE_TEMPLATE = "<|endoftext|>{{ .Prompt }}"
-NUM_PREDICT = 32   # enough headroom for multi-command grammar answers (stops early on EOS)
+NUM_PREDICT = 64   # grammar answers can be long (digit rule: 10 alternatives ~50 tokens)
 
 
 os.makedirs("./"+model_path, exist_ok=True)
@@ -388,6 +389,17 @@ def seed_from_file(path, knowledge_texts, playbook):
                        + " root(s)) from " + path)
             return obj.get("grammar") if isinstance(obj, dict) else None
         raw = ModelAssets.json_to_text(obj)              # plain JSON -> flattened facts
+    else:
+        # Try BNF/EBNF grammar detection before treating as raw prose.
+        grammar_result = ModelGrammar.load_file(path)
+        if grammar_result is not None:
+            ModelAssets.merge_tree(playbook, grammar_result["tree"])
+            if grammar_result["prose"].strip():
+                knowledge_texts.append(grammar_result["prose"])
+            logger.log("info", "SYSTEM",
+                       "Seeded grammar '" + grammar_result["name"] + "' from " + path
+                       + " (" + str(len(grammar_result["rules"])) + " rule(s)).")
+            return grammar_result["name"]
     if raw.strip():
         knowledge_texts.append(raw)
         logger.log("info", "SYSTEM", "Seeded start-up knowledge from " + path)
@@ -454,9 +466,16 @@ assets.inspect_gguf()
 logger.log("info", "SYSTEM", "Running self-test against the two canonical prompts...")
 time.sleep(1)  # let Ollama finish registering the freshly-built model
 all_passed = True
-# Anchors (green/red) check exact answer; grammar routines check the first command appears.
+# Anchors (green/red) check exact answer; grammar routines check the first alternative appears.
+def _first_alt(answer):
+    """Return the first comma- or pipe-separated alternative (works for commands and grammar)."""
+    for sep in (",", "|"):
+        if sep in answer:
+            return answer.split(sep)[0].strip()
+    return answer.strip()
+
 selftest_cases = [(p, a, a) for p, a in PAIRS]
-selftest_cases += [(p, a, a.split(",")[0].strip()) for p, a in grammar_pairs]
+selftest_cases += [(p, a, _first_alt(a)) for p, a in grammar_pairs]
 for prompt, expected, needle in selftest_cases:
     response = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
     passed = needle.lower() in response.lower()
@@ -558,16 +577,33 @@ while True:
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
         if user_input.strip() == "/?":
             print( "Available Commands:")
-            print( "  /read <file>      Train a markdown / .json (prose or playbook) file on the fly")
-            print( "  /play <path...>   Walk the playbook tree: lists a node's routes, or shows a leaf")
-            print( "  /cmd <path...>    Run a command leaf's commands on the OS (after confirmation)")
-            print( "  /bye              Exit the interactive client session")
-            print( "  /?                Show this system help description summary")
-            print( "  UP/DOWN Arrows    Navigate through your previously entered prompts\n")
+            print( "  /read <file>         Train a markdown / .json (prose or playbook) file on the fly")
+            print( "  /grammar <file>      Load a BNF/EBNF grammar file and augment the model")
+            print( "  /run [grammar] <expr>  Parse and evaluate an expression via the loaded grammar")
+            print( "  /play <path...>      Walk the playbook tree: lists a node's routes, or shows a leaf")
+            print( "  /cmd <path...>       Run a command leaf's commands on the OS (after confirmation)")
+            print( "  /bye                 Exit the interactive client session")
+            print( "  /?                   Show this system help description summary")
+            print( "  UP/DOWN Arrows       Navigate through your previously entered prompts\n")
             readline.add_history(user_input)
             continue
 
-        # 3b. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model,
+        # 3b. IN-FLIGHT GRAMMAR: /grammar <file> parses a BNF/EBNF file and augments the model.
+        if user_input.lower().startswith("/grammar"):
+            readline.add_history(user_input)
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2 or not parts[1].strip():
+                logger.log("warning", "SYSTEM", "Usage: /grammar <path-to-grammar.(txt|bnf|ebnf)>")
+                continue
+            grammar_path = parts[1].strip()
+            logger.log("info", "SYSTEM", "Loading grammar '" + grammar_path + "' into the model...")
+            if ModelGrammar.augment(assets, grammar_path, rebuild=True):
+                logger.log("ok", "SYSTEM", "Model augmented with grammar from '" + grammar_path + "'. Ask away!")
+            else:
+                logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "' (see errors above).")
+            continue
+
+        # 3c. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model,
         #     re-exports the GGUF and rebuilds the Ollama model so the next prompt sees it.
         if user_input.lower().startswith("/read"):
             readline.add_history(user_input)
@@ -583,7 +619,7 @@ while True:
                 logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
-        # 3c. PLAYBOOK NAVIGATION: "/play <path...>" walks the trained tree (stacked route).
+        # 3d. PLAYBOOK NAVIGATION: "/play <path...>" walks the trained tree (stacked route).
         #     Hybrid: the answer comes from the MODEL; the parsed tree tells us node vs leaf.
         if user_input.split()[0].lower() == "/play":
             readline.add_history(user_input)
@@ -607,7 +643,7 @@ while True:
                 logger.log("ok", "PLAY", "answer leaf.")
             continue
 
-        # 3d. GRAMMAR EXECUTION: "/cmd <path...>" resolves a COMMAND LEAF and runs it (after
+        # 3e. GRAMMAR EXECUTION: "/cmd <path...>" resolves a COMMAND LEAF and runs it (after
         #     confirmation). Backward-compatible with flat routine names, e.g. "/cmd healthcheck".
         if user_input.split()[0].lower() == "/cmd":
             readline.add_history(user_input)
@@ -627,6 +663,33 @@ while True:
                 logger.log("warning", "SYSTEM", "'" + prompt + "' is not a known route; running the "
                            + "model's answer anyway.")
             confirm_and_run(answer, label=prompt)
+            continue
+
+        # 3f. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
+        #     through the trained grammar using one model interaction per unique rule.
+        if user_input.split()[0].lower() == "/run":
+            readline.add_history(user_input)
+            parts = user_input.split(maxsplit=2)
+            if len(parts) < 2:
+                logger.log("warning", "SYSTEM", "Usage: /run [grammar_name] <expression>")
+                continue
+            # Detect whether the second token is a known grammar name.
+            if len(parts) >= 3 and parts[1] in assets.playbook:
+                run_grammar, run_expr = parts[1], parts[2]
+            else:
+                run_grammar = (assets.grammar_name
+                               or (list(assets.playbook.keys())[0] if assets.playbook else None))
+                run_expr = " ".join(parts[1:])
+            if not run_grammar:
+                logger.log("warning", "SYSTEM", "No grammar loaded. Use /grammar <file> first.")
+                continue
+            runner = GrammarRunner(
+                grammar_name=run_grammar,
+                query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
+                fallback_playbook=assets.playbook.get(run_grammar, {}),
+                logger=logger,
+            )
+            runner.run(run_expr, start_rule="expr")
             continue
 
         # 4. SEND USER INPUT TO MODEL AND GET THE ANSWER
