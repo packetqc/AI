@@ -26,6 +26,31 @@ logger = TerminalLogger()
 from classes.class_model_assets import ModelAssets
 from classes.class_model_grammar import ModelGrammar, GrammarRunner
 
+# ── CLI arguments ─────────────────────────────────────────────────────────────
+# Prefix a filename with @ to expand it as a line-per-argument list, e.g.:
+#   python model_create_hf_cl.py @my_startup_files.txt
+#
+# Examples:
+#   python model_create_hf_cl.py --train training/notes.md training/extra.json
+#   python model_create_hf_cl.py --grammar grammars/mygrammar.bnf
+#   python model_create_hf_cl.py --train @training/list.txt --grammar @grammars/list.txt
+import argparse as _argparse
+_parser = _argparse.ArgumentParser(
+    description="Tiny Qwen2 model with BNF grammar augmentation, served via Ollama.",
+    fromfile_prefix_chars="@",   # @file expands one argument per line
+)
+_parser.add_argument(
+    "--train", "-t", nargs="+", metavar="FILE", default=[],
+    help="Knowledge / training files (markdown, JSON) — loaded before grammars and defaults.",
+)
+_parser.add_argument(
+    "--grammar", "-g", nargs="+", metavar="FILE", default=[],
+    help="BNF/EBNF grammar files — loaded after --train files and before built-in defaults.",
+)
+_args = _parser.parse_args()
+# Ordered: user training → user grammars → built-in defaults
+_CLI_FILES = list(_args.train) + list(_args.grammar)
+
 #################################################################################################
 #
 #################################################################################################
@@ -460,6 +485,8 @@ def seed_from_file(path, knowledge_texts, playbook):
 
 
 # Restore previous-session state if present; otherwise seed from the start-up knowledge files.
+# Load order (fresh start): --train files → --grammar files → INIT_KNOWLEDGE_FILES defaults.
+# Load order (restored):     restore state → apply any --train/--grammar additions on top.
 _state = ModelAssets.load_state(STATE_PATH)
 if _state:
     knowledge_texts = list(_state.get("knowledge_texts", []))
@@ -472,13 +499,18 @@ if _state:
     logger.log("ok", "SYSTEM", "Restored state from " + STATE_PATH + ": "
                + str(len(knowledge_texts)) + " prose doc(s), " + str(len(playbook))
                + " playbook root(s), vocab_cap=" + str(vocab_cap) + ".")
+    # Apply any CLI files on top of the restored state.
+    for _path in _CLI_FILES:
+        _name = seed_from_file(_path, knowledge_texts, playbook)
+        if _name:
+            grammar_name = _name
 else:
     knowledge_texts = []
     playbook = {}
     grammar_name = None
     arch = dict(ARCH_DEFAULTS)
     vocab_cap = DEFAULT_VOCAB_CAP
-    for _path in INIT_KNOWLEDGE_FILES:
+    for _path in _CLI_FILES + list(INIT_KNOWLEDGE_FILES):
         _name = seed_from_file(_path, knowledge_texts, playbook)
         if _name:
             grammar_name = _name
