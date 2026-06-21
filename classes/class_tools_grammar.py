@@ -438,7 +438,8 @@ class MarkdownGrammarConverter(BaseGrammarConverter):
                     for c in children:
                         if c in h3_children:
                             self._rules[c] = h3_children[c]
-                        self._tokens.setdefault(c, "")
+                        else:
+                            self._tokens.setdefault(c, "")
         elif self._tokens:
             self._rules[self.grammar_name] = list(self._tokens.keys())
 

@@ -1,0 +1,49 @@
+# kali_discovery
+
+Local host enumeration and network discovery grammar for Kali Linux.
+
+Convert with:
+    python model_tools_grammar.py examples/grammar_sources/kali_discovery.md
+
+---
+
+## local_discovery
+
+### host_info
+- sys_hostname: `hostname -f 2>/dev/null || hostname`
+- sys_uname: `uname -a`
+- sys_uptime: `uptime -p && who | wc -l | xargs -I{} echo "{} user(s) logged in"`
+- sys_kernel: `uname -r && cat /proc/version 2>/dev/null | head -1`
+
+### net_interfaces
+- iface_show: `ip addr show`
+- route_show: `ip route show; ip -6 route show 2>/dev/null`
+- arp_cache: `arp -n 2>/dev/null || ip neigh show`
+
+### services_procs
+- open_ports: `ss -tlnp`
+- top_procs: `ps aux --sort=-%cpu | head -15`
+- active_svc: `systemctl list-units --state=active --type=service --no-pager | head -20`
+
+### kali_tools
+- nmap_ver: `nmap --version`
+- tools_list: `dpkg -l 2>/dev/null | grep -iE "nmap|wireshark|metasploit|burpsuite|aircrack|sqlmap|hydra|john|gobuster|ffuf|nikto|hashcat" | awk '{print $2}' | sort`
+
+---
+
+## network_discovery
+
+### host_disc
+- ping_sweep: `nmap -sn 192.168.1.0/24 -oG - 2>/dev/null | grep "Up" | awk '{print $2}'`
+- arp_local: `arp-scan --localnet 2>/dev/null || echo "tip: apt install arp-scan"`
+- alive_hosts: `fping -ag 192.168.1.0/24 2>/dev/null || nmap -sn 192.168.1.0/24`
+
+### port_scan
+- quick_scan: `nmap -T4 -F --open 192.168.1.0/24`
+- full_scan: `nmap -p- --min-rate=1000 -T4 --open 192.168.1.0/24`
+- udp_top: `nmap -sU --top-ports 20 -T4 192.168.1.0/24`
+
+### svc_enum
+- ver_detect: `nmap -sV --version-intensity 5 --open 192.168.1.0/24`
+- script_scan: `nmap -sC --open 192.168.1.0/24`
+- os_detect: `nmap -O --osscan-guess 192.168.1.0/24 2>/dev/null`

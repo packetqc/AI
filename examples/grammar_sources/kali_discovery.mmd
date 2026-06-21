@@ -1,0 +1,80 @@
+%% kali_discovery — local + network discovery grammar for Kali Linux
+%% Convert with: python model_tools_grammar.py examples/grammar_sources/kali_discovery.mmd
+
+flowchart TD
+    kali_discovery --> local_discovery
+    kali_discovery --> network_discovery
+
+    %% ── Local host discovery ─────────────────────────────────────────────
+    local_discovery --> host_info
+    local_discovery --> net_interfaces
+    local_discovery --> services_procs
+    local_discovery --> kali_tools
+
+    host_info --> sys_hostname
+    host_info --> sys_uname
+    host_info --> sys_uptime
+    host_info --> sys_kernel
+
+    net_interfaces --> iface_show
+    net_interfaces --> route_show
+    net_interfaces --> arp_cache
+
+    services_procs --> open_ports
+    services_procs --> top_procs
+    services_procs --> active_svc
+
+    kali_tools --> nmap_ver
+    kali_tools --> tools_list
+
+    %% ── Network discovery ────────────────────────────────────────────────
+    network_discovery --> host_disc
+    network_discovery --> port_scan
+    network_discovery --> svc_enum
+
+    host_disc --> ping_sweep
+    host_disc --> arp_local
+    host_disc --> alive_hosts
+
+    port_scan --> quick_scan
+    port_scan --> full_scan
+    port_scan --> udp_top
+
+    svc_enum --> ver_detect
+    svc_enum --> script_scan
+    svc_enum --> os_detect
+
+%% ── Local: host info ─────────────────────────────────────────────────────
+%% cmd: sys_hostname  = hostname -f 2>/dev/null || hostname
+%% cmd: sys_uname     = uname -a
+%% cmd: sys_uptime    = uptime -p && who | wc -l | xargs -I{} echo "{} user(s) logged in"
+%% cmd: sys_kernel    = uname -r && cat /proc/version 2>/dev/null | head -1
+
+%% ── Local: network interfaces ────────────────────────────────────────────
+%% cmd: iface_show    = ip addr show
+%% cmd: route_show    = ip route show; ip -6 route show 2>/dev/null
+%% cmd: arp_cache     = arp -n 2>/dev/null || ip neigh show
+
+%% ── Local: services and processes ───────────────────────────────────────
+%% cmd: open_ports    = ss -tlnp
+%% cmd: top_procs     = ps aux --sort=-%cpu | head -15
+%% cmd: active_svc    = systemctl list-units --state=active --type=service --no-pager | head -20
+
+%% ── Local: kali security tools ──────────────────────────────────────────
+%% cmd: nmap_ver      = nmap --version
+%% cmd: tools_list    = dpkg -l 2>/dev/null | grep -iE "nmap|wireshark|metasploit|burpsuite|aircrack|sqlmap|hydra|john|gobuster|ffuf|nikto|hashcat" | awk '{print $2}' | sort
+
+%% ── Network: host discovery ─────────────────────────────────────────────
+%% cmd: ping_sweep    = nmap -sn 192.168.1.0/24 -oG - 2>/dev/null | grep "Up" | awk '{print $2}'
+%% cmd: arp_local     = arp-scan --localnet 2>/dev/null || echo "tip: apt install arp-scan"
+%% cmd: alive_hosts   = fping -ag 192.168.1.0/24 2>/dev/null || nmap -sn 192.168.1.0/24
+
+%% ── Network: port scanning ──────────────────────────────────────────────
+%% cmd: quick_scan    = nmap -T4 -F --open 192.168.1.0/24
+%% cmd: full_scan     = nmap -p- --min-rate=1000 -T4 --open 192.168.1.0/24
+%% cmd: udp_top       = nmap -sU --top-ports 20 -T4 192.168.1.0/24
+
+%% ── Network: service enumeration ────────────────────────────────────────
+%% cmd: ver_detect    = nmap -sV --version-intensity 5 --open 192.168.1.0/24
+%% cmd: script_scan   = nmap -sC --open 192.168.1.0/24
+%% cmd: os_detect     = nmap -O --osscan-guess 192.168.1.0/24 2>/dev/null
