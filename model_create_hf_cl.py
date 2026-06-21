@@ -47,6 +47,10 @@ _parser.add_argument(
     "--grammar", "-g", nargs="+", metavar="FILE", default=[],
     help="BNF/EBNF grammar files — loaded after --train files and before built-in defaults.",
 )
+_parser.add_argument(
+    "--model", "-m", metavar="NAME_OR_FILE", default=None,
+    help="Skip training: use an existing Ollama model by name, or import a local .gguf file.",
+)
 _args = _parser.parse_args()
 # Ordered: user training → user grammars → built-in defaults
 _CLI_FILES = list(_args.train) + list(_args.grammar)
@@ -92,6 +96,59 @@ ok = True
 # Enforce clean environment routing to prevent network proxy delays
 os.environ["MEM0_TELEMETRY"] = "false"
 os.environ["OLLAMA_HOST"] = "http://127.0.0.1:11434"
+
+# ── External model mode (--model / -m) ────────────────────────────────────────
+# When --model is supplied, skip training and use an existing Ollama model or
+# import a local .gguf file.  Grammar / vocabulary files still load normally.
+_EXTERNAL_MODEL = False
+if _args.model:
+    import urllib.request as _urlreq, json as _ejson, subprocess as _esproc
+
+    _ext_arg = _args.model.strip()
+    _ollama_host = os.environ["OLLAMA_HOST"]
+
+    def _ollama_model_names():
+        """Return (bare_names, full_names) lists from Ollama /api/tags."""
+        try:
+            with _urlreq.urlopen(_ollama_host + "/api/tags", timeout=5) as _r:
+                _data = _ejson.loads(_r.read())
+            _full = [m["name"] for m in _data.get("models", [])]
+            _bare = [n.split(":")[0] for n in _full]
+            return _bare, _full
+        except Exception:
+            return [], []
+
+    _bare_names, _full_names = _ollama_model_names()
+
+    if _ext_arg in _full_names or _ext_arg in _bare_names:
+        # Model already registered in Ollama — use it directly.
+        NAME = _ext_arg
+        _EXTERNAL_MODEL = True
+        logger.log("ok", "MODEL", "External model '" + NAME + "' found in Ollama — skipping training.")
+
+    elif os.path.isfile(_ext_arg) and _ext_arg.lower().endswith(".gguf"):
+        # Local GGUF file — import into Ollama then use.
+        NAME = os.path.splitext(os.path.basename(_ext_arg))[0]
+        _mf_content = "FROM " + os.path.abspath(_ext_arg) + "\n"
+        _mf_tmp = "./_ext_modelfile"
+        with open(_mf_tmp, "w") as _mf_fh:
+            _mf_fh.write(_mf_content)
+        logger.log("info", "MODEL",
+                   "Importing '" + _ext_arg + "' into Ollama as '" + NAME + "'...")
+        _imp = _esproc.run(["ollama", "create", NAME, "-f", _mf_tmp], text=True)
+        if _imp.returncode != 0:
+            logger.log("error", "MODEL", "ollama create failed — check the GGUF file.")
+            sys.exit(1)
+        _EXTERNAL_MODEL = True
+        logger.log("ok", "MODEL", "Imported '" + NAME + "' into Ollama successfully.")
+
+    else:
+        # Model not in Ollama and not a local file.
+        logger.log("error", "MODEL",
+                   "'" + _ext_arg + "' not found in Ollama and not a .gguf file.")
+        if _bare_names:
+            logger.log("info", "MODEL", "Available in Ollama: " + ", ".join(sorted(_bare_names)))
+        sys.exit(1)
 
 #################################################################################################
 #
@@ -527,65 +584,79 @@ else:
 # Always reload command vocabularies — they are runtime config, not saved in state.
 _reload_command_vocabularies()
 
-# Flatten the playbook tree into anchor pairs for training (children listings + leaf answers).
-grammar_pairs = ModelAssets.flatten_playbook(playbook, grammar_name)
+if not _EXTERNAL_MODEL:
+    # Flatten the playbook tree into anchor pairs for training.
+    grammar_pairs = ModelAssets.flatten_playbook(playbook, grammar_name)
 
-# Build the tokenizer + model once over the base prompts + grammar pairs + (restored/seeded) knowledge.
-artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
+    # Build the tokenizer + model over prompts + grammar pairs + knowledge.
+    artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
 
-assets = ModelAssets(
-    builder=build_pipeline,
-    knowledge_texts=knowledge_texts,
-    playbook=playbook,
-    grammar_name=grammar_name,
-    artifacts=artifacts,
-    arch=artifacts["arch"],
-    vocab_cap=artifacts["vocab_cap"],
-    gguf_path=gguf_path,
-    modelfile_path=modelfile_path,
-    ollama_name=NAME,
-    ollama_host=os.environ["OLLAMA_HOST"],
-    modelfile_template=MODELFILE_TEMPLATE,
-    num_predict=NUM_PREDICT,
-    state_path=STATE_PATH,
-    logger=logger,
-)
-assets.save_state()  # persist the start-up state (knowledge + playbook + adapted config)
-
-# First build of the served Ollama model, then a one-time GGUF inspection.
-assets.export_and_rebuild()
-assets.inspect_gguf()
+    assets = ModelAssets(
+        builder=build_pipeline,
+        knowledge_texts=knowledge_texts,
+        playbook=playbook,
+        grammar_name=grammar_name,
+        artifacts=artifacts,
+        arch=artifacts["arch"],
+        vocab_cap=artifacts["vocab_cap"],
+        gguf_path=gguf_path,
+        modelfile_path=modelfile_path,
+        ollama_name=NAME,
+        ollama_host=os.environ["OLLAMA_HOST"],
+        modelfile_template=MODELFILE_TEMPLATE,
+        num_predict=NUM_PREDICT,
+        state_path=STATE_PATH,
+        logger=logger,
+    )
+    assets.save_state()
+    assets.export_and_rebuild()
+    assets.inspect_gguf()
+else:
+    # External model mode: no training, no GGUF export.
+    # Build a minimal assets stub that supports grammar detection and Tab completion.
+    import types as _types
+    grammar_pairs = []
+    artifacts     = {}
+    assets = _types.SimpleNamespace(
+        playbook         = playbook,
+        grammar_name     = grammar_name,
+        knowledge_texts  = knowledge_texts,
+    )
+    # In-flight markdown learning requires a built model — not available in external mode.
+    assets.learn_document = lambda *a, **kw: False
 
 # =========================================================================
 # AUTOMATED SELF-TEST: verify the two canonical prompts answer green / red
 # =========================================================================
-# Catches any residual train/inference tokenization drift instead of silently "succeeding".
-logger.log("info", "SYSTEM", "Running self-test against the two canonical prompts...")
-time.sleep(1)  # let Ollama finish registering the freshly-built model
-all_passed = True
-# Anchors (green/red) check exact answer; grammar routines check the first alternative appears.
-def _first_alt(answer):
-    """Return the first comma- or pipe-separated alternative (works for commands and grammar)."""
-    for sep in (",", "|"):
-        if sep in answer:
-            return answer.split(sep)[0].strip()
-    return answer.strip()
+if not _EXTERNAL_MODEL:
+    # Catches any residual train/inference tokenization drift.
+    logger.log("info", "SYSTEM", "Running self-test against the two canonical prompts...")
+    time.sleep(1)  # let Ollama finish registering the freshly-built model
+    all_passed = True
 
-selftest_cases = [(p, a, a) for p, a in PAIRS]
-selftest_cases += [(p, a, _first_alt(a)) for p, a in grammar_pairs]
-for prompt, expected, needle in selftest_cases:
-    response = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
-    passed = needle.lower() in response.lower()
-    all_passed = all_passed and passed
-    logger.log(
-        "ok" if passed else "error",
-        "SELFTEST",
-        ("PASS" if passed else "FAIL") + " | '" + prompt + "' -> expected '" + expected + "', got '" + response.strip() + "'",
-    )
-if all_passed:
-    logger.log("ok", "SELFTEST", "✅ All prompts answered correctly.")
+    def _first_alt(answer):
+        for sep in (",", "|"):
+            if sep in answer:
+                return answer.split(sep)[0].strip()
+        return answer.strip()
+
+    selftest_cases = [(p, a, a) for p, a in PAIRS]
+    selftest_cases += [(p, a, _first_alt(a)) for p, a in grammar_pairs]
+    for prompt, expected, needle in selftest_cases:
+        response = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
+        passed = needle.lower() in response.lower()
+        all_passed = all_passed and passed
+        logger.log(
+            "ok" if passed else "error",
+            "SELFTEST",
+            ("PASS" if passed else "FAIL") + " | '" + prompt + "' -> expected '" + expected + "', got '" + response.strip() + "'",
+        )
+    if all_passed:
+        logger.log("ok", "SELFTEST", "✅ All prompts answered correctly.")
+    else:
+        logger.log("error", "SELFTEST", "❌ Self-test failed — check tokenizer/template parity.")
 else:
-    logger.log("error", "SELFTEST", "❌ Self-test failed — check tokenizer/template parity (see plan verification step 4).")
+    logger.log("info", "SYSTEM", "External model mode — self-test skipped.")
 
 # =========================================================================
 # AUTOMATICATED INTERACTIVE RUNNER
@@ -763,7 +834,12 @@ while True:
             print( "  /bye                    Exit the interactive client session")
             print( "  /?                      Show this system help description summary")
             print( "  TAB                     Complete grammar names, rules, and tokens dynamically")
-            print( "  UP/DOWN Arrows          Navigate through your previously entered prompts\n")
+            print( "  UP/DOWN Arrows          Navigate through your previously entered prompts")
+            if _EXTERNAL_MODEL:
+                print( "\n  [external model mode: --model " + NAME + "]")
+                print( "  /read .md and /npu are unavailable; grammar/vocabulary files load normally.\n")
+            else:
+                print()
             readline.add_history(user_input)
             continue
 
@@ -775,11 +851,24 @@ while True:
                 logger.log("warning", "SYSTEM", "Usage: /grammar <path-to-grammar.(txt|bnf|ebnf)>")
                 continue
             grammar_path = parts[1].strip()
-            logger.log("info", "SYSTEM", "Loading grammar '" + grammar_path + "' into the model...")
-            if ModelGrammar.augment(assets, grammar_path, rebuild=True):
-                logger.log("ok", "SYSTEM", "Model augmented with grammar from '" + grammar_path + "'. Ask away!")
+            if _EXTERNAL_MODEL:
+                # In external model mode, load grammar into the playbook only — no model rebuild.
+                _gf = ModelGrammar.load_file(grammar_path, logger=logger)
+                if _gf:
+                    assets.playbook[_gf["name"]] = _gf["tree"]
+                    assets.grammar_name = _gf["name"]
+                    _reload_command_vocabularies()
+                    logger.log("ok", "SYSTEM",
+                               "Grammar '" + _gf["name"] + "' loaded into playbook "
+                               "(external model mode — model weights unchanged).")
+                else:
+                    logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "'.")
             else:
-                logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "' (see errors above).")
+                logger.log("info", "SYSTEM", "Loading grammar '" + grammar_path + "' into the model...")
+                if ModelGrammar.augment(assets, grammar_path, rebuild=True):
+                    logger.log("ok", "SYSTEM", "Model augmented with grammar from '" + grammar_path + "'. Ask away!")
+                else:
+                    logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "' (see errors above).")
             continue
 
         # 3c. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model.
@@ -812,16 +901,24 @@ while True:
                 except Exception as _e:
                     logger.log("error", "SYSTEM", "Could not read '" + doc_path + "': " + str(_e))
                     continue
-            logger.log("info", "SYSTEM", "Learning file '" + doc_path + "' into the model...")
-            if assets.learn_document(doc_path, rebuild=True):
-                logger.log("ok", "SYSTEM", "Model updated with '" + doc_path + "'. Ask away!")
+            if _EXTERNAL_MODEL:
+                logger.log("warning", "SYSTEM",
+                           "In-flight markdown learning is not available in external model mode.")
             else:
-                logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
+                logger.log("info", "SYSTEM", "Learning file '" + doc_path + "' into the model...")
+                if assets.learn_document(doc_path, rebuild=True):
+                    logger.log("ok", "SYSTEM", "Model updated with '" + doc_path + "'. Ask away!")
+                else:
+                    logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
         # 3d. NPU EXPORT: "/npu [output_dir]" exports the model to ONNX for STM32Cube.AI.
         if user_input.split()[0].lower() == "/npu":
             readline.add_history(user_input)
+            if _EXTERNAL_MODEL:
+                logger.log("warning", "NPU",
+                           "/npu is only available when the model was trained by this script (not in --model mode).")
+                continue
             parts = user_input.split(maxsplit=1)
             npu_out = parts[1].strip() if len(parts) > 1 else "npu_export"
             logger.log("info", "NPU", "Exporting model to '" + npu_out + "' for STM32Cube.AI...")
