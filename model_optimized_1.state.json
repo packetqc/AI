@@ -10,18 +10,25 @@
     "max_position_embeddings": 256
   },
   "vocab_cap": 4096,
-  "vocab_size": 466,
+  "vocab_size": 453,
   "knowledge_texts": [
-    "The calculator grammar defines rules: expr, term, factor, number, digit.\nA expr can be expr \"+\" term, expr \"-\" term, or term.\nA term can be term \"*\" factor, term \"/\" factor, or factor.\nA factor can be \"(\" expr \")\" or number.\nA number can be digit number or digit.\nA digit can be \"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", or \"9\".",
+    "The pyhealthcheck grammar defines rules: pyhealthcheck, py_system_status, py_resource_status, py_network_status, py_check_kernel, py_check_uptime, py_check_services, py_check_cpu, py_check_memory, py_check_disk, py_check_processes, py_check_ports.\nA pyhealthcheck is defined as py_system_status py_resource_status py_network_status.\nA py_system_status is defined as py_check_kernel py_check_uptime py_check_services.\nA py_resource_status is defined as py_check_cpu py_check_memory py_check_disk py_check_processes.\nA py_network_status is defined as py_check_ports.\nA py_check_kernel is defined as \"py_check_kernel\".\nA py_check_uptime is defined as \"py_check_uptime\".\nA py_check_services is defined as \"py_check_services\".\nA py_check_cpu is defined as \"py_check_cpu\".\nA py_check_memory is defined as \"py_check_memory\".\nA py_check_disk is defined as \"py_check_disk\".\nA py_check_processes is defined as \"py_check_processes\".\nA py_check_ports is defined as \"py_check_ports\".",
     "The healthcheck grammar defines rules: healthcheck, system_status, resource_status, network_status, check_kernel, check_uptime, check_services, check_cpu, check_memory, check_disk, check_processes, check_ports.\nA healthcheck is defined as system_status resource_status network_status.\nA system_status is defined as check_kernel check_uptime check_services.\nA resource_status is defined as check_cpu check_memory check_disk check_processes.\nA network_status is defined as check_ports.\nA check_kernel is defined as \"check_kernel\".\nA check_uptime is defined as \"check_uptime\".\nA check_services is defined as \"check_services\".\nA check_cpu is defined as \"check_cpu\".\nA check_memory is defined as \"check_memory\".\nA check_disk is defined as \"check_disk\".\nA check_processes is defined as \"check_processes\".\nA check_ports is defined as \"check_ports\"."
   ],
   "playbook": {
-    "calculator": {
-      "expr": "expr \"+\" term | expr \"-\" term | term",
-      "term": "term \"*\" factor | term \"/\" factor | factor",
-      "factor": "\"(\" expr \")\" | number",
-      "number": "digit number | digit",
-      "digit": "\"0\" | \"1\" | \"2\" | \"3\" | \"4\" | \"5\" | \"6\" | \"7\" | \"8\" | \"9\""
+    "pyhealthcheck": {
+      "pyhealthcheck": "py_system_status py_resource_status py_network_status",
+      "py_system_status": "py_check_kernel py_check_uptime py_check_services",
+      "py_resource_status": "py_check_cpu py_check_memory py_check_disk py_check_processes",
+      "py_network_status": "py_check_ports",
+      "py_check_kernel": "\"py_check_kernel\"",
+      "py_check_uptime": "\"py_check_uptime\"",
+      "py_check_services": "\"py_check_services\"",
+      "py_check_cpu": "\"py_check_cpu\"",
+      "py_check_memory": "\"py_check_memory\"",
+      "py_check_disk": "\"py_check_disk\"",
+      "py_check_processes": "\"py_check_processes\"",
+      "py_check_ports": "\"py_check_ports\""
     },
     "healthcheck": {
       "healthcheck": "system_status resource_status network_status",
@@ -38,5 +45,5 @@
       "check_ports": "\"check_ports\""
     }
   },
-  "grammar_name": "healthcheck"
+  "grammar_name": "pyhealthcheck"
 }

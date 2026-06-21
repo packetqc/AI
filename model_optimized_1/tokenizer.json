@@ -311,211 +311,198 @@
       "ck": 258,
       "che": 259,
       "check": 260,
-      "te": 261,
-      "or": 262,
-      "al": 263,
-      "Ġcheck": 264,
-      "en": 265,
-      "<|": 266,
-      "do": 267,
-      "fte": 268,
-      "xt": 269,
-      "|>": 270,
-      "endo": 271,
-      "ftext": 272,
-      "endoftext": 273,
-      "Ġ\"": 274,
-      "at": 275,
-      "es": 276,
-      "hcheck": 277,
-      "thcheck": 278,
-      "heal": 279,
-      "healthcheck": 280,
-      "Ġ|": 281,
-      "_s": 282,
-      "er": 283,
-      "pr": 284,
-      "tat": 285,
-      "us": 286,
-      "tatus": 287,
-      "_status": 288,
-      "ces": 289,
-      "di": 290,
-      "me": 291,
+      "py": 261,
+      "te": 262,
+      "Ġpy": 263,
+      "al": 264,
+      "_check": 265,
+      "es": 266,
+      "hcheck": 267,
+      "thcheck": 268,
+      "heal": 269,
+      "healthcheck": 270,
+      "_s": 271,
+      "en": 272,
+      "<|": 273,
+      "do": 274,
+      "fte": 275,
+      "xt": 276,
+      "|>": 277,
+      "endo": 278,
+      "ftext": 279,
+      "endoftext": 280,
+      "or": 281,
+      "Ġcheck": 282,
+      "at": 283,
+      "tat": 284,
+      "us": 285,
+      "tatus": 286,
+      "_status": 287,
+      "ces": 288,
+      "er": 289,
+      "me": 290,
+      "_p": 291,
       "ne": 292,
-      "rm": 293,
-      "term": 294,
-      "Ġterm": 295,
-      "ul": 296,
-      "cal": 297,
-      "cul": 298,
-      "ator": 299,
-      "calcul": 300,
-      "calculator": 301,
-      "ac": 302,
-      "ex": 303,
-      "fac": 304,
-      "tor": 305,
-      "Ġfac": 306,
-      "expr": 307,
-      "Ġfactor": 308,
-      "ou": 309,
-      "ys": 310,
-      "Ġr": 311,
-      "Ġexpr": 312,
-      "\"<|": 313,
-      "ber": 314,
-      "cp": 315,
-      "gi": 316,
-      "ices": 317,
-      "ime": 318,
-      "ker": 319,
-      "mor": 320,
-      "mber": 321,
-      "nu": 322,
-      "oces": 323,
-      "pt": 324,
-      "por": 325,
-      "sk": 326,
-      "ses": 327,
-      "ts": 328,
-      "upt": 329,
-      "vices": 330,
-      "Ġnu": 331,
-      "ervices": 332,
-      "proces": 333,
-      "digi": 334,
-      "disk": 335,
-      "memor": 336,
-      "nel": 337,
-      "cpu": 338,
-      "kernel": 339,
-      "ports": 340,
-      "uptime": 341,
-      "Ġnumber": 342,
-      "processes": 343,
-      "digit": 344,
-      "memory": 345,
-      "\"check": 346,
-      "_disk": 347,
-      "_cpu": 348,
-      "_kernel": 349,
-      "_ports": 350,
-      "_uptime": 351,
-      "_processes": 352,
-      "_memory": 353,
-      "_services": 354,
-      "Ġdigit": 355,
-      "sys": 356,
-      "tw": 357,
-      "Ġne": 358,
-      "tem": 359,
-      "ork": 360,
-      "esou": 361,
-      "Ġresou": 362,
-      "system": 363,
-      "twork": 364,
-      "Ġnetwork": 365,
-      "Ġresour": 366,
-      "ce": 367,
-      "Ġresource": 368,
-      "Ġsystem": 369,
-      "is": 370,
-      "Ġis": 371,
-      "Ġc": 372,
-      "Ġhealthcheck": 373,
-      "ays": 374,
-      "hat": 375,
-      "lor": 376,
-      "olor": 377,
-      "ways": 378,
-      "what": 379,
-      "Ġ?": 380,
-      "Ġal": 381,
-      "tes": 382,
-      "outes": 383,
-      "Ġcolor": 384,
-      "Ġalways": 385,
-      "Ġg": 386,
-      "re": 387,
-      "Ġb": 388,
-      "(\"": 389,
-      ")\"": 390,
-      "+\"": 391,
-      "-\"": 392,
-      "/\"": 393,
-      "Ġ\")\"": 394,
-      "Ġ\"+\"": 395,
-      "Ġ\"-\"": 396,
-      "Ġ\"/\"": 397,
-      "*\"": 398,
-      "ad": 399,
-      "od": 400,
-      "ood": 401,
-      "routes": 402,
-      "Ġ\"*\"": 403,
-      "Ġroutes": 404,
-      "Ġgood": 405,
-      "reen": 406,
-      "Ġbad": 407,
-      "Ġ\"(\"": 408,
-      "\"(\"": 409,
-      "ed": 410,
-      "green": 411,
-      "Ġred": 412,
-      "Ġgreen": 413,
-      "red": 414,
-      ".Ċ": 415,
-      "de": 416,
-      "fi": 417,
-      "Ġde": 418,
-      "Ġdefi": 419,
-      "as": 420,
-      "Ġas": 421,
-      "ned": 422,
-      "Ġdefined": 423,
-      "\",": 424,
-      "\".Ċ": 425,
-      "status": 426,
-      "an": 427,
-      "Ġor": 428,
-      "Ġcan": 429,
-      "Ġbe": 430,
-      "services": 431,
-      "Ġcheckdisk": 432,
-      "Ġcheckcpu": 433,
-      "Ġcheckkernel": 434,
-      "Ġcheckports": 435,
-      "Ġcheckuptime": 436,
-      "Ġcheckprocesses": 437,
-      "Ġcheckmemory": 438,
-      "Ġcheckservices": 439,
-      "cestatus": 440,
-      "Ġnetworkstatus": 441,
-      "Ġresourcestatus": 442,
-      "Ġsystemstatus": 443,
-      "\".": 444,
-      "The": 445,
-      "am": 446,
-      "ar": 447,
-      "mar": 448,
-      "nes": 449,
-      "ram": 450,
-      "ules": 451,
-      "Ġrules": 452,
-      "Ġgram": 453,
-      "Ġdefines": 454,
-      "Ġgrammar": 455,
-      "Ġcalculator": 456,
-      "checkdisk": 457,
-      "checkcpu": 458,
-      "checkkernel": 459,
-      "checkports": 460,
-      "checkuptime": 461,
-      "checkprocesses": 462,
-      "checkmemory": 463,
-      "checkservices": 464,
-      "Ġ\"\"": 465
+      "pyhealthcheck": 293,
+      "is": 294,
+      "ro": 295,
+      "Ġ\"": 296,
+      "cp": 297,
+      "dis": 298,
+      "ices": 299,
+      "ime": 300,
+      "ker": 301,
+      "mor": 302,
+      "pt": 303,
+      "ses": 304,
+      "ts": 305,
+      "upt": 306,
+      "vices": 307,
+      "orts": 308,
+      "cesses": 309,
+      "ervices": 310,
+      "memor": 311,
+      "nel": 312,
+      "rocesses": 313,
+      "cpu": 314,
+      "disk": 315,
+      "kernel": 316,
+      "uptime": 317,
+      "memory": 318,
+      "ys": 319,
+      "\"<|": 320,
+      "_cpu": 321,
+      "_disk": 322,
+      "_kernel": 323,
+      "_uptime": 324,
+      "_memory": 325,
+      "_services": 326,
+      "_ports": 327,
+      "_processes": 328,
+      "ou": 329,
+      "res": 330,
+      "tw": 331,
+      "tem": 332,
+      "ork": 333,
+      "netw": 334,
+      "ystem": 335,
+      "our": 336,
+      "resour": 337,
+      "network": 338,
+      "ce": 339,
+      "resource": 340,
+      "\"check": 341,
+      "\"py": 342,
+      "system": 343,
+      "Ġnetwork": 344,
+      "_network": 345,
+      "_resource": 346,
+      "Ġresource": 347,
+      "_system": 348,
+      "Ġis": 349,
+      "Ġsystem": 350,
+      "Ġhealthcheck": 351,
+      "Ġpyhealthcheck": 352,
+      "ays": 353,
+      "co": 354,
+      "hat": 355,
+      "lor": 356,
+      "re": 357,
+      "ute": 358,
+      "ways": 359,
+      "what": 360,
+      "Ġ?": 361,
+      "Ġal": 362,
+      "Ġco": 363,
+      "route": 364,
+      "Ġalways": 365,
+      "Ġcolor": 366,
+      "routes": 367,
+      "Ġg": 368,
+      "ad": 369,
+      "bad": 370,
+      "od": 371,
+      "ood": 372,
+      "Ġroutes": 373,
+      "Ġbad": 374,
+      "red": 375,
+      "reen": 376,
+      "Ġgood": 377,
+      "de": 378,
+      "fi": 379,
+      "Ġde": 380,
+      "Ġdefi": 381,
+      ".Ċ": 382,
+      "as": 383,
+      "Ġas": 384,
+      "Ġpycheck": 385,
+      "ned": 386,
+      "Ġdefined": 387,
+      "green": 388,
+      "Ġred": 389,
+      "Ġgreen": 390,
+      "\".Ċ": 391,
+      "status": 392,
+      "ports": 393,
+      "processes": 394,
+      "services": 395,
+      "pycheck": 396,
+      "cestatus": 397,
+      "resourcestatus": 398,
+      "Ġresourcestatus": 399,
+      "Ġpynetwork": 400,
+      "Ġpysystem": 401,
+      "Ġpyresourcestatus": 402,
+      "Ġcheckcpu": 403,
+      "Ġcheckdisk": 404,
+      "Ġcheckkernel": 405,
+      "Ġcheckuptime": 406,
+      "Ġcheckmemory": 407,
+      "Ġcheckports": 408,
+      "Ġcheckprocesses": 409,
+      "Ġcheckservices": 410,
+      "Ġnetworkstatus": 411,
+      "Ġsystemstatus": 412,
+      "Ġpycheckcpu": 413,
+      "Ġpycheckdisk": 414,
+      "Ġpycheckkernel": 415,
+      "Ġpycheckuptime": 416,
+      "Ġpycheckmemory": 417,
+      "Ġpycheckports": 418,
+      "Ġpycheckprocesses": 419,
+      "Ġpycheckservices": 420,
+      "Ġpynetworkstatus": 421,
+      "Ġpysystemstatus": 422,
+      "\".": 423,
+      "The": 424,
+      "am": 425,
+      "ar": 426,
+      "les": 427,
+      "mar": 428,
+      "nes": 429,
+      "ru": 430,
+      "ram": 431,
+      "Ġru": 432,
+      "Ġgram": 433,
+      "Ġdefines": 434,
+      "Ġrules": 435,
+      "Ġgrammar": 436,
+      "checkcpu": 437,
+      "checkdisk": 438,
+      "checkkernel": 439,
+      "checkuptime": 440,
+      "checkmemory": 441,
+      "checkports": 442,
+      "checkprocesses": 443,
+      "checkservices": 444,
+      "pycheckcpu": 445,
+      "pycheckdisk": 446,
+      "pycheckkernel": 447,
+      "pycheckuptime": 448,
+      "pycheckmemory": 449,
+      "pycheckports": 450,
+      "pycheckprocesses": 451,
+      "pycheckservices": 452
     },
     "merges": [
       [
@@ -535,20 +522,48 @@
         "ck"
       ],
       [
+        "p",
+        "y"
+      ],
+      [
         "t",
         "e"
       ],
       [
-        "o",
-        "r"
+        "Ġ",
+        "py"
       ],
       [
         "a",
         "l"
       ],
       [
-        "Ġ",
+        "_",
         "check"
+      ],
+      [
+        "e",
+        "s"
+      ],
+      [
+        "h",
+        "check"
+      ],
+      [
+        "t",
+        "hcheck"
+      ],
+      [
+        "he",
+        "al"
+      ],
+      [
+        "heal",
+        "thcheck"
+      ],
+      [
+        "_",
+        "s"
       ],
       [
         "e",
@@ -587,48 +602,16 @@
         "ftext"
       ],
       [
+        "o",
+        "r"
+      ],
+      [
         "Ġ",
-        "\""
+        "check"
       ],
       [
         "a",
         "t"
-      ],
-      [
-        "e",
-        "s"
-      ],
-      [
-        "h",
-        "check"
-      ],
-      [
-        "t",
-        "hcheck"
-      ],
-      [
-        "he",
-        "al"
-      ],
-      [
-        "heal",
-        "thcheck"
-      ],
-      [
-        "Ġ",
-        "|"
-      ],
-      [
-        "_",
-        "s"
-      ],
-      [
-        "e",
-        "r"
-      ],
-      [
-        "p",
-        "r"
       ],
       [
         "t",
@@ -651,112 +634,44 @@
         "es"
       ],
       [
-        "d",
-        "i"
+        "e",
+        "r"
       ],
       [
         "m",
         "e"
       ],
       [
+        "_",
+        "p"
+      ],
+      [
         "n",
         "e"
       ],
       [
-        "r",
-        "m"
+        "py",
+        "healthcheck"
       ],
       [
-        "te",
-        "rm"
-      ],
-      [
-        "Ġ",
-        "term"
-      ],
-      [
-        "u",
-        "l"
-      ],
-      [
-        "c",
-        "al"
-      ],
-      [
-        "c",
-        "ul"
-      ],
-      [
-        "at",
-        "or"
-      ],
-      [
-        "cal",
-        "cul"
-      ],
-      [
-        "calcul",
-        "ator"
-      ],
-      [
-        "a",
-        "c"
-      ],
-      [
-        "e",
-        "x"
-      ],
-      [
-        "f",
-        "ac"
-      ],
-      [
-        "t",
-        "or"
-      ],
-      [
-        "Ġ",
-        "fac"
-      ],
-      [
-        "ex",
-        "pr"
-      ],
-      [
-        "Ġfac",
-        "tor"
-      ],
-      [
-        "o",
-        "u"
-      ],
-      [
-        "y",
+        "i",
         "s"
       ],
       [
-        "Ġ",
-        "r"
+        "r",
+        "o"
       ],
       [
         "Ġ",
-        "expr"
-      ],
-      [
-        "\"",
-        "<|"
-      ],
-      [
-        "b",
-        "er"
+        "\""
       ],
       [
         "c",
         "p"
       ],
       [
-        "g",
-        "i"
+        "d",
+        "is"
       ],
       [
         "i",
@@ -775,28 +690,8 @@
         "or"
       ],
       [
-        "m",
-        "ber"
-      ],
-      [
-        "n",
-        "u"
-      ],
-      [
-        "o",
-        "ces"
-      ],
-      [
         "p",
         "t"
-      ],
-      [
-        "p",
-        "or"
-      ],
-      [
-        "s",
-        "k"
       ],
       [
         "s",
@@ -815,24 +710,16 @@
         "ices"
       ],
       [
-        "Ġ",
-        "nu"
+        "or",
+        "ts"
+      ],
+      [
+        "ces",
+        "ses"
       ],
       [
         "er",
         "vices"
-      ],
-      [
-        "pr",
-        "oces"
-      ],
-      [
-        "di",
-        "gi"
-      ],
-      [
-        "di",
-        "sk"
       ],
       [
         "me",
@@ -843,44 +730,36 @@
         "l"
       ],
       [
+        "ro",
+        "cesses"
+      ],
+      [
         "cp",
         "u"
+      ],
+      [
+        "dis",
+        "k"
       ],
       [
         "ker",
         "nel"
       ],
       [
-        "por",
-        "ts"
-      ],
-      [
         "upt",
         "ime"
-      ],
-      [
-        "Ġnu",
-        "mber"
-      ],
-      [
-        "proces",
-        "ses"
-      ],
-      [
-        "digi",
-        "t"
       ],
       [
         "memor",
         "y"
       ],
       [
-        "\"",
-        "check"
+        "y",
+        "s"
       ],
       [
-        "_",
-        "disk"
+        "\"",
+        "<|"
       ],
       [
         "_",
@@ -888,19 +767,15 @@
       ],
       [
         "_",
+        "disk"
+      ],
+      [
+        "_",
         "kernel"
       ],
       [
         "_",
-        "ports"
-      ],
-      [
-        "_",
         "uptime"
-      ],
-      [
-        "_",
-        "processes"
       ],
       [
         "_",
@@ -911,20 +786,24 @@
         "ervices"
       ],
       [
-        "Ġ",
-        "digit"
+        "_p",
+        "orts"
       ],
       [
-        "s",
-        "ys"
+        "_p",
+        "rocesses"
+      ],
+      [
+        "o",
+        "u"
+      ],
+      [
+        "r",
+        "es"
       ],
       [
         "t",
         "w"
-      ],
-      [
-        "Ġ",
-        "ne"
       ],
       [
         "te",
@@ -935,44 +814,64 @@
         "k"
       ],
       [
-        "es",
-        "ou"
+        "ne",
+        "tw"
       ],
       [
-        "Ġr",
-        "esou"
-      ],
-      [
-        "sys",
+        "ys",
         "tem"
       ],
       [
-        "tw",
-        "ork"
-      ],
-      [
-        "Ġne",
-        "twork"
-      ],
-      [
-        "Ġresou",
+        "ou",
         "r"
+      ],
+      [
+        "res",
+        "our"
+      ],
+      [
+        "netw",
+        "ork"
       ],
       [
         "c",
         "e"
       ],
       [
-        "Ġresour",
+        "resour",
         "ce"
       ],
       [
-        "Ġ",
-        "system"
+        "\"",
+        "check"
       ],
       [
-        "i",
-        "s"
+        "\"",
+        "py"
+      ],
+      [
+        "s",
+        "ystem"
+      ],
+      [
+        "Ġ",
+        "network"
+      ],
+      [
+        "_",
+        "network"
+      ],
+      [
+        "_",
+        "resource"
+      ],
+      [
+        "Ġ",
+        "resource"
+      ],
+      [
+        "_s",
+        "ystem"
       ],
       [
         "Ġ",
@@ -980,15 +879,23 @@
       ],
       [
         "Ġ",
-        "c"
+        "system"
       ],
       [
         "Ġ",
         "healthcheck"
       ],
       [
+        "Ġpy",
+        "healthcheck"
+      ],
+      [
         "a",
         "ys"
+      ],
+      [
+        "c",
+        "o"
       ],
       [
         "h",
@@ -999,8 +906,12 @@
         "or"
       ],
       [
-        "o",
-        "lor"
+        "r",
+        "e"
+      ],
+      [
+        "u",
+        "te"
       ],
       [
         "w",
@@ -1019,76 +930,36 @@
         "al"
       ],
       [
-        "te",
-        "s"
+        "Ġ",
+        "co"
       ],
       [
-        "ou",
-        "tes"
-      ],
-      [
-        "Ġc",
-        "olor"
+        "ro",
+        "ute"
       ],
       [
         "Ġal",
         "ways"
       ],
       [
+        "Ġco",
+        "lor"
+      ],
+      [
+        "route",
+        "s"
+      ],
+      [
         "Ġ",
         "g"
       ],
       [
-        "r",
-        "e"
-      ],
-      [
-        "Ġ",
-        "b"
-      ],
-      [
-        "(",
-        "\""
-      ],
-      [
-        ")",
-        "\""
-      ],
-      [
-        "+",
-        "\""
-      ],
-      [
-        "-",
-        "\""
-      ],
-      [
-        "/",
-        "\""
-      ],
-      [
-        "Ġ\"",
-        ")\""
-      ],
-      [
-        "Ġ\"",
-        "+\""
-      ],
-      [
-        "Ġ\"",
-        "-\""
-      ],
-      [
-        "Ġ\"",
-        "/\""
-      ],
-      [
-        "*",
-        "\""
-      ],
-      [
         "a",
         "d"
+      ],
+      [
+        "b",
+        "ad"
       ],
       [
         "o",
@@ -1099,60 +970,24 @@
         "od"
       ],
       [
-        "r",
-        "outes"
+        "Ġ",
+        "routes"
       ],
       [
-        "Ġ\"",
-        "*\""
+        "Ġ",
+        "bad"
       ],
       [
-        "Ġr",
-        "outes"
-      ],
-      [
-        "Ġg",
-        "ood"
+        "re",
+        "d"
       ],
       [
         "re",
         "en"
       ],
       [
-        "Ġb",
-        "ad"
-      ],
-      [
-        "Ġ\"",
-        "(\""
-      ],
-      [
-        "\"",
-        "(\""
-      ],
-      [
-        "e",
-        "d"
-      ],
-      [
-        "g",
-        "reen"
-      ],
-      [
-        "Ġr",
-        "ed"
-      ],
-      [
         "Ġg",
-        "reen"
-      ],
-      [
-        "re",
-        "d"
-      ],
-      [
-        ".",
-        "Ċ"
+        "ood"
       ],
       [
         "d",
@@ -1171,12 +1006,20 @@
         "fi"
       ],
       [
+        ".",
+        "Ċ"
+      ],
+      [
         "a",
         "s"
       ],
       [
         "Ġ",
         "as"
+      ],
+      [
+        "Ġpy",
+        "check"
       ],
       [
         "ne",
@@ -1187,8 +1030,16 @@
         "ned"
       ],
       [
-        "\"",
-        ","
+        "g",
+        "reen"
+      ],
+      [
+        "Ġ",
+        "red"
+      ],
+      [
+        "Ġg",
+        "reen"
       ],
       [
         "\"",
@@ -1199,28 +1050,44 @@
         "tatus"
       ],
       [
-        "a",
-        "n"
+        "p",
+        "orts"
       ],
       [
-        "Ġ",
-        "or"
-      ],
-      [
-        "Ġc",
-        "an"
-      ],
-      [
-        "Ġb",
-        "e"
+        "p",
+        "rocesses"
       ],
       [
         "s",
         "ervices"
       ],
       [
-        "Ġcheck",
-        "disk"
+        "py",
+        "check"
+      ],
+      [
+        "ces",
+        "tatus"
+      ],
+      [
+        "resour",
+        "cestatus"
+      ],
+      [
+        "Ġ",
+        "resourcestatus"
+      ],
+      [
+        "Ġpy",
+        "network"
+      ],
+      [
+        "Ġpy",
+        "system"
+      ],
+      [
+        "Ġpy",
+        "resourcestatus"
       ],
       [
         "Ġcheck",
@@ -1228,11 +1095,11 @@
       ],
       [
         "Ġcheck",
-        "kernel"
+        "disk"
       ],
       [
         "Ġcheck",
-        "ports"
+        "kernel"
       ],
       [
         "Ġcheck",
@@ -1240,30 +1107,66 @@
       ],
       [
         "Ġcheck",
-        "processes"
+        "memory"
       ],
       [
         "Ġcheck",
-        "memory"
+        "ports"
+      ],
+      [
+        "Ġcheck",
+        "processes"
       ],
       [
         "Ġcheck",
         "services"
       ],
       [
-        "ces",
-        "tatus"
-      ],
-      [
         "Ġnetwork",
         "status"
       ],
       [
-        "Ġresour",
-        "cestatus"
+        "Ġsystem",
+        "status"
       ],
       [
-        "Ġsystem",
+        "Ġpycheck",
+        "cpu"
+      ],
+      [
+        "Ġpycheck",
+        "disk"
+      ],
+      [
+        "Ġpycheck",
+        "kernel"
+      ],
+      [
+        "Ġpycheck",
+        "uptime"
+      ],
+      [
+        "Ġpycheck",
+        "memory"
+      ],
+      [
+        "Ġpycheck",
+        "ports"
+      ],
+      [
+        "Ġpycheck",
+        "processes"
+      ],
+      [
+        "Ġpycheck",
+        "services"
+      ],
+      [
+        "Ġpynetwork",
+        "status"
+      ],
+      [
+        "Ġpysystem",
         "status"
       ],
       [
@@ -1283,6 +1186,10 @@
         "r"
       ],
       [
+        "l",
+        "es"
+      ],
+      [
         "m",
         "ar"
       ],
@@ -1292,15 +1199,15 @@
       ],
       [
         "r",
+        "u"
+      ],
+      [
+        "r",
         "am"
       ],
       [
-        "ul",
-        "es"
-      ],
-      [
-        "Ġr",
-        "ules"
+        "Ġ",
+        "ru"
       ],
       [
         "Ġg",
@@ -1311,16 +1218,12 @@
         "nes"
       ],
       [
+        "Ġru",
+        "les"
+      ],
+      [
         "Ġgram",
         "mar"
-      ],
-      [
-        "Ġ",
-        "calculator"
-      ],
-      [
-        "check",
-        "disk"
       ],
       [
         "check",
@@ -1328,11 +1231,11 @@
       ],
       [
         "check",
-        "kernel"
+        "disk"
       ],
       [
         "check",
-        "ports"
+        "kernel"
       ],
       [
         "check",
@@ -1340,19 +1243,51 @@
       ],
       [
         "check",
-        "processes"
+        "memory"
       ],
       [
         "check",
-        "memory"
+        "ports"
+      ],
+      [
+        "check",
+        "processes"
       ],
       [
         "check",
         "services"
       ],
       [
-        "Ġ\"",
-        "\""
+        "pycheck",
+        "cpu"
+      ],
+      [
+        "pycheck",
+        "disk"
+      ],
+      [
+        "pycheck",
+        "kernel"
+      ],
+      [
+        "pycheck",
+        "uptime"
+      ],
+      [
+        "pycheck",
+        "memory"
+      ],
+      [
+        "pycheck",
+        "ports"
+      ],
+      [
+        "pycheck",
+        "processes"
+      ],
+      [
+        "pycheck",
+        "services"
       ]
     ]
   }
