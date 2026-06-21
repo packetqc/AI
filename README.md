@@ -10,6 +10,7 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 - **Executes shell or Python code per token** — command vocabulary tokens can run shell commands (`_exec: shell`, default) or pure Python source (`_exec: python`) via `exec()`.
 - **Auto-detects grammar input** at three depths: grammar name → sub-rule name → bare command token, including multi-word paths built by Tab completion.
 - **Deep Tab completion** — pressing Tab walks deeper into the grammar tree on each press; falls back to a live model query when the playbook has no match.
+- **Generates grammar files from external sources** (`model_tools_grammar.py`) — convert Mermaid diagrams, Markdown runbooks, plain-text SOP documents, PDFs, and web pages into ready-to-load grammar + vocabulary files. AI-assisted extraction available via any Ollama model.
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
 - **External model mode** (`--model`) — attach any existing Ollama model or import a local `.gguf` file, skipping training entirely while keeping all grammar and vocabulary features.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
@@ -20,11 +21,13 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 ```
 model_create_hf_cl.py           # Entry point: trains, exports, serves, interactive CLI
 model_export_npu.py             # Standalone NPU/ONNX export script
+model_tools_grammar.py          # Grammar tool: converts external sources → grammar files
 
 classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
   class_model_grammar.py        # ModelGrammar: BNF/EBNF parser  |  GrammarRunner: execution engine
   class_terminal_logs.py        # Colour terminal logger
+  class_tools_grammar.py        # Grammar converters: Mermaid / Markdown / Text / PDF / Web / AI
 
 grammars/
   playbook_pyhealthcheck.txt    # Python healthcheck procedure grammar  ← default
@@ -34,6 +37,19 @@ grammars/
 training/
   train_python_healthcheck_commands.json  # Python token vocabulary (_exec: python)  ← default
   train_linux_healthcheck_commands.json   # Shell token vocabulary (_exec: shell)
+
+examples/
+  grammar_sources/              # Example source files (one per supported format)
+    kali_discovery.mmd          # Mermaid: local + network discovery (flowchart + %% cmd:)
+    kali_discovery.md           # Markdown: same grammar, H2/H3/bullet format
+    kali_discovery_spec.txt     # Plain text SOP: same grammar, numbered sections
+    disk_maintenance.md         # Markdown: disk health checks (shell exec)
+    python_sysinfo.md           # Markdown: system info via Python (python exec)
+    network_scan.mmd            # Mermaid: network scan procedure
+  test_grammar_tools.py         # Self-test for all grammar converters
+
+docs/
+  GRAMMAR_TOOLS.md              # Full reference for model_tools_grammar.py
 ```
 
 ## Prerequisites
@@ -333,6 +349,77 @@ Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib 
 | `grammars/playbook_pyhealthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
 
 Trigger: type `pyhealthcheck` at the prompt.
+
+## Grammar Tools
+
+`model_tools_grammar.py` generates the vocabulary JSON and BNF grammar file
+from external source documents so you do not have to write them by hand.
+
+**Full documentation:** [docs/GRAMMAR_TOOLS.md](docs/GRAMMAR_TOOLS.md)
+
+### Supported source formats
+
+| Format | Example | Converter |
+|---|---|---|
+| Mermaid flowchart `.mmd` | `kali_discovery.mmd` | Structure from edges; commands via `%% cmd:` annotations |
+| Markdown `.md` | `kali_discovery.md` | H1 = name, H2/H3 = rules, bullets = tokens + commands |
+| Plain text spec `.txt` | `kali_discovery_spec.txt` | Numbered sections; `Step N: name — command` pattern |
+| PDF `.pdf` | any procedure PDF | Heuristic heading/bullet extraction (`pip install pypdf`) |
+| Web page `http(s)://` | any URL | HTML `<h1>`–`<h3>` and `<li>` structure |
+| AI-assisted | any of the above | Ollama model extracts grammar semantically (`--ai-model`) |
+
+### Workflow
+
+```bash
+# 1. Convert a source document (format auto-detected)
+python model_tools_grammar.py examples/grammar_sources/kali_discovery.md --summary
+
+# 2. Check the generated files
+cat training/train_kali_discovery_commands.json
+cat grammars/playbook_kali_discovery.txt
+
+# 3. Load into the model at startup
+python model_create_hf_cl.py \
+    --train   training/train_kali_discovery_commands.json \
+    --grammar grammars/playbook_kali_discovery.txt
+
+# 4. Use at the CLI prompt
+>>> kali_discovery
+>>> kali_discovery <TAB>     → local_discovery  network_discovery
+```
+
+### AI-assisted extraction
+
+For dense technical documents where structure is implicit, pass any Ollama
+model with `--ai-model`. The model interprets the document intent rather than
+relying on formatting patterns:
+
+```bash
+python model_tools_grammar.py  security_assessment.pdf  --ai-model qwen2:7b
+python model_tools_grammar.py  https://wiki.corp/runbook --ai-model llama3
+python model_tools_grammar.py  procedure_manual.txt      --ai-model mistral --summary
+```
+
+### Same procedure, three formats
+
+The `kali_discovery` example ships in Mermaid, Markdown, and plain text — all
+three produce identical output (10 rules, 21 tokens):
+
+```bash
+python model_tools_grammar.py examples/grammar_sources/kali_discovery.mmd   --dry-run
+python model_tools_grammar.py examples/grammar_sources/kali_discovery.md    --dry-run
+python model_tools_grammar.py examples/grammar_sources/kali_discovery_spec.txt --dry-run
+```
+
+### Self-test
+
+```bash
+python examples/test_grammar_tools.py           # 5 tests, no Ollama required
+python examples/test_grammar_tools.py --verbose
+python examples/test_grammar_tools.py --ai-model qwen2:7b   # also test AI path
+```
+
+---
 
 ## Adding a new grammar
 
