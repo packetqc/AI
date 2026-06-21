@@ -81,6 +81,23 @@ def test_mermaid(verbose, tmp_dir):
                 "'discovery' found in output",
                 "'discovery' not found in rules or tokens")
 
+        # Commands must be extracted from %% cmd: annotations
+        ping_cmd = conv._tokens.get("ping_sweep", "")
+        r.check("nmap -sn" in ping_cmd,
+                "'ping_sweep' command extracted: " + repr(ping_cmd[:40]),
+                "'ping_sweep' command missing (got: " + repr(ping_cmd[:40]) + ")")
+
+        port_cmd = conv._tokens.get("port_scan", "")
+        r.check("nmap" in port_cmd,
+                "'port_scan' command extracted: " + repr(port_cmd[:40]),
+                "'port_scan' command missing (got: " + repr(port_cmd[:40]) + ")")
+
+        # All leaf tokens should have non-empty commands
+        empty = [t for t, v in conv._tokens.items() if not v.strip()]
+        r.check(not empty,
+                "all leaf tokens have commands",
+                "tokens with empty commands: " + str(empty))
+
         # Validate JSON output
         with open(json_path) as fh:
             data = json.load(fh)
@@ -90,6 +107,9 @@ def test_mermaid(verbose, tmp_dir):
         r.check(data.get("_type") == "command_vocabulary",
                 "JSON _type field correct",
                 "JSON _type wrong")
+        r.check("nmap -sn" in data.get("ping_sweep", ""),
+                "JSON ping_sweep command persisted",
+                "JSON ping_sweep missing: " + str(data.get("ping_sweep")))
 
         # Validate BNF output
         bnf = open(bnf_path).read()

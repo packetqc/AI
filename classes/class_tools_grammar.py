@@ -158,10 +158,22 @@ class MermaidGrammarConverter(BaseGrammarConverter):
         Nodes : A[Label]  A(Label)  A{Label}  A((Label))  A>Label]
         Edges : A --> B   A -->|label| B   A --- B   A -.-> B   A ==> B
 
+    Two ways to attach commands to leaf tokens:
+
+    1. Comment annotation  (recommended — diagram stays valid Mermaid):
+            %% cmd: ping_sweep = nmap -sn 192.168.1.0/24
+            %% cmd: save_results = nmap -oA /tmp/out 192.168.1.0/24
+
+    2. Label-as-command  (when the node ID is already snake_case):
+            discovery --> ping_sweep["nmap -sn 192.168.1.0/24"]
+            discovery --> arp_scan["arp-scan --localnet"]
+       The ID becomes the token name; the bracket text becomes the command.
+       Detection: node ID matches ^[a-z][a-z0-9_]+$ and label ≠ sanitized ID.
+
     Conversion rules:
         - Nodes with outgoing edges become grammar rules.
         - Leaf nodes (no outgoing edges) become command tokens.
-        - Node labels are sanitized to snake_case token names.
+        - %% cmd: annotations always win over label-derived commands.
         - The overall grammar root is injected when there are multiple entry nodes.
     """
 
@@ -184,29 +196,53 @@ class MermaidGrammarConverter(BaseGrammarConverter):
         r'([A-Za-z0-9_]+)'
     )
 
+    # %% cmd: token_name = command string
+    _CMD_RE = re.compile(r'^%%\s*cmd:\s*(\w+)\s*=\s*(.+)', re.IGNORECASE)
+
+    # Node ID that is already a valid snake_case identifier (use as token name directly)
+    _SNAKE_ID = re.compile(r'^[a-z][a-z0-9_]+$')
+
     def parse(self):
         with open(self.source, "r", encoding="utf-8") as fh:
             text = fh.read()
 
-        node_labels = {}   # id  → display label
-        children_of = OrderedDict()  # id → [child_id, ...]
-        in_degree   = {}             # id → count of incoming edges
+        node_labels  = {}            # id → display label (or command if label-as-cmd)
+        node_is_cmd  = set()         # ids whose label is a command string
+        cmd_overrides = {}           # token_name → command  (from %% cmd: lines)
+        children_of  = OrderedDict() # id → [child_id, ...]
+        in_degree    = {}            # id → count of incoming edges
 
         for line in text.splitlines():
             stripped = line.strip()
-            if not stripped or stripped.startswith("%%"):
+            if not stripped:
+                continue
+
+            # ── %% cmd: annotation ─────────────────────────────────────────
+            m_cmd = self._CMD_RE.match(stripped)
+            if m_cmd:
+                cmd_overrides[m_cmd.group(1).strip()] = m_cmd.group(2).strip()
+                continue
+
+            # Skip other comments and diagram-type keywords
+            if stripped.startswith("%%"):
                 continue
             if re.match(r'^(?:flowchart|graph|sequenceDiagram|classDiagram)', stripped, re.I):
                 continue
 
-            # Collect node labels (take first definition seen)
+            # ── node label collection ──────────────────────────────────────
             for m in self._NODE_RE.finditer(line):
                 nid   = m.group(1)
                 label = next((g for g in m.groups()[1:] if g is not None), nid)
+                label = label.strip()
                 if nid not in node_labels and label:
-                    node_labels[nid] = label.strip()
+                    node_labels[nid] = label
+                    # Label-as-command: ID is snake_case and label differs from it
+                    if (self._SNAKE_ID.match(nid)
+                            and label != nid
+                            and label != self._sanitize(label)):
+                        node_is_cmd.add(nid)
 
-            # Collect edges
+            # ── edge collection ────────────────────────────────────────────
             for m in self._EDGE_RE.finditer(line):
                 src, dst = m.group(1), m.group(2)
                 children_of.setdefault(src, [])
@@ -214,7 +250,7 @@ class MermaidGrammarConverter(BaseGrammarConverter):
                     children_of[src].append(dst)
                 in_degree[dst] = in_degree.get(dst, 0) + 1
 
-        # Fill in missing labels from IDs
+        # Fill in missing labels
         all_ids = set(children_of) | {d for kids in children_of.values() for d in kids}
         for nid in all_ids:
             node_labels.setdefault(nid, nid)
@@ -224,8 +260,26 @@ class MermaidGrammarConverter(BaseGrammarConverter):
         if not roots and children_of:
             roots = [next(iter(children_of))]
 
-        def label_name(nid):
+        def token_name(nid):
+            """Return the grammar token name for a node."""
+            if nid in node_is_cmd:
+                # Label is a command — use the ID itself as the name
+                return self._sanitize(nid)
             return self._sanitize(node_labels.get(nid, nid)) or self._sanitize(nid)
+
+        def token_cmd(nid):
+            """Return the command string for a leaf node (empty string if unknown)."""
+            name = token_name(nid)
+            # %% cmd: annotation takes priority
+            if name in cmd_overrides:
+                return cmd_overrides[name]
+            # Also check raw node ID in cmd_overrides
+            if nid in cmd_overrides:
+                return cmd_overrides[nid]
+            # Label-as-command
+            if nid in node_is_cmd:
+                return node_labels.get(nid, "")
+            return ""
 
         visited = set()
 
@@ -233,23 +287,23 @@ class MermaidGrammarConverter(BaseGrammarConverter):
             if nid in visited:
                 return
             visited.add(nid)
-            name = label_name(nid)
+            name = token_name(nid)
             kids = children_of.get(nid, [])
             if kids:
-                child_names = [label_name(k) for k in kids]
+                child_names = [token_name(k) for k in kids]
                 self._rules[name] = child_names
                 for k in kids:
                     build(k)
             else:
-                self._tokens.setdefault(name, "")
+                self._tokens[name] = token_cmd(nid)
 
         if len(roots) == 1:
-            root_name = label_name(roots[0])
+            root_name = token_name(roots[0])
             if root_name != self.grammar_name:
                 self._rules[self.grammar_name] = [root_name]
             build(roots[0])
         else:
-            root_names = [label_name(r) for r in roots]
+            root_names = [token_name(r) for r in roots]
             self._rules[self.grammar_name] = root_names
             for r in roots:
                 build(r)

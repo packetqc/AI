@@ -11,3 +11,10 @@ flowchart TD
     enumeration --> os_detect
 
     reporting --> save_results
+
+%% cmd: ping_sweep    = nmap -sn 192.168.1.0/24
+%% cmd: arp_scan      = arp-scan --localnet 2>/dev/null || echo "arp-scan not installed"
+%% cmd: port_scan     = nmap -p- --min-rate=1000 -T4 192.168.1.0/24
+%% cmd: service_detect = nmap -sV --version-intensity 5 192.168.1.0/24
+%% cmd: os_detect     = nmap -O 192.168.1.0/24
+%% cmd: save_results  = nmap -oA /tmp/scan_results 192.168.1.0/24 && echo "saved to /tmp/"
