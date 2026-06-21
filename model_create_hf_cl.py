@@ -377,6 +377,30 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
 _grammar_commands: dict = {}
 
 
+def _reload_command_vocabularies():
+    """Re-populate _grammar_commands from any command-vocabulary JSON in INIT_KNOWLEDGE_FILES.
+
+    Called on every startup (fresh and restored) because command vocabularies are
+    runtime config — they are intentionally NOT saved in the state file.
+    """
+    for _path in INIT_KNOWLEDGE_FILES:
+        if not _path.lower().endswith(".json") or not os.path.isfile(_path):
+            continue
+        try:
+            with open(_path, "r", encoding="utf-8") as _f:
+                _obj = json.load(_f)
+        except Exception:
+            continue
+        if isinstance(_obj, dict) and _obj.get("_type") == "command_vocabulary":
+            _gn = _obj.get("_grammar", "unknown")
+            _cmds = {k: v for k, v in _obj.items()
+                     if not k.startswith("_") and isinstance(v, str)}
+            _grammar_commands[_gn] = _cmds
+            logger.log("info", "SYSTEM",
+                       "Loaded " + str(len(_cmds)) + " command(s) for '"
+                       + _gn + "' grammar from " + _path)
+
+
 def seed_from_file(path, knowledge_texts, playbook):
     """Read one start-up knowledge file and route it by extension: a grammar/playbook JSON is
     deep-merged into the ``playbook`` tree; plain JSON is flattened to prose; markdown/other is
@@ -450,6 +474,9 @@ else:
         _name = seed_from_file(_path, knowledge_texts, playbook)
         if _name:
             grammar_name = _name
+
+# Always reload command vocabularies — they are runtime config, not saved in state.
+_reload_command_vocabularies()
 
 # Flatten the playbook tree into anchor pairs for training (children listings + leaf answers).
 grammar_pairs = ModelAssets.flatten_playbook(playbook, grammar_name)

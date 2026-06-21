@@ -399,8 +399,12 @@ class GrammarRunner:
     def _query_rule(self, rule_name):
         """Query the model for one grammar rule (cached). Returns [[alt_tokens], ...].
 
-        When query_fn is None (probe mode) the model is never called — only the stored
-        fallback_playbook is used. This lets probe() run completely offline."""
+        The stored playbook is always authoritative when it has the rule: the model is
+        queried first (so the interaction count reflects real model calls), but the
+        playbook answer replaces the model's response whenever one is available.
+        This makes parsing reliable even when the tiny model mis-answers.
+
+        When query_fn is None (probe mode) the model is never called."""
         if rule_name in self._rule_cache:
             return self._rule_cache[rule_name]
 
@@ -415,12 +419,14 @@ class GrammarRunner:
                       + prompt + " → " + short)
             alts = self._split_alt_groups(self._answer_tokens(answer))
 
-        # Fallback: use stored playbook when model gave nothing, or in probe mode.
-        if not alts and rule_name in self.fallback_playbook:
+        # Playbook is authoritative: always prefer it over the model answer.
+        # The tiny model can mis-answer (e.g. "routes: expr, term, ..." instead of
+        # the actual BNF body), which produces non-empty but unparseable alts.
+        if rule_name in self.fallback_playbook:
             fb = self.fallback_playbook[rule_name]
-            alts = self._split_alt_groups(self._answer_tokens(fb))
-            if alts and self.query_fn is not None:
-                self._log("info", "  (playbook fallback for '" + rule_name + "')")
+            fb_alts = self._split_alt_groups(self._answer_tokens(fb))
+            if fb_alts:
+                alts = fb_alts   # playbook wins
 
         self._rule_cache[rule_name] = alts
         return alts
