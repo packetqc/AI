@@ -25,7 +25,7 @@ classes/
   class_terminal_logs.py        # Colour terminal logger
 
 grammars/
-  playbook_python_healthcheck.txt  # Python healthcheck procedure grammar  ← default
+  playbook_pyhealthcheck.txt       # Python healthcheck procedure grammar  ← default
   playbook_linux_healthcheck.txt   # Shell healthcheck procedure grammar
   playbook_model_calculator.txt    # Expression grammar: expr ::= expr "+" term | ...
 
@@ -139,7 +139,10 @@ Short flags `-t` / `-g` work as aliases for `--train` / `--grammar`.
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
 | `/run [grammar] <expr>` | Parse and evaluate an expression, or execute a procedure grammar |
 | `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default: `npu_export/`) |
+| `/context` | Show all loaded files, command vocabularies, exec modes, and knowledge document count |
+| `/tokens [grammar]` | Show grammar rules and token commands (all grammars, or filter by name) |
 | `/bye` | Exit |
+| `TAB` | Complete grammar names, rules, and tokens dynamically; falls back to live model query |
 
 ### Auto-detect modes
 
@@ -199,7 +202,7 @@ Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib 
 | File | Role |
 |---|---|
 | `training/train_python_healthcheck_commands.json` | 8 Python tokens (`_exec: python`) |
-| `grammars/playbook_python_healthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
+| `grammars/playbook_pyhealthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
 
 Trigger: type `pyhealthcheck` at the prompt.
 
