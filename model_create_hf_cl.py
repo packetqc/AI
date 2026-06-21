@@ -675,20 +675,23 @@ while True:
                 runner.run(run_expr, start_rule=run_start)
             continue
 
-        # 3g. AUTO-DETECT GRAMMAR — two modes, checked in order:
+        # 3g. AUTO-DETECT GRAMMAR — three modes, checked in order:
         #
-        #   Execute mode: input matches a grammar name that has a command vocabulary loaded
-        #     e.g. user types "healthcheck" → _grammar_commands["healthcheck"] exists →
-        #     GrammarRunner.execute() traverses the grammar and runs OS commands at terminals.
+        #   Execute mode (full):    input == grammar name with commands loaded
+        #                           e.g. "healthcheck" → full procedure from top rule
+        #   Execute mode (partial): input == any rule name or command token inside a
+        #                           grammar that has commands loaded
+        #                           e.g. "system_status" → sub-procedure branch
+        #                           e.g. "check_uptime"  → single command token
+        #   Parse mode:             input fully parses against any loaded grammar
+        #                           (zero model calls — playbook-only probe)
+        #                           e.g. "1+1" → calculator grammar → Result: 2
         #
-        #   Parse mode: input fully parses against any loaded grammar (zero model calls probe) →
-        #     GrammarRunner.run() parses and evaluates the expression.
-        #
-        # Falls through to normal chat if neither mode matches.
+        # Falls through to normal chat if none of the three match.
         auto_handled = False
         _ustrip = user_input.strip().lower()
 
-        # --- execute mode ---
+        # --- execute mode: full grammar (input is the grammar name) ---
         for _gname, _gsubtree in assets.playbook.items():
             if not isinstance(_gsubtree, dict) or not _gsubtree:
                 continue
@@ -706,6 +709,40 @@ while True:
                 _runner.execute(start_rule=_gstart)
                 auto_handled = True
                 break
+
+        # --- execute mode: partial path (input is a rule name or bare command token) ---
+        if not auto_handled:
+            for _gname, _gcmds in _grammar_commands.items():
+                _gsubtree = assets.playbook.get(_gname, {})
+                if not isinstance(_gsubtree, dict) or not _gsubtree:
+                    continue
+                if _ustrip in _gsubtree:
+                    # Rule name match — execute the sub-procedure from that rule.
+                    logger.log("info", "SYSTEM",
+                               "Auto-detected '" + _ustrip + "' rule in '"
+                               + _gname + "' — executing sub-procedure...")
+                    _runner = GrammarRunner(
+                        grammar_name=_gname,
+                        query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
+                        fallback_playbook=_gsubtree,
+                        commands=_gcmds,
+                        logger=logger,
+                    )
+                    _runner.execute(start_rule=_ustrip)
+                    auto_handled = True
+                    break
+                if _ustrip in _gcmds:
+                    # Bare command token not backed by a grammar rule — run it directly.
+                    logger.log("info", "SYSTEM",
+                               "Auto-detected command token '" + _ustrip
+                               + "' in '" + _gname + "' — running command...")
+                    _runner = GrammarRunner(
+                        grammar_name=_gname, logger=logger,
+                        commands=_gcmds, fallback_playbook=_gsubtree,
+                    )
+                    _runner._run_os_command(_ustrip, _gcmds[_ustrip])
+                    auto_handled = True
+                    break
 
         # --- parse mode ---
         if not auto_handled:
