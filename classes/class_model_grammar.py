@@ -1,7 +1,12 @@
 import os
 import re
 
-from class_model_assets import ModelAssets
+try:
+    from .class_model_assets import ModelAssets          # imported as package
+except ImportError:
+    import sys
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from classes.class_model_assets import ModelAssets   # run directly as script
 
 
 class ModelGrammar:

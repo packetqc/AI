@@ -20,11 +20,11 @@ from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, pr
 #################################################################################################
 # MP CLASS AND CODE
 #################################################################################################
-from class_terminal_logs import TerminalLogger
+from classes.class_terminal_logs import TerminalLogger
 logger = TerminalLogger()
 
-from class_model_assets import ModelAssets
-from class_model_grammar import ModelGrammar, GrammarRunner
+from classes.class_model_assets import ModelAssets
+from classes.class_model_grammar import ModelGrammar, GrammarRunner
 
 #################################################################################################
 #
@@ -45,9 +45,9 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
 INIT_KNOWLEDGE_FILES = [
-    "playbook_model_calculator.txt",
-    "train_linux_healthcheck_commands.json",  # command vocabulary loaded BEFORE grammar
-    "playbook_linux_healthcheck.txt",
+    "grammars/playbook_model_calculator.txt",
+    "training/train_linux_healthcheck_commands.json",  # command vocabulary loaded BEFORE grammar
+    "grammars/playbook_linux_healthcheck.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
