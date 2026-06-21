@@ -71,7 +71,7 @@ OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
 INIT_KNOWLEDGE_FILES = [
     "training/train_python_healthcheck_commands.json",  # command vocabulary loaded BEFORE grammar
-    "grammars/playbook_python_healthcheck.txt",
+    "grammars/playbook_pyhealthcheck.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
@@ -461,10 +461,13 @@ def seed_from_file(path, knowledge_texts, playbook):
             gname = obj.get("_grammar", "unknown")
             cmds = {k: v for k, v in obj.items()
                     if not k.startswith("_") and isinstance(v, str)}
+            if "_exec" in obj:
+                cmds["_exec"] = obj["_exec"]
             _grammar_commands[gname] = cmds
             logger.log("info", "SYSTEM",
                        "Loaded " + str(len(cmds)) + " command(s) for '"
-                       + gname + "' grammar from " + path)
+                       + gname + "' grammar from " + path
+                       + " (exec=" + obj.get("_exec", "shell") + ")")
             return None  # no model training needed for the commands dict itself
         tree = ModelAssets.playbook_tree_from_json(obj)
         if tree is not None:                             # grammar/playbook JSON -> merge tree

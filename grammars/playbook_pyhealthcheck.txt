@@ -7,12 +7,12 @@
 #
 # Load both files together (order matters: command vocabulary JSON first):
 #   /read  training/train_python_healthcheck_commands.json
-#   /grammar grammars/playbook_python_healthcheck.txt
+#   /grammar grammars/playbook_pyhealthcheck.txt
 #
 # Or at launch:
 #   python model_create_hf_cl.py \
 #       --train  training/train_python_healthcheck_commands.json \
-#       --grammar grammars/playbook_python_healthcheck.txt
+#       --grammar grammars/playbook_pyhealthcheck.txt
 #
 # Trigger: type   pyhealthcheck   (auto-detected) or   /run pyhealthcheck
 
