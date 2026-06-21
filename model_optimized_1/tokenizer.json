@@ -308,21 +308,21 @@
       "ł": 255,
       "Ń": 256,
       "he": 257,
-      "ck": 258,
-      "che": 259,
-      "check": 260,
-      "py": 261,
-      "te": 262,
-      "Ġpy": 263,
-      "al": 264,
-      "_check": 265,
-      "es": 266,
-      "hcheck": 267,
-      "thcheck": 268,
-      "heal": 269,
-      "healthcheck": 270,
-      "_s": 271,
-      "en": 272,
+      "py": 258,
+      "ck": 259,
+      "che": 260,
+      "check": 261,
+      "Ġpy": 262,
+      "_check": 263,
+      "te": 264,
+      "al": 265,
+      "_s": 266,
+      "en": 267,
+      "es": 268,
+      "hcheck": 269,
+      "thcheck": 270,
+      "heal": 271,
+      "healthcheck": 272,
       "<|": 273,
       "do": 274,
       "fte": 275,
@@ -332,7 +332,7 @@
       "ftext": 279,
       "endoftext": 280,
       "or": 281,
-      "Ġcheck": 282,
+      "pyhealthcheck": 282,
       "at": 283,
       "tat": 284,
       "us": 285,
@@ -343,9 +343,9 @@
       "me": 290,
       "_p": 291,
       "ne": 292,
-      "pyhealthcheck": 293,
-      "is": 294,
-      "ro": 295,
+      "is": 293,
+      "ro": 294,
+      "ys": 295,
       "Ġ\"": 296,
       "cp": 297,
       "dis": 298,
@@ -369,7 +369,7 @@
       "kernel": 316,
       "uptime": 317,
       "memory": 318,
-      "ys": 319,
+      "\"py": 319,
       "\"<|": 320,
       "_cpu": 321,
       "_disk": 322,
@@ -389,125 +389,104 @@
       "our": 336,
       "resour": 337,
       "network": 338,
-      "ce": 339,
-      "resource": 340,
-      "\"check": 341,
-      "\"py": 342,
-      "system": 343,
-      "Ġnetwork": 344,
-      "_network": 345,
-      "_resource": 346,
-      "Ġresource": 347,
-      "_system": 348,
-      "Ġis": 349,
-      "Ġsystem": 350,
-      "Ġhealthcheck": 351,
-      "Ġpyhealthcheck": 352,
-      "ays": 353,
-      "co": 354,
-      "hat": 355,
-      "lor": 356,
-      "re": 357,
-      "ute": 358,
-      "ways": 359,
-      "what": 360,
-      "Ġ?": 361,
-      "Ġal": 362,
-      "Ġco": 363,
-      "route": 364,
-      "Ġalways": 365,
-      "Ġcolor": 366,
-      "routes": 367,
-      "Ġg": 368,
-      "ad": 369,
-      "bad": 370,
-      "od": 371,
-      "ood": 372,
+      "_resour": 339,
+      "_network": 340,
+      "ce": 341,
+      "_system": 342,
+      "_resource": 343,
+      "Ġis": 344,
+      "Ġpyhealthcheck": 345,
+      "ays": 346,
+      "co": 347,
+      "hat": 348,
+      "lor": 349,
+      "re": 350,
+      "ways": 351,
+      "what": 352,
+      "Ġ?": 353,
+      "Ġal": 354,
+      "Ġco": 355,
+      "Ġalways": 356,
+      "Ġcolor": 357,
+      "Ġg": 358,
+      "ad": 359,
+      "bad": 360,
+      "od": 361,
+      "ood": 362,
+      "ute": 363,
+      "Ġbad": 364,
+      "route": 365,
+      "red": 366,
+      "reen": 367,
+      "Ġgood": 368,
+      "routes": 369,
+      "Ġpycheck": 370,
+      "green": 371,
+      "Ġred": 372,
       "Ġroutes": 373,
-      "Ġbad": 374,
-      "red": 375,
-      "reen": 376,
-      "Ġgood": 377,
-      "de": 378,
-      "fi": 379,
-      "Ġde": 380,
-      "Ġdefi": 381,
-      ".Ċ": 382,
-      "as": 383,
-      "Ġas": 384,
-      "Ġpycheck": 385,
-      "ned": 386,
-      "Ġdefined": 387,
-      "green": 388,
-      "Ġred": 389,
-      "Ġgreen": 390,
-      "\".Ċ": 391,
-      "status": 392,
-      "ports": 393,
-      "processes": 394,
-      "services": 395,
-      "pycheck": 396,
-      "cestatus": 397,
-      "resourcestatus": 398,
-      "Ġresourcestatus": 399,
-      "Ġpynetwork": 400,
-      "Ġpysystem": 401,
+      "Ġgreen": 374,
+      "de": 375,
+      "fi": 376,
+      "Ġde": 377,
+      "Ġdefi": 378,
+      ".Ċ": 379,
+      "as": 380,
+      "Ġas": 381,
+      "ned": 382,
+      "Ġdefined": 383,
+      "pycheck": 384,
+      "\".Ċ": 385,
+      "status": 386,
+      "Ġpycheckp": 387,
+      "services": 388,
+      "system": 389,
+      "Ġpyresour": 390,
+      "Ġpynetwork": 391,
+      "Ġpysystem": 392,
+      "cestatus": 393,
+      "Ġpycheckcpu": 394,
+      "Ġpycheckdisk": 395,
+      "Ġpycheckkernel": 396,
+      "Ġpycheckuptime": 397,
+      "Ġpycheckmemory": 398,
+      "Ġpycheckservices": 399,
+      "Ġpycheckports": 400,
+      "Ġpycheckprocesses": 401,
       "Ġpyresourcestatus": 402,
-      "Ġcheckcpu": 403,
-      "Ġcheckdisk": 404,
-      "Ġcheckkernel": 405,
-      "Ġcheckuptime": 406,
-      "Ġcheckmemory": 407,
-      "Ġcheckports": 408,
-      "Ġcheckprocesses": 409,
-      "Ġcheckservices": 410,
-      "Ġnetworkstatus": 411,
-      "Ġsystemstatus": 412,
-      "Ġpycheckcpu": 413,
-      "Ġpycheckdisk": 414,
-      "Ġpycheckkernel": 415,
-      "Ġpycheckuptime": 416,
-      "Ġpycheckmemory": 417,
-      "Ġpycheckports": 418,
-      "Ġpycheckprocesses": 419,
-      "Ġpycheckservices": 420,
-      "Ġpynetworkstatus": 421,
-      "Ġpysystemstatus": 422,
-      "\".": 423,
-      "The": 424,
-      "am": 425,
-      "ar": 426,
-      "les": 427,
-      "mar": 428,
-      "nes": 429,
-      "ru": 430,
-      "ram": 431,
-      "Ġru": 432,
-      "Ġgram": 433,
-      "Ġdefines": 434,
-      "Ġrules": 435,
-      "Ġgrammar": 436,
-      "checkcpu": 437,
-      "checkdisk": 438,
-      "checkkernel": 439,
-      "checkuptime": 440,
-      "checkmemory": 441,
-      "checkports": 442,
-      "checkprocesses": 443,
-      "checkservices": 444,
-      "pycheckcpu": 445,
-      "pycheckdisk": 446,
-      "pycheckkernel": 447,
-      "pycheckuptime": 448,
-      "pycheckmemory": 449,
-      "pycheckports": 450,
-      "pycheckprocesses": 451,
-      "pycheckservices": 452
+      "Ġpynetworkstatus": 403,
+      "Ġpysystemstatus": 404,
+      "pycheckp": 405,
+      "\".": 406,
+      "The": 407,
+      "am": 408,
+      "ar": 409,
+      "les": 410,
+      "mar": 411,
+      "nes": 412,
+      "ru": 413,
+      "ram": 414,
+      "Ġru": 415,
+      "Ġgram": 416,
+      "Ġdefines": 417,
+      "pycheckcpu": 418,
+      "pycheckdisk": 419,
+      "pycheckkernel": 420,
+      "pycheckuptime": 421,
+      "pycheckmemory": 422,
+      "pycheckservices": 423,
+      "pycheckports": 424,
+      "pycheckprocesses": 425,
+      "Ġrules": 426,
+      "Ġgrammar": 427
     },
     "merges": [
       [
         "h",
         "e"
+      ],
+      [
+        "p",
+        "y"
       ],
       [
         "c",
@@ -522,16 +501,16 @@
         "ck"
       ],
       [
-        "p",
-        "y"
+        "Ġ",
+        "py"
+      ],
+      [
+        "_",
+        "check"
       ],
       [
         "t",
         "e"
-      ],
-      [
-        "Ġ",
-        "py"
       ],
       [
         "a",
@@ -539,7 +518,11 @@
       ],
       [
         "_",
-        "check"
+        "s"
+      ],
+      [
+        "e",
+        "n"
       ],
       [
         "e",
@@ -560,14 +543,6 @@
       [
         "heal",
         "thcheck"
-      ],
-      [
-        "_",
-        "s"
-      ],
-      [
-        "e",
-        "n"
       ],
       [
         "<",
@@ -606,8 +581,8 @@
         "r"
       ],
       [
-        "Ġ",
-        "check"
+        "py",
+        "healthcheck"
       ],
       [
         "a",
@@ -650,16 +625,16 @@
         "e"
       ],
       [
-        "py",
-        "healthcheck"
-      ],
-      [
         "i",
         "s"
       ],
       [
         "r",
         "o"
+      ],
+      [
+        "y",
+        "s"
       ],
       [
         "Ġ",
@@ -754,8 +729,8 @@
         "y"
       ],
       [
-        "y",
-        "s"
+        "\"",
+        "py"
       ],
       [
         "\"",
@@ -834,56 +809,28 @@
         "ork"
       ],
       [
+        "_",
+        "resour"
+      ],
+      [
+        "_",
+        "network"
+      ],
+      [
         "c",
         "e"
-      ],
-      [
-        "resour",
-        "ce"
-      ],
-      [
-        "\"",
-        "check"
-      ],
-      [
-        "\"",
-        "py"
-      ],
-      [
-        "s",
-        "ystem"
-      ],
-      [
-        "Ġ",
-        "network"
-      ],
-      [
-        "_",
-        "network"
-      ],
-      [
-        "_",
-        "resource"
-      ],
-      [
-        "Ġ",
-        "resource"
       ],
       [
         "_s",
         "ystem"
       ],
       [
+        "_resour",
+        "ce"
+      ],
+      [
         "Ġ",
         "is"
-      ],
-      [
-        "Ġ",
-        "system"
-      ],
-      [
-        "Ġ",
-        "healthcheck"
       ],
       [
         "Ġpy",
@@ -910,10 +857,6 @@
         "e"
       ],
       [
-        "u",
-        "te"
-      ],
-      [
         "w",
         "ays"
       ],
@@ -934,20 +877,12 @@
         "co"
       ],
       [
-        "ro",
-        "ute"
-      ],
-      [
         "Ġal",
         "ways"
       ],
       [
         "Ġco",
         "lor"
-      ],
-      [
-        "route",
-        "s"
       ],
       [
         "Ġ",
@@ -970,12 +905,16 @@
         "od"
       ],
       [
-        "Ġ",
-        "routes"
+        "u",
+        "te"
       ],
       [
         "Ġ",
         "bad"
+      ],
+      [
+        "ro",
+        "ute"
       ],
       [
         "re",
@@ -988,6 +927,30 @@
       [
         "Ġg",
         "ood"
+      ],
+      [
+        "route",
+        "s"
+      ],
+      [
+        "Ġpy",
+        "check"
+      ],
+      [
+        "g",
+        "reen"
+      ],
+      [
+        "Ġ",
+        "red"
+      ],
+      [
+        "Ġ",
+        "routes"
+      ],
+      [
+        "Ġg",
+        "reen"
       ],
       [
         "d",
@@ -1018,10 +981,6 @@
         "as"
       ],
       [
-        "Ġpy",
-        "check"
-      ],
-      [
         "ne",
         "d"
       ],
@@ -1030,16 +989,8 @@
         "ned"
       ],
       [
-        "g",
-        "reen"
-      ],
-      [
-        "Ġ",
-        "red"
-      ],
-      [
-        "Ġg",
-        "reen"
+        "py",
+        "check"
       ],
       [
         "\"",
@@ -1050,32 +1001,20 @@
         "tatus"
       ],
       [
-        "p",
-        "orts"
-      ],
-      [
-        "p",
-        "rocesses"
+        "Ġpycheck",
+        "p"
       ],
       [
         "s",
         "ervices"
       ],
       [
-        "py",
-        "check"
+        "s",
+        "ystem"
       ],
       [
-        "ces",
-        "tatus"
-      ],
-      [
-        "resour",
-        "cestatus"
-      ],
-      [
-        "Ġ",
-        "resourcestatus"
+        "Ġpy",
+        "resour"
       ],
       [
         "Ġpy",
@@ -1086,48 +1025,8 @@
         "system"
       ],
       [
-        "Ġpy",
-        "resourcestatus"
-      ],
-      [
-        "Ġcheck",
-        "cpu"
-      ],
-      [
-        "Ġcheck",
-        "disk"
-      ],
-      [
-        "Ġcheck",
-        "kernel"
-      ],
-      [
-        "Ġcheck",
-        "uptime"
-      ],
-      [
-        "Ġcheck",
-        "memory"
-      ],
-      [
-        "Ġcheck",
-        "ports"
-      ],
-      [
-        "Ġcheck",
-        "processes"
-      ],
-      [
-        "Ġcheck",
-        "services"
-      ],
-      [
-        "Ġnetwork",
-        "status"
-      ],
-      [
-        "Ġsystem",
-        "status"
+        "ces",
+        "tatus"
       ],
       [
         "Ġpycheck",
@@ -1151,15 +1050,19 @@
       ],
       [
         "Ġpycheck",
-        "ports"
-      ],
-      [
-        "Ġpycheck",
-        "processes"
-      ],
-      [
-        "Ġpycheck",
         "services"
+      ],
+      [
+        "Ġpycheckp",
+        "orts"
+      ],
+      [
+        "Ġpycheckp",
+        "rocesses"
+      ],
+      [
+        "Ġpyresour",
+        "cestatus"
       ],
       [
         "Ġpynetwork",
@@ -1168,6 +1071,10 @@
       [
         "Ġpysystem",
         "status"
+      ],
+      [
+        "pycheck",
+        "p"
       ],
       [
         "\"",
@@ -1218,76 +1125,44 @@
         "nes"
       ],
       [
+        "pycheck",
+        "cpu"
+      ],
+      [
+        "pycheck",
+        "disk"
+      ],
+      [
+        "pycheck",
+        "kernel"
+      ],
+      [
+        "pycheck",
+        "uptime"
+      ],
+      [
+        "pycheck",
+        "memory"
+      ],
+      [
+        "pycheck",
+        "services"
+      ],
+      [
+        "pycheckp",
+        "orts"
+      ],
+      [
+        "pycheckp",
+        "rocesses"
+      ],
+      [
         "Ġru",
         "les"
       ],
       [
         "Ġgram",
         "mar"
-      ],
-      [
-        "check",
-        "cpu"
-      ],
-      [
-        "check",
-        "disk"
-      ],
-      [
-        "check",
-        "kernel"
-      ],
-      [
-        "check",
-        "uptime"
-      ],
-      [
-        "check",
-        "memory"
-      ],
-      [
-        "check",
-        "ports"
-      ],
-      [
-        "check",
-        "processes"
-      ],
-      [
-        "check",
-        "services"
-      ],
-      [
-        "pycheck",
-        "cpu"
-      ],
-      [
-        "pycheck",
-        "disk"
-      ],
-      [
-        "pycheck",
-        "kernel"
-      ],
-      [
-        "pycheck",
-        "uptime"
-      ],
-      [
-        "pycheck",
-        "memory"
-      ],
-      [
-        "pycheck",
-        "ports"
-      ],
-      [
-        "pycheck",
-        "processes"
-      ],
-      [
-        "pycheck",
-        "services"
       ]
     ]
   }
