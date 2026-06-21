@@ -432,10 +432,13 @@ def _reload_command_vocabularies():
             _gn = _obj.get("_grammar", "unknown")
             _cmds = {k: v for k, v in _obj.items()
                      if not k.startswith("_") and isinstance(v, str)}
+            if "_exec" in _obj:                      # preserve execution mode (shell / python)
+                _cmds["_exec"] = _obj["_exec"]
             _grammar_commands[_gn] = _cmds
             logger.log("info", "SYSTEM",
                        "Loaded " + str(len(_cmds)) + " command(s) for '"
-                       + _gn + "' grammar from " + _path)
+                       + _gn + "' grammar from " + _path
+                       + " (exec=" + _obj.get("_exec", "shell") + ")")
 
 
 def seed_from_file(path, knowledge_texts, playbook):
@@ -671,10 +674,13 @@ while True:
                         _gn = _obj.get("_grammar", "unknown")
                         _cmds = {k: v for k, v in _obj.items()
                                  if not k.startswith("_") and isinstance(v, str)}
+                        if "_exec" in _obj:          # preserve execution mode (shell / python)
+                            _cmds["_exec"] = _obj["_exec"]
                         _grammar_commands[_gn] = _cmds
                         logger.log("ok", "SYSTEM",
                                    "Loaded " + str(len(_cmds)) + " command(s) for '"
-                                   + _gn + "' grammar.")
+                                   + _gn + "' grammar"
+                                   + " (exec=" + _obj.get("_exec", "shell") + ").")
                         continue
                 except Exception as _e:
                     logger.log("error", "SYSTEM", "Could not read '" + doc_path + "': " + str(_e))

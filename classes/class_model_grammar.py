@@ -601,7 +601,31 @@ class GrammarRunner:
     # ------------------------------------------------ execute-mode (procedure grammars)
 
     def _run_os_command(self, token, cmd):
-        """Execute one OS command and print its output."""
+        """Execute one command token.
+
+        Execution mode is set by the ``_exec`` key in the commands dict:
+          ``shell``  (default) — pass *cmd* to the shell via subprocess (shell=True).
+          ``python``           — run *cmd* as Python source via exec(), capturing stdout.
+        """
+        exec_mode = (self.commands or {}).get("_exec", "shell")
+
+        if exec_mode == "python":
+            import io, contextlib
+            self._log("info", "[exec/py] " + token)
+            try:
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    exec(compile(cmd, "<" + token + ">", "exec"),  # noqa: S102
+                         {"__builtins__": __builtins__})
+                output = buf.getvalue().strip()
+                if output:
+                    print(output)
+                else:
+                    self._log("info", "  (no output)")
+            except Exception as exc:
+                self._log("error", "Python exec failed [" + token + "]: " + str(exc))
+            return
+
         import subprocess
         self._log("info", "[exec] " + token + "  $ " + cmd)
         try:
