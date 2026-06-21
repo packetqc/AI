@@ -10,6 +10,7 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 - **Auto-detects grammar input** — type `1+1` and the calculator grammar runs automatically; type `healthcheck` and the OS routine executes.
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
+- **Exports to ONNX for NPU** — `/npu` or `model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
 
 ## Architecture
 
@@ -134,6 +135,7 @@ Short flags `-t` / `-g` work as aliases for `--train` / `--grammar`.
 | `/grammar <file>` | Load a BNF/EBNF grammar file and augment the model in-flight |
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
 | `/run [grammar] <expr>` | Parse and evaluate an expression, or execute a procedure grammar |
+| `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default dir: `npu_export/`) |
 | `/bye` | Exit |
 
 ### Auto-detect modes
@@ -215,6 +217,40 @@ User types: healthcheck
 ```
 
 Left-recursive grammars (like the calculator's `expr ::= expr "+" term | term`) are handled automatically via iterative extension (operator-precedence climbing generalised to any BNF).
+
+## NPU export for STM32N6570-DK
+
+The `/npu` command (or standalone `model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK's Neural-ART NPU accelerator.
+
+```bash
+# From the interactive session
+>>> /npu npu_export/
+
+# Or standalone (requires model_create_hf_cl.py to have run at least once)
+python model_export_npu.py [output_dir]
+```
+
+**Output files:**
+
+```
+npu_export/
+  model_npu.onnx           FP32 ONNX (opset 17)
+  model_npu_int8.onnx      INT8 dynamic-quantized  ← recommended for NPU
+  model_info.json          arch, I/O specs, import notes
+  tokenizer/               tokenizer files for host-side pre/post-processing
+```
+
+**Import into STM32Cube.AI Studio:**
+1. `File > Import Model` → select `npu_export/model_npu_int8.onnx`
+2. Run the NPU profiler to see which layers land on the Neural-ART accelerator
+3. Layers using RoPE or GQA (Qwen2-specific ops) may fall back to Cortex-M55 software
+
+**Host-side inference flow:**
+```
+input text → tokenise (tokenizer/) → input_ids tensor
+→ model inference (NPU) → logits[0, -1, :]
+→ argmax → token id → decode → output text
+```
 
 ## License
 

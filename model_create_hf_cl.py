@@ -380,6 +380,10 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
     logger.log("ok", "SYSTEM", "Converged at epoch " + str(epoch + 1)
                + ", final loss = " + f"{loss.item():.6f}")
 
+    # Save trained weights alongside config + tokenizer so external tools (e.g.
+    # model_export_npu.py) can load them without re-running the full pipeline.
+    model.save_pretrained("./" + model_path)
+
     return {
         "model": model, "tokenizer": tokenizer, "config": config,
         "tokens": tokens, "scores": scores, "token_types": token_types,
@@ -626,6 +630,7 @@ while True:
             print( "  /read <file>         Train a markdown / .json (prose or playbook) file on the fly")
             print( "  /grammar <file>      Load a BNF/EBNF grammar file and augment the model")
             print( "  /run [grammar] <expr>  Parse and evaluate an expression via the loaded grammar")
+            print( "  /npu [dir]           Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU")
             print( "  /bye                 Exit the interactive client session")
             print( "  /?                   Show this system help description summary")
             print( "  UP/DOWN Arrows       Navigate through your previously entered prompts\n")
@@ -681,7 +686,28 @@ while True:
                 logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
-        # 3d. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
+        # 3d. NPU EXPORT: "/npu [output_dir]" exports the model to ONNX for STM32Cube.AI.
+        if user_input.split()[0].lower() == "/npu":
+            readline.add_history(user_input)
+            parts = user_input.split(maxsplit=1)
+            npu_out = parts[1].strip() if len(parts) > 1 else "npu_export"
+            logger.log("info", "NPU", "Exporting model to '" + npu_out + "' for STM32Cube.AI...")
+            try:
+                import model_export_npu as _npu_mod
+                _npu_mod.export_for_npu(
+                    model=artifacts["model"],
+                    tokenizer=artifacts["tokenizer"],
+                    config=artifacts["config"],
+                    arch=artifacts["arch"],
+                    model_path=model_path,
+                    output_dir=npu_out,
+                    logger=logger,
+                )
+            except Exception as _e:
+                logger.log("error", "NPU", "Export failed: " + str(_e))
+            continue
+
+        # 3e. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
         #     through the trained grammar using one model interaction per unique rule.
         if user_input.split()[0].lower() == "/run":
             readline.add_history(user_input)
