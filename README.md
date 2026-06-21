@@ -6,8 +6,9 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 
 - **Builds a small Qwen2 model** from scratch using a custom BPE tokenizer trained over your own knowledge files and grammar rules.
 - **Augments the model with BNF/EBNF grammars** — grammar rules become trained (prompt → answer) pairs so the model "knows" the grammar structure at inference time.
-- **Runs grammar-driven interactions** via `GrammarRunner`: the model is queried once per unique grammar rule (cached), and the results drive either expression parsing or OS command execution.
-- **Auto-detects grammar input** — type `1+1` and the calculator grammar runs automatically; type `healthcheck` and the OS routine executes.
+- **Runs grammar-driven interactions** via `GrammarRunner`: the model is queried once per unique grammar rule (cached), and the results drive either expression parsing or command execution.
+- **Executes shell or Python code per token** — command vocabulary tokens can run shell commands (`_exec: shell`, default) or pure Python source (`_exec: python`) via `exec()`.
+- **Auto-detects grammar input** — type `pyhealthcheck` and the Python healthcheck routine runs automatically; type `1+1` and the calculator grammar parses it.
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
 - **Exports to ONNX for NPU** — `/npu` or `model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
@@ -16,6 +17,7 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 
 ```
 model_create_hf_cl.py           # Entry point: trains, exports, serves, interactive CLI
+model_export_npu.py             # Standalone NPU/ONNX export script
 
 classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
@@ -23,11 +25,13 @@ classes/
   class_terminal_logs.py        # Colour terminal logger
 
 grammars/
-  playbook_model_calculator.txt # Expression grammar: expr ::= expr "+" term | ...
-  playbook_linux_healthcheck.txt# Procedure grammar: healthcheck → system → OS commands
+  playbook_python_healthcheck.txt  # Python healthcheck procedure grammar  ← default
+  playbook_linux_healthcheck.txt   # Shell healthcheck procedure grammar
+  playbook_model_calculator.txt    # Expression grammar: expr ::= expr "+" term | ...
 
 training/
-  train_linux_healthcheck_commands.json  # Command vocabulary: {"check_cpu": "top -bn1 ..."}
+  train_python_healthcheck_commands.json  # Python token vocabulary (_exec: python)  ← default
+  train_linux_healthcheck_commands.json   # Shell token vocabulary (_exec: shell)
 ```
 
 ## Prerequisites
@@ -48,7 +52,6 @@ The code auto-detects the best available compute device at startup (priority: CU
 | Apple Silicon | `mps` | Install the standard CPU/MPS PyTorch wheel |
 | CPU-only | `cpu` | Default fallback — works everywhere, slower training |
 | AMD GPU | `cpu` | Requires ROCm + a ROCm-built PyTorch wheel; see [pytorch.org/get-started](https://pytorch.org/get-started/locally/) |
-
 
 ## Setup
 
@@ -135,10 +138,21 @@ Short flags `-t` / `-g` work as aliases for `--train` / `--grammar`.
 | `/grammar <file>` | Load a BNF/EBNF grammar file and augment the model in-flight |
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
 | `/run [grammar] <expr>` | Parse and evaluate an expression, or execute a procedure grammar |
-| `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default dir: `npu_export/`) |
+| `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default: `npu_export/`) |
 | `/bye` | Exit |
 
 ### Auto-detect modes
+
+**Procedure execution** — type a grammar name that has a command vocabulary:
+```
+>>> pyhealthcheck
+Auto-detected 'pyhealthcheck' procedure — executing grammar...
+[exec/py] py_check_kernel
+--- kernel / runtime ---
+Kernel : 6.x.x-amd64
+Python : 3.x.x
+...
+```
 
 **Expression parsing** — type any arithmetic expression directly:
 ```
@@ -147,15 +161,47 @@ Auto-detected 'calculator' expression — running grammar...
 Result: 11
 ```
 
-**Procedure execution** — type a grammar name that has a command vocabulary:
-```
->>> healthcheck
-Auto-detected 'healthcheck' procedure — executing grammar...
-[exec] check_uptime  $ uptime && echo '---' && cat /proc/loadavg
-...
+Both modes use `GrammarRunner`: the model is queried once per unique grammar rule (one Ollama roundtrip per rule, cached for the lifetime of the interaction).
+
+## Command execution modes
+
+Grammar token values can be shell commands or pure Python source. The mode is set by `"_exec"` in the command vocabulary JSON.
+
+### Shell mode (default)
+
+```json
+{
+  "_type": "command_vocabulary",
+  "_grammar": "mycheck",
+  "step_one": "echo hello && date",
+  "step_two": "df -h"
+}
 ```
 
-Both modes use `GrammarRunner`: the model is queried once per unique grammar rule (one Ollama roundtrip per rule, cached for the lifetime of the interaction).
+Tokens are executed via `subprocess.run(cmd, shell=True)`.
+
+### Python mode
+
+```json
+{
+  "_type": "command_vocabulary",
+  "_grammar": "mycheck",
+  "_exec": "python",
+  "step_one": "import platform\nprint(platform.release())",
+  "step_two": "import shutil\nu = shutil.disk_usage('/')\nprint(f'{u.free // 1073741824} GB free')"
+}
+```
+
+Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib available, including `import`, `for`, `try/except`, and `subprocess`. Stdout is captured and printed exactly like shell output.
+
+**Current default** (`INIT_KNOWLEDGE_FILES`):
+
+| File | Role |
+|---|---|
+| `training/train_python_healthcheck_commands.json` | 8 Python tokens (`_exec: python`) |
+| `grammars/playbook_python_healthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
+
+Trigger: type `pyhealthcheck` at the prompt.
 
 ## Adding a new grammar
 
@@ -167,9 +213,8 @@ Write a BNF file and load it:
 ```
 Then query: `/run my_grammar some input`.
 
-### 2. Procedure grammar (execute mode)
+### 2. Procedure grammar — shell tokens
 
-Write a command vocabulary JSON:
 ```json
 {
   "_type": "command_vocabulary",
@@ -179,40 +224,52 @@ Write a command vocabulary JSON:
 }
 ```
 
-Write a BNF procedure grammar (`playbook_mycheck.txt`):
+### 3. Procedure grammar — Python tokens
+
+```json
+{
+  "_type": "command_vocabulary",
+  "_grammar": "mycheck",
+  "_exec": "python",
+  "step_one": "print('hello')",
+  "step_two": "import datetime\nprint(datetime.datetime.now())"
+}
+```
+
+Write the BNF grammar (`grammars/playbook_mycheck.txt`):
 ```
 <mycheck>  ::= <step_one> <step_two>
 <step_one> ::= "step_one"
 <step_two> ::= "step_two"
 ```
 
-Load both at launch (order matters — commands JSON before grammar BNF):
+Load both at launch (command vocabulary JSON **before** grammar BNF):
 ```bash
-python model_create_hf_cl.py --train mycheck_commands.json --grammar playbook_mycheck.txt
+python model_create_hf_cl.py --train training/mycheck_commands.json --grammar grammars/playbook_mycheck.txt
 ```
 
-Or load in-flight during a session:
+Or in-flight:
 ```
-/read mycheck_commands.json
-/grammar playbook_mycheck.txt
+/read training/mycheck_commands.json
+/grammar grammars/playbook_mycheck.txt
 ```
 
 Then type `mycheck` to run it automatically.
 
-To include them permanently, add both to `INIT_KNOWLEDGE_FILES` in `model_create_hf_cl.py`.
+To make them the permanent default, set both in `INIT_KNOWLEDGE_FILES` inside `model_create_hf_cl.py`.
 
 ## How GrammarRunner works
 
 ```
-User types: healthcheck
+User types: pyhealthcheck
   └─ auto-detect: grammar name + commands dict present → execute mode
-       └─ GrammarRunner.execute("healthcheck")
-            ├─ [model #1]  healthcheck healthcheck → system_status resource_status network_status
-            ├─ [model #2]  healthcheck system_status → check_kernel check_uptime check_services
-            ├─ [model #3]  healthcheck check_kernel → "check_kernel"
-            │    └─ [exec] check_kernel  $ uname -r
-            ├─ [model #4]  healthcheck check_uptime → "check_uptime"
-            │    └─ [exec] check_uptime  $ uptime ...
+       └─ GrammarRunner.execute("pyhealthcheck")
+            ├─ [model #1]  pyhealthcheck pyhealthcheck → py_system_status py_resource_status py_network_status
+            ├─ [model #2]  pyhealthcheck py_system_status → py_check_kernel py_check_uptime py_check_services
+            ├─ [model #3]  pyhealthcheck py_check_kernel → "py_check_kernel"
+            │    └─ [exec/py] py_check_kernel  →  exec("import platform...")
+            ├─ [model #4]  pyhealthcheck py_check_uptime → "py_check_uptime"
+            │    └─ [exec/py] py_check_uptime  →  exec("import os; ...")
             └─ ... (one model query per unique rule, cached)
 ```
 
