@@ -19,6 +19,4 @@ CLAUDE.md
 
 # build artifacts
 __pycache__/
-*.gguf
-*.state.json
-model_optimized_*/
+
