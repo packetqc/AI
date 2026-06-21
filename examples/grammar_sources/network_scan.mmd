@@ -1,0 +1,13 @@
+flowchart TD
+    network_scan --> discovery
+    network_scan --> enumeration
+    network_scan --> reporting
+
+    discovery --> ping_sweep
+    discovery --> arp_scan
+
+    enumeration --> port_scan
+    enumeration --> service_detect
+    enumeration --> os_detect
+
+    reporting --> save_results
