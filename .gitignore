@@ -9,6 +9,10 @@ model_version*
 .chroma_memory_db
 chroma_db
 
+# Claude Code project artifacts (session settings, personal instructions)
+.claude/
+CLAUDE.md
+
 # environment / secrets (never commit these)
 .env
 .env.*
