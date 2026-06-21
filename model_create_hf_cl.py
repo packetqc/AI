@@ -606,17 +606,44 @@ readline.set_completer_delims(" \t\n")
 readline.clear_history()
 
 # ── Dynamic tab completion ─────────────────────────────────────────────────────
-# Candidate sources (in priority order):
-#   1. CLI commands when input starts with /
-#   2. Grammar names / rules / tokens from assets.playbook + _grammar_commands (instant)
-#   3. Live Ollama query for inputs that go beyond the loaded playbook
+# Multi-level: each Tab press descends one deeper into the grammar tree.
+#
+# Completion levels (left to right on the line):
+#   word 1            → grammar names + CLI commands
+#   word 2 (or Tab    → expansion of the root rule (first rule in subtree)
+#            after 1)
+#   word N (or Tab    → expansion of word N-1 as a grammar rule
+#            after N-1)
+#
+# If the playbook has no match for a partial, falls back to a live Ollama query.
 _CLI_CMDS = ["/?", "/read", "/grammar", "/run", "/npu", "/context", "/tokens", "/bye"]
+
+def _grammar_expand(rule_name, subtree):
+    """Return next-level token names from the body of one grammar rule.
+
+    Handles both sequence bodies ('a b c') and alternative bodies ('a | b | c').
+    Quoted terminals like '"py_check_kernel"' are stripped to 'py_check_kernel'.
+    """
+    body = subtree.get(rule_name, "")
+    if not body:
+        return []
+    candidates = set()
+    for alt in str(body).split("|"):
+        for tok in alt.split():
+            tok = tok.strip()
+            if tok.startswith('"') and tok.endswith('"'):
+                inner = tok[1:-1].strip()
+                if inner:
+                    candidates.add(inner)
+            elif tok:
+                candidates.add(tok)
+    return sorted(candidates)
 
 def _tab_completer(text, state):
     try:
-        line    = readline.get_line_buffer()
+        line     = readline.get_line_buffer()
         stripped = line.lstrip()
-        parts   = stripped.split()
+        parts    = stripped.split()
         trailing = line.endswith(" ")
 
         # ── CLI command completion (/r<TAB> → /read /run) ─────────────────────
@@ -624,7 +651,7 @@ def _tab_completer(text, state):
             first = parts[0] if parts else ""
             if len(parts) <= 1 and not trailing:
                 matches = [c for c in _CLI_CMDS if c.startswith(first)]
-            elif len(parts) >= 1 and trailing and parts[0] in ("/run", "/tokens"):
+            elif trailing and parts[0] in ("/run", "/tokens"):
                 matches = sorted(g for g in assets.playbook
                                  if isinstance(assets.playbook[g], dict) and g.startswith(text))
             else:
@@ -641,25 +668,53 @@ def _tab_completer(text, state):
             matches = [c for c in candidates if c.startswith(text)]
             return matches[state] if state < len(matches) else None
 
-        # ── After a grammar name: rules + tokens from playbook ─────────────────
+        # ── Deep grammar-tree completion ───────────────────────────────────────
+        # After a known grammar name, each additional Tab press goes one level
+        # deeper by using the last-typed rule as the context for expansion.
+        #
+        #   pyhealthcheck <TAB>
+        #     → expand root rule "pyhealthcheck"
+        #     → py_system_status  py_resource_status  py_network_status
+        #
+        #   pyhealthcheck py_system_status <TAB>
+        #     → expand "py_system_status"
+        #     → py_check_kernel  py_check_uptime  py_check_services
+        #
+        #   pyhealthcheck py_system_status py_check<TAB>
+        #     → context rule = "py_system_status" (word before cursor)
+        #     → filter expansion by "py_check"
+        #     → py_check_kernel  py_check_uptime  py_check_services
         gname = parts[0]
         if gname in assets.playbook and isinstance(assets.playbook[gname], dict):
             subtree = assets.playbook[gname]
             gcmds   = _grammar_commands.get(gname, {})
-            candidates = sorted(set(
-                list(subtree.keys())
-                + [k for k in gcmds if not k.startswith("_")]
-            ))
+
+            if trailing:
+                # Tab after a space → expand the last complete word
+                context = parts[-1]
+                candidates = _grammar_expand(context, subtree)
+            else:
+                # Tab mid-word → expand the rule before the current word
+                context    = parts[-2] if len(parts) >= 3 else gname
+                candidates = _grammar_expand(context, subtree)
+
+            # Nothing from the playbook at this depth — widen to all rules + tokens
+            if not candidates:
+                candidates = sorted(set(
+                    list(subtree.keys())
+                    + [k for k in gcmds if not k.startswith("_")]
+                ))
+
             matches = [c for c in candidates if c.startswith(text)]
 
-            # Playbook didn't cover it — ask the model (single live Ollama query)
+            # Still nothing — ask the model for suggestions (one live Ollama call)
             if state == 0 and not matches:
                 try:
-                    _context = " ".join(parts)
-                    _answer  = get_ollama_answer(_context, NAME, os.environ["OLLAMA_HOST"])
-                    _tokens  = [t.strip().strip('"').strip("'").rstrip(",")
-                                for t in _answer.replace(",", " ").split() if t.strip()]
-                    matches = [t for t in _tokens if t.startswith(text) and t]
+                    _ctx  = " ".join(parts)
+                    _ans  = get_ollama_answer(_ctx, NAME, os.environ["OLLAMA_HOST"])
+                    _toks = [t.strip().strip('"').strip("'").rstrip(",")
+                             for t in _ans.replace(",", " ").split() if t.strip()]
+                    matches = [t for t in _toks if t.startswith(text) and t]
                 except Exception:
                     pass
 
