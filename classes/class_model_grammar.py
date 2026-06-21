@@ -228,9 +228,15 @@ class ModelGrammar:
             return None   # not a grammar file — caller falls back to prose handling
 
         if grammar_name is None:
-            stem = os.path.splitext(os.path.basename(path))[0]
-            parts = [p for p in stem.split('_') if p]
-            grammar_name = parts[-1] if parts else stem
+            # Prefer an embedded "# Grammar : name" comment (written by model_tools_grammar.py)
+            # so that multi-word names like kali_discovery survive the filename split.
+            _m = re.search(r'^#\s*[Gg]rammar\s*:\s*(\S+)', text, re.MULTILINE)
+            if _m:
+                grammar_name = _m.group(1).strip()
+            else:
+                stem = os.path.splitext(os.path.basename(path))[0]
+                parts = [p for p in stem.split('_') if p]
+                grammar_name = parts[-1] if parts else stem
 
         rules = cls.parse(text)
         if not rules:
@@ -621,14 +627,7 @@ class GrammarRunner:
         import subprocess
         self._log("info", "[exec] " + token + "  $ " + cmd)
         try:
-            result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=30
-            )
-            output = (result.stdout + result.stderr).strip()
-            if output:
-                print(output)
-            else:
-                self._log("info", "  (no output)")
+            subprocess.run(cmd, shell=True, timeout=120)
         except subprocess.TimeoutExpired:
             self._log("error", "Timed out: " + cmd)
         except Exception as exc:
