@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from classes.class_tools_grammar import (
     MermaidGrammarConverter,
     MarkdownGrammarConverter,
+    TextGrammarConverter,
     PDFGrammarConverter,
     WebGrammarConverter,
     ModelAssistedGrammarConverter,
@@ -47,16 +48,19 @@ def _detect_format(source):
         return "markdown"
     if ext in (".mmd", ".mermaid"):
         return "mermaid"
-    # Peek inside plain text files to detect Mermaid syntax
-    if ext in (".txt", ".bnf", ".ebnf", ""):
+    # Peek inside plain text / unknown-extension files
+    if ext in (".txt", ".rst", ".text", ".spec", ".bnf", ".ebnf", ""):
         try:
             with open(src, "r", encoding="utf-8", errors="replace") as fh:
-                head = fh.read(512)
+                head = fh.read(1024)
             import re
             if re.search(r'^(?:flowchart|graph)\s+[A-Z]{2}', head, re.M | re.I):
                 return "mermaid"
+            if re.search(r'^#{1,3} ', head, re.M):
+                return "markdown"       # has Markdown headings
         except OSError:
             pass
+        return "text"                   # plain spec / numbered-section document
     return "markdown"
 
 
@@ -106,7 +110,7 @@ def main():
     )
     parser.add_argument(
         "--format", "-f",
-        choices=["mermaid", "markdown", "pdf", "web", "auto"],
+        choices=["mermaid", "markdown", "text", "pdf", "web", "auto"],
         default="auto",
         help="Source format (default: auto-detect from extension/URL).",
     )
@@ -179,6 +183,7 @@ def main():
         _map = {
             "mermaid":  MermaidGrammarConverter,
             "markdown": MarkdownGrammarConverter,
+            "text":     TextGrammarConverter,
             "pdf":      PDFGrammarConverter,
             "web":      WebGrammarConverter,
         }

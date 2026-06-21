@@ -244,6 +244,68 @@ def test_generate_structure(verbose, tmp_dir):
     return r.passed
 
 
+def test_text_spec(verbose, tmp_dir):
+    r = _Result("TextGrammarConverter — kali_discovery_spec.txt")
+    src = os.path.join(EXAMPLES, "kali_discovery_spec.txt")
+    try:
+        from classes.class_tools_grammar import TextGrammarConverter
+        conv = TextGrammarConverter(src)
+        json_path, bnf_path = _run_converter(conv, tmp_dir)
+
+        r.check(bool(conv.grammar_name),
+                "grammar_name auto-detected: " + conv.grammar_name,
+                "grammar_name is empty")
+
+        r.check(len(conv._rules) >= 8,
+                str(len(conv._rules)) + " rules extracted",
+                "too few rules: " + str(len(conv._rules)))
+
+        r.check(len(conv._tokens) >= 18,
+                str(len(conv._tokens)) + " tokens extracted",
+                "too few tokens: " + str(len(conv._tokens)))
+
+        r.check("system_identity" in conv._rules,
+                "'system_identity' rule from numbered sub-section",
+                "'system_identity' rule missing")
+
+        r.check("sys_hostname" in conv._tokens,
+                "'sys_hostname' token extracted",
+                "'sys_hostname' token missing")
+
+        cmd = conv._tokens.get("sys_hostname", "")
+        r.check("hostname" in cmd,
+                "'sys_hostname' command extracted: " + repr(cmd[:40]),
+                "'sys_hostname' command wrong: " + repr(cmd[:40]))
+
+        cmd = conv._tokens.get("ping_sweep", "")
+        r.check("nmap" in cmd,
+                "'ping_sweep' command extracted: " + repr(cmd[:40]),
+                "'ping_sweep' command wrong: " + repr(cmd[:40]))
+
+        empties = [t for t, v in conv._tokens.items() if not v.strip()]
+        r.check(not empties,
+                "all tokens have non-empty commands",
+                "tokens with empty commands: " + str(empties))
+
+        with open(json_path) as fh:
+            data = json.load(fh)
+        r.check(data.get("_type") == "command_vocabulary",
+                "JSON _type correct",
+                "JSON _type wrong: " + str(data.get("_type")))
+
+        bnf = open(bnf_path).read()
+        r.check("::=" in bnf,
+                "BNF contains rules",
+                "BNF missing ::= operator")
+
+    except Exception:
+        r.passed = False
+        r.notes.append("  EXCEPTION\n" + traceback.format_exc())
+
+    r.report(verbose)
+    return r.passed
+
+
 def test_ai_assisted(verbose, tmp_dir, model_name, ollama_host):
     r = _Result("ModelAssistedGrammarConverter — disk_maintenance.md via " + model_name)
     src = os.path.join(EXAMPLES, "disk_maintenance.md")
@@ -310,6 +372,7 @@ def main():
         results.append(test_markdown_shell(args.verbose, tmp))
         results.append(test_markdown_python(args.verbose, tmp))
         results.append(test_generate_structure(args.verbose, tmp))
+        results.append(test_text_spec(args.verbose, tmp))
         if args.ai_model:
             results.append(test_ai_assisted(args.verbose, tmp, args.ai_model, args.ai_host))
         else:

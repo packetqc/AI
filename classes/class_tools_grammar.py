@@ -445,6 +445,222 @@ class MarkdownGrammarConverter(BaseGrammarConverter):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Plain text specification documents
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TextGrammarConverter(BaseGrammarConverter):
+    """Convert a plain-text specification document to grammar + vocabulary files.
+
+    Works with any text file that uses common doc conventions — no special
+    markup required. Three levels of hierarchy are recognised:
+
+    Section headings (become grammar rules):
+        1. TITLE           — numbered section  (top-level)
+        1.1  Sub-title     — numbered sub-section
+        A. TITLE           — lettered section
+        TITLE              — ALL-CAPS line or underline (=== / ---)
+
+    Procedure steps (become command tokens):
+        Step 1: text       — numbered step ("Step N:", "N.")
+        • / - / * text     — bullet item
+        → / > text         — arrow-prefixed step
+        name: command      — explicit name:value pair (colon separator)
+
+    Command extraction heuristic:
+        A step line is split on the first ': ' or ':\t'.
+        Left side → token name (sanitized).
+        Right side → command value.
+        If the value looks like a shell command (contains / - | > or spaces
+        around a keyword like nmap, ping, curl, etc.) it is kept as-is.
+        Otherwise the full line text is the command.
+
+    For dense or loosely-structured specs, use --ai-model instead —
+    the AI path gives much better results when structure is implicit.
+    """
+
+    # numbered section: "1.", "1.1", "1.1.", "1.1.2", "A.", "A.1" + title
+    # requires at least one dot (so bare "1 Title" is not a section)
+    _SEC_RE  = re.compile(r'^(\d+(?:\.\d+)+\.?|\d+\.|[A-Z](?:\.\d+)*\.)\s+(\S.+)')
+    # ALL-CAPS heading (≥4 chars, may have trailing colon)
+    _CAPS_RE = re.compile(r'^([A-Z][A-Z0-9 _/-]{3,}):?\s*$')
+    # underline markers (===, ---, ~~~)
+    _UL_RE   = re.compile(r'^[=\-~]{3,}\s*$')
+    # bullet / arrow prefix (NOT "Step N:" — handled separately)
+    _BULLET_RE = re.compile(r'^\s*[•\*→>]\s+(.+)|^\s*-\s{2,}(.+)')
+    # "Step N: ..." or just "N. ..." at start of line
+    _STEP_RE   = re.compile(r'^\s*(?:step\s+)?(\d+)[.:]\s+(.+)', re.IGNORECASE)
+    # em-dash separators used to split "name — command" in step text
+    _EMDASH_RE = re.compile(r'\s+[—–-]{1,3}\s+')
+
+    # valid name: short phrase, no colons/slashes/IPs/dots
+    _NAME_OK = re.compile(r'^[A-Za-z][A-Za-z0-9 _-]{0,39}$')
+
+    def _split_name_cmd(self, text):
+        """Split 'name — command' or 'name: command' into (name, cmd).
+        Returns (None, text) if no clean split is found.
+        Name must be a short clean phrase (no colons, slashes, IP addresses).
+        """
+        m = self._EMDASH_RE.search(text)
+        if m:
+            left = text[:m.start()].strip()
+            right = text[m.end():].strip()
+            # name must be a clean short phrase, command must be non-trivial
+            if self._NAME_OK.match(left) and len(right) > 3:
+                return left, right
+        if ': ' in text:
+            left, _, right = text.partition(': ')
+            if (self._NAME_OK.match(left.strip())
+                    and len(left.split()) <= 3
+                    and len(right.strip()) > 3):
+                return left.strip(), right.strip()
+        return None, text
+
+    def parse(self):
+        with open(self.source, "r", encoding="utf-8") as fh:
+            raw_lines = fh.read().splitlines()
+
+        # ── Pass 1: strip noise, tag line types ───────────────────────────
+        lines = []
+        for line in raw_lines:
+            s = line.rstrip()
+            if not s:
+                lines.append(("blank", ""))
+            elif self._UL_RE.match(s):
+                lines.append(("underline", ""))
+            else:
+                lines.append(("text", s))
+
+        # ── Pass 2: classify each line ────────────────────────────────────
+        # Each element: ("heading"|"step"|"plain"|"blank", depth, text, cmd)
+        # Inline name:cmd splits are only applied inside numbered sections
+        # (after the first _SEC_RE match) to avoid capturing subtitle / metadata.
+        parsed = []
+        _inside_numbered_section = False
+        for kind, text in lines:
+            if kind == "blank":
+                parsed.append(("blank", 0, "", ""))
+                continue
+
+            if kind == "underline":
+                # promote the previous plain line to a level-1 heading
+                if parsed and parsed[-1][0] == "plain":
+                    _, _, pt, _ = parsed.pop()
+                    parsed.append(("heading", 1, pt, ""))
+                continue
+
+            stripped = text.strip()
+
+            # ── numbered / lettered section heading ────────────────────────
+            m = self._SEC_RE.match(stripped)
+            if m:
+                num   = m.group(1).rstrip(".")
+                title = m.group(2).strip()
+                depth = num.count(".") + 1
+                _inside_numbered_section = True
+                parsed.append(("heading", depth, title, ""))
+                continue
+
+            # ── ALL-CAPS line  ─────────────────────────────────────────────
+            if self._CAPS_RE.match(stripped):
+                parsed.append(("heading", 1, stripped.rstrip(":"), ""))
+                continue
+
+            # ── "Step N: ..."  ─────────────────────────────────────────────
+            m = self._STEP_RE.match(text)
+            if m:
+                step_body = m.group(2).strip()
+                name, cmd = self._split_name_cmd(step_body)
+                if name:
+                    tok_name = self._sanitize(name)
+                    tok_cmd  = cmd
+                else:
+                    tok_name = "step_" + m.group(1)
+                    tok_cmd  = step_body
+                parsed.append(("step", 0, tok_name, tok_cmd))
+                continue
+
+            # ── bullet / arrow ─────────────────────────────────────────────
+            m = self._BULLET_RE.match(text)
+            if m:
+                item = (m.group(1) or m.group(2)).strip()
+                name, cmd = self._split_name_cmd(item)
+                if name:
+                    parsed.append(("step", 0, self._sanitize(name), cmd))
+                else:
+                    parsed.append(("step", 0, self._sanitize(item), item))
+                continue
+
+            # ── inline "name: command" on a plain text line ────────────────
+            # Only apply inside numbered sections (after the first _SEC_RE match)
+            # to avoid capturing subtitle / metadata / preamble lines.
+            if _inside_numbered_section:
+                name, cmd = self._split_name_cmd(stripped)
+                if name and cmd != stripped:
+                    parsed.append(("step", 0, self._sanitize(name), cmd))
+                    continue
+            parsed.append(("plain", 0, stripped, ""))
+
+        # ── Pass 3: build hierarchy ────────────────────────────────────────
+        h1_children = OrderedDict()   # h1_name → [h2_names or token_names]
+        h2_children = OrderedDict()   # h2_name → [token_names]
+        current_h1  = None
+        current_h2  = None
+        first_heading_seen = False
+
+        for kind, depth, text, cmd in parsed:
+            if kind in ("blank", "plain"):
+                continue
+
+            if kind == "heading":
+                name = self._sanitize(text)
+                if not name:
+                    continue
+                # First heading before any numbered section → grammar title, not a rule
+                if not first_heading_seen and not self._name_explicit and depth <= 1:
+                    # Use as grammar name only if no numbered sections have been registered yet
+                    if not h1_children:
+                        self.grammar_name = name
+                        first_heading_seen = True
+                        continue
+                first_heading_seen = True
+                if depth <= 1:
+                    current_h1 = name
+                    current_h2 = None
+                    h1_children.setdefault(name, [])
+                else:
+                    current_h2 = name
+                    h2_children.setdefault(name, [])
+                    if current_h1 and name not in h1_children.get(current_h1, []):
+                        h1_children.setdefault(current_h1, []).append(name)
+                continue
+
+            if kind == "step":
+                tok_name = text  # already sanitized in pass 2
+                tok_cmd  = cmd.strip()
+                if not tok_name:
+                    continue
+                if tok_name not in self._tokens or (tok_cmd and not self._tokens[tok_name]):
+                    self._tokens[tok_name] = tok_cmd
+                parent = current_h2 or current_h1
+                if parent:
+                    bucket = h2_children if current_h2 else h1_children
+                    if tok_name not in bucket.get(parent, []):
+                        bucket.setdefault(parent, []).append(tok_name)
+
+        # ── Pass 4: assemble rules ─────────────────────────────────────────
+        if h1_children:
+            self._rules[self.grammar_name] = list(h1_children.keys())
+            for h1k, children in h1_children.items():
+                if children:
+                    self._rules[h1k] = children
+                    for c in children:
+                        if c in h2_children and h2_children[c]:
+                            self._rules[c] = h2_children[c]
+        elif self._tokens:
+            self._rules[self.grammar_name] = list(self._tokens.keys())
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PDF  (.pdf  — requires: pip install pypdf)
 # ─────────────────────────────────────────────────────────────────────────────
 
