@@ -80,6 +80,13 @@ NUM_HEADS = 4   #8   #4
 NUM_KV_HEADS = 2    #4    #2
 CONTEXT_LENGTH = 256
 
+# Auto-detect the best available compute device: CUDA (NVIDIA) > MPS (Apple) > CPU.
+DEVICE = (
+    torch.device("cuda") if torch.cuda.is_available()
+    else torch.device("mps") if torch.backends.mps.is_available()
+    else torch.device("cpu")
+)
+
 #################################################################################################
 # OLLAMA FUNCTIONS
 #################################################################################################
@@ -287,7 +294,7 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
     )
     config.attention_bias = True
     config.save_pretrained("./" + model_path)
-    model = Qwen2ForCausalLM(config)
+    model = Qwen2ForCausalLM(config).to(DEVICE)
     model.resize_token_embeddings(len(tokens), mean_resizing=False)
 
     # ---- training rows: anchors + grammar routines (mask everything up to the answer) ----
@@ -327,13 +334,14 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
         label_rows.append(lab + [-100] * pad)
         mask_rows.append([1] * len(seq) + [0] * pad)
 
-    input_ids = torch.tensor(input_rows, dtype=torch.long)
-    labels = torch.tensor(label_rows, dtype=torch.long)
-    attention_mask = torch.tensor(mask_rows, dtype=torch.long)
+    input_ids = torch.tensor(input_rows, dtype=torch.long).to(DEVICE)
+    labels = torch.tensor(label_rows, dtype=torch.long).to(DEVICE)
+    attention_mask = torch.tensor(mask_rows, dtype=torch.long).to(DEVICE)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
     model.train()
-    logger.log("info", "SYSTEM", "Training " + str(len(rows)) + " rows (anchors + knowledge) jointly...")
+    logger.log("info", "SYSTEM", "Training " + str(len(rows)) + " rows (anchors + knowledge) jointly"
+               + " on " + str(DEVICE) + "...")
     loss, epoch = None, 0
     for epoch in range(MAX_EPOCHS):
         optimizer.zero_grad()

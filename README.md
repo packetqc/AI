@@ -33,6 +33,19 @@ class_terminal_logs.py      # Colour terminal logger
 - [Ollama](https://ollama.com) installed and running (`ollama serve`)
 - NVIDIA GPU recommended (CPU inference works but is slow)
 
+## GPU support
+
+The code auto-detects the best available compute device at startup (priority: CUDA → MPS → CPU) and trains on it automatically. No configuration required.
+
+| Platform | Device | Notes |
+|---|---|---|
+| NVIDIA GPU | `cuda` | Install PyTorch with the matching CUDA wheel (see Setup) |
+| Apple Silicon | `mps` | Install the standard CPU/MPS PyTorch wheel |
+| CPU-only | `cpu` | Default fallback — works everywhere, slower training |
+| AMD GPU | `cpu` | Requires ROCm + a ROCm-built PyTorch wheel; see [pytorch.org/get-started](https://pytorch.org/get-started/locally/) |
+
+> **This machine (AMD FirePro M4000):** No ROCm is installed and the card predates reliable ROCm support, so training runs on CPU. The GGUF export and Ollama serving are unaffected — Ollama handles its own inference backend.
+
 ## Setup
 
 ```bash
