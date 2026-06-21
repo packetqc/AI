@@ -307,242 +307,347 @@
       "Ł": 254,
       "ł": 255,
       "Ń": 256,
-      "he": 257,
-      "py": 258,
-      "ck": 259,
-      "che": 260,
-      "check": 261,
-      "Ġpy": 262,
-      "_check": 263,
-      "te": 264,
-      "al": 265,
-      "_s": 266,
-      "en": 267,
-      "es": 268,
-      "hcheck": 269,
-      "thcheck": 270,
-      "heal": 271,
-      "healthcheck": 272,
-      "<|": 273,
-      "do": 274,
-      "fte": 275,
-      "xt": 276,
-      "|>": 277,
-      "endo": 278,
-      "ftext": 279,
-      "endoftext": 280,
-      "or": 281,
-      "pyhealthcheck": 282,
-      "at": 283,
-      "tat": 284,
-      "us": 285,
-      "tatus": 286,
-      "_status": 287,
-      "ces": 288,
-      "er": 289,
+      "sc": 257,
+      "er": 258,
+      "ver": 259,
+      "te": 260,
+      "di": 261,
+      "disc": 262,
+      "en": 263,
+      "over": 264,
+      "discover": 265,
+      "discovery": 266,
+      "<|": 267,
+      "do": 268,
+      "fte": 269,
+      "xt": 270,
+      "|>": 271,
+      "endo": 272,
+      "ftext": 273,
+      "endoftext": 274,
+      "Ġ\"": 275,
+      "ho": 276,
+      "st": 277,
+      "al": 278,
+      "ys": 279,
+      "sys": 280,
+      "_s": 281,
+      "ac": 282,
+      "an": 283,
+      "to": 284,
+      "scan": 285,
+      "_scan": 286,
+      "oc": 287,
+      "host": 288,
+      "\"<|": 289,
       "me": 290,
-      "_p": 291,
-      "ne": 292,
-      "is": 293,
-      "ro": 294,
-      "ys": 295,
-      "Ġ\"": 296,
-      "cp": 297,
-      "dis": 298,
-      "ices": 299,
-      "ime": 300,
-      "ker": 301,
-      "mor": 302,
-      "pt": 303,
-      "ses": 304,
-      "ts": 305,
-      "upt": 306,
-      "vices": 307,
-      "orts": 308,
-      "cesses": 309,
-      "ervices": 310,
-      "memor": 311,
-      "nel": 312,
-      "rocesses": 313,
-      "cpu": 314,
-      "disk": 315,
-      "kernel": 316,
-      "uptime": 317,
-      "memory": 318,
-      "\"py": 319,
-      "\"<|": 320,
-      "_cpu": 321,
-      "_disk": 322,
-      "_kernel": 323,
-      "_uptime": 324,
-      "_memory": 325,
-      "_services": 326,
-      "_ports": 327,
-      "_processes": 328,
-      "ou": 329,
-      "res": 330,
-      "tw": 331,
-      "tem": 332,
-      "ork": 333,
-      "netw": 334,
-      "ystem": 335,
-      "our": 336,
-      "resour": 337,
-      "network": 338,
-      "_resour": 339,
-      "_network": 340,
-      "ce": 341,
-      "_system": 342,
-      "_resource": 343,
-      "Ġis": 344,
-      "Ġpyhealthcheck": 345,
-      "ays": 346,
-      "co": 347,
-      "hat": 348,
-      "lor": 349,
-      "re": 350,
-      "ways": 351,
-      "what": 352,
-      "Ġ?": 353,
-      "Ġal": 354,
-      "Ġco": 355,
-      "Ġalways": 356,
-      "Ġcolor": 357,
-      "Ġg": 358,
-      "ad": 359,
-      "bad": 360,
-      "od": 361,
-      "ood": 362,
-      "ute": 363,
-      "Ġbad": 364,
-      "route": 365,
-      "red": 366,
-      "reen": 367,
-      "Ġgood": 368,
-      "routes": 369,
-      "Ġpycheck": 370,
-      "green": 371,
-      "Ġred": 372,
-      "Ġroutes": 373,
-      "Ġgreen": 374,
-      "de": 375,
-      "fi": 376,
-      "Ġde": 377,
-      "Ġdefi": 378,
-      ".Ċ": 379,
-      "as": 380,
-      "Ġas": 381,
-      "ned": 382,
-      "Ġdefined": 383,
-      "pycheck": 384,
-      "\".Ċ": 385,
-      "status": 386,
-      "Ġpycheckp": 387,
-      "services": 388,
-      "system": 389,
-      "Ġpyresour": 390,
-      "Ġpynetwork": 391,
-      "Ġpysystem": 392,
-      "cestatus": 393,
-      "Ġpycheckcpu": 394,
-      "Ġpycheckdisk": 395,
-      "Ġpycheckkernel": 396,
-      "Ġpycheckuptime": 397,
-      "Ġpycheckmemory": 398,
-      "Ġpycheckservices": 399,
-      "Ġpycheckports": 400,
-      "Ġpycheckprocesses": 401,
-      "Ġpyresourcestatus": 402,
-      "Ġpynetworkstatus": 403,
-      "Ġpysystemstatus": 404,
-      "pycheckp": 405,
-      "\".": 406,
-      "The": 407,
-      "am": 408,
-      "ar": 409,
-      "les": 410,
-      "mar": 411,
-      "nes": 412,
-      "ru": 413,
-      "ram": 414,
-      "Ġru": 415,
-      "Ġgram": 416,
-      "Ġdefines": 417,
-      "pycheckcpu": 418,
-      "pycheckdisk": 419,
-      "pycheckkernel": 420,
-      "pycheckuptime": 421,
-      "pycheckmemory": 422,
-      "pycheckservices": 423,
-      "pycheckports": 424,
-      "pycheckprocesses": 425,
-      "Ġrules": 426,
-      "Ġgrammar": 427
+      "or": 291,
+      "in": 292,
+      "_p": 293,
+      "ne": 294,
+      "ali": 295,
+      "ol": 296,
+      "de": 297,
+      "ar": 298,
+      "ame": 299,
+      "ct": 300,
+      "name": 301,
+      "pt": 302,
+      "ve": 303,
+      "Ġsys": 304,
+      "tect": 305,
+      "how": 306,
+      "top": 307,
+      "detect": 308,
+      "arp": 309,
+      "_l": 310,
+      "_u": 311,
+      "_discovery": 312,
+      "_host": 313,
+      "_detect": 314,
+      "_show": 315,
+      "fac": 316,
+      "ic": 317,
+      "roc": 318,
+      "vc": 319,
+      "tool": 320,
+      "ocal": 321,
+      "ort": 322,
+      "face": 323,
+      "rocs": 324,
+      "tools": 325,
+      "_procs": 326,
+      "Ġs": 327,
+      "Ġne": 328,
+      "Ġnet": 329,
+      "_in": 330,
+      "Ġhost": 331,
+      "kali": 332,
+      "Ġp": 333,
+      "Ġkali": 334,
+      "ou": 335,
+      "rou": 336,
+      "route": 337,
+      "Ġi": 338,
+      "he": 339,
+      "ul": 340,
+      "ap": 341,
+      "cac": 342,
+      "dp": 343,
+      "ee": 344,
+      "ful": 345,
+      "ist": 346,
+      "ime": 347,
+      "ipt": 348,
+      "ive": 349,
+      "ker": 350,
+      "map": 351,
+      "nmap": 352,
+      "op": 353,
+      "os": 354,
+      "qu": 355,
+      "ript": 356,
+      "tive": 357,
+      "udp": 358,
+      "wee": 359,
+      "Ġarp": 360,
+      "script": 361,
+      "active": 362,
+      "ing": 363,
+      "nel": 364,
+      "alive": 365,
+      "ptime": 366,
+      "ick": 367,
+      "orts": 368,
+      "cache": 369,
+      "full": 370,
+      "kernel": 371,
+      "open": 372,
+      "quick": 373,
+      "weep": 374,
+      "_ver": 375,
+      "_top": 376,
+      "_cache": 377,
+      "_kernel": 378,
+      "_svc": 379,
+      "_sweep": 380,
+      "_ports": 381,
+      "_local": 382,
+      "_list": 383,
+      "_uname": 384,
+      "_uptime": 385,
+      "_hosts": 386,
+      "_hostname": 387,
+      "local": 388,
+      "faces": 389,
+      "es": 390,
+      "fo": 391,
+      "ter": 392,
+      "um": 393,
+      "vic": 394,
+      "wor": 395,
+      "ervic": 396,
+      "enum": 397,
+      "Ġsvc": 398,
+      "Ġservic": 399,
+      "Ġnetwor": 400,
+      "Ġport": 401,
+      "terfaces": 402,
+      "Ġservices": 403,
+      "Ġnetwork": 404,
+      "_disc": 405,
+      "_tools": 406,
+      "_enum": 407,
+      "_info": 408,
+      "_interfaces": 409,
+      "Ġis": 410,
+      "Ġlocal": 411,
+      "Ġroute": 412,
+      "\"sys": 413,
+      "ping": 414,
+      "Ġver": 415,
+      "Ġtop": 416,
+      "Ġtools": 417,
+      "Ġnmap": 418,
+      "Ġos": 419,
+      "Ġudp": 420,
+      "Ġscript": 421,
+      "Ġactive": 422,
+      "Ġalive": 423,
+      "Ġfull": 424,
+      "Ġopen": 425,
+      "Ġquick": 426,
+      "Ġping": 427,
+      "at": 428,
+      "ays": 429,
+      "col": 430,
+      "hat": 431,
+      "iface": 432,
+      "re": 433,
+      "ways": 434,
+      "what": 435,
+      "Ġ?": 436,
+      "Ġal": 437,
+      "Ġcol": 438,
+      "Ġiface": 439,
+      "Ġalways": 440,
+      "Ġcolor": 441,
+      "Ġg": 442,
+      "\"ver": 443,
+      "\"arp": 444,
+      "\"nmap": 445,
+      "\"open": 446,
+      "\"quick": 447,
+      "\"ping": 448,
+      "\"iface": 449,
+      "ad": 450,
+      "bad": 451,
+      "od": 452,
+      "ood": 453,
+      "Ġbad": 454,
+      "red": 455,
+      "reen": 456,
+      "Ġgood": 457,
+      "fin": 458,
+      "Ġde": 459,
+      "Ġdefin": 460,
+      ".Ċ": 461,
+      "as": 462,
+      "ed": 463,
+      "Ġas": 464,
+      "Ġdefined": 465,
+      "\".Ċ": 466,
+      "routes": 467,
+      "Ġroutes": 468,
+      "\"top": 469,
+      "\"tools": 470,
+      "\"route": 471,
+      "\"os": 472,
+      "\"udp": 473,
+      "\"script": 474,
+      "\"active": 475,
+      "\"alive": 476,
+      "\"full": 477,
+      "green": 478,
+      "Ġred": 479,
+      "Ġgreen": 480,
+      "procs": 481,
+      "list": 482,
+      "ports": 483,
+      "svc": 484,
+      "sweep": 485,
+      "uname": 486,
+      "uptime": 487,
+      "hosts": 488,
+      "hostname": 489,
+      "faceshow": 490,
+      "info": 491,
+      "interfaces": 492,
+      "Ġnetinterfaces": 493,
+      "Ġhostdisc": 494,
+      "Ġhostinfo": 495,
+      "Ġkalitools": 496,
+      "Ġsvcenum": 497,
+      "Ġportscan": 498,
+      "Ġservicesprocs": 499,
+      "Ġnetworkdiscovery": 500,
+      "Ġlocaldiscovery": 501,
+      "ifaceshow": 502,
+      "verdetect": 503,
+      "syskernel": 504,
+      "sysuname": 505,
+      "sysuptime": 506,
+      "syshostname": 507,
+      "Ġsyskernel": 508,
+      "Ġsysuname": 509,
+      "Ġsysuptime": 510,
+      "Ġsyshostname": 511,
+      "topprocs": 512,
+      "arpcache": 513,
+      "arplocal": 514,
+      "toolslist": 515,
+      "Ġkalidiscovery": 516,
+      "Ġifaceshow": 517,
+      "nmapver": 518,
+      "osdetect": 519,
+      "udptop": 520,
+      "Ġarpcache": 521,
+      "Ġarplocal": 522,
+      "scriptscan": 523,
+      "activesvc": 524,
+      "alivehosts": 525,
+      "fullscan": 526,
+      "openports": 527,
+      "quickscan": 528,
+      "pingsweep": 529,
+      "Ġverdetect": 530,
+      "Ġtopprocs": 531,
+      "Ġtoolslist": 532,
+      "Ġnmapver": 533,
+      "Ġosdetect": 534,
+      "Ġudptop": 535,
+      "Ġscriptscan": 536,
+      "Ġactivesvc": 537,
+      "Ġalivehosts": 538,
+      "Ġfullscan": 539,
+      "Ġopenports": 540,
+      "Ġquickscan": 541,
+      "Ġpingsweep": 542,
+      "routeshow": 543,
+      "Ġrouteshow": 544,
+      "\".": 545,
+      "The": 546,
+      "am": 547,
+      "mar": 548,
+      "rul": 549,
+      "ram": 550,
+      "Ġdiscovery": 551,
+      "Ġrul": 552,
+      "Ġgram": 553,
+      "Ġdefines": 554,
+      "Ġrules": 555,
+      "Ġgrammar": 556
     },
     "merges": [
       [
-        "h",
-        "e"
+        "s",
+        "c"
       ],
       [
-        "p",
-        "y"
+        "e",
+        "r"
       ],
       [
-        "c",
-        "k"
-      ],
-      [
-        "c",
-        "he"
-      ],
-      [
-        "che",
-        "ck"
-      ],
-      [
-        "Ġ",
-        "py"
-      ],
-      [
-        "_",
-        "check"
+        "v",
+        "er"
       ],
       [
         "t",
         "e"
       ],
       [
-        "a",
-        "l"
+        "d",
+        "i"
       ],
       [
-        "_",
-        "s"
+        "di",
+        "sc"
       ],
       [
         "e",
         "n"
       ],
       [
-        "e",
-        "s"
+        "o",
+        "ver"
       ],
       [
-        "h",
-        "check"
+        "disc",
+        "over"
       ],
       [
-        "t",
-        "hcheck"
-      ],
-      [
-        "he",
-        "al"
-      ],
-      [
-        "heal",
-        "thcheck"
+        "discover",
+        "y"
       ],
       [
         "<",
@@ -577,44 +682,76 @@
         "ftext"
       ],
       [
-        "o",
-        "r"
+        "Ġ",
+        "\""
       ],
       [
-        "py",
-        "healthcheck"
+        "h",
+        "o"
       ],
       [
-        "a",
+        "s",
         "t"
       ],
       [
-        "t",
-        "at"
+        "a",
+        "l"
       ],
       [
-        "u",
+        "y",
         "s"
       ],
       [
-        "tat",
-        "us"
+        "s",
+        "ys"
       ],
       [
-        "_s",
-        "tatus"
+        "_",
+        "s"
       ],
       [
-        "c",
-        "es"
+        "a",
+        "c"
       ],
       [
-        "e",
-        "r"
+        "a",
+        "n"
+      ],
+      [
+        "t",
+        "o"
+      ],
+      [
+        "sc",
+        "an"
+      ],
+      [
+        "_",
+        "scan"
+      ],
+      [
+        "o",
+        "c"
+      ],
+      [
+        "ho",
+        "st"
+      ],
+      [
+        "\"",
+        "<|"
       ],
       [
         "m",
         "e"
+      ],
+      [
+        "o",
+        "r"
+      ],
+      [
+        "i",
+        "n"
       ],
       [
         "_",
@@ -625,148 +762,164 @@
         "e"
       ],
       [
-        "i",
-        "s"
+        "al",
+        "i"
       ],
       [
-        "r",
-        "o"
-      ],
-      [
-        "y",
-        "s"
-      ],
-      [
-        "Ġ",
-        "\""
-      ],
-      [
-        "c",
-        "p"
+        "o",
+        "l"
       ],
       [
         "d",
-        "is"
+        "e"
       ],
       [
-        "i",
-        "ces"
+        "a",
+        "r"
       ],
       [
-        "i",
+        "a",
         "me"
       ],
       [
-        "k",
-        "er"
+        "c",
+        "t"
       ],
       [
-        "m",
-        "or"
+        "n",
+        "ame"
       ],
       [
         "p",
         "t"
       ],
       [
-        "s",
-        "es"
-      ],
-      [
-        "t",
-        "s"
-      ],
-      [
-        "u",
-        "pt"
-      ],
-      [
         "v",
-        "ices"
+        "e"
       ],
       [
-        "or",
-        "ts"
+        "Ġ",
+        "sys"
       ],
       [
-        "ces",
-        "ses"
+        "te",
+        "ct"
       ],
       [
-        "er",
-        "vices"
+        "ho",
+        "w"
       ],
       [
-        "me",
-        "mor"
+        "to",
+        "p"
       ],
       [
-        "ne",
+        "de",
+        "tect"
+      ],
+      [
+        "ar",
+        "p"
+      ],
+      [
+        "_",
         "l"
       ],
       [
-        "ro",
-        "cesses"
-      ],
-      [
-        "cp",
+        "_",
         "u"
       ],
       [
-        "dis",
-        "k"
-      ],
-      [
-        "ker",
-        "nel"
-      ],
-      [
-        "upt",
-        "ime"
-      ],
-      [
-        "memor",
-        "y"
-      ],
-      [
-        "\"",
-        "py"
-      ],
-      [
-        "\"",
-        "<|"
+        "_",
+        "discovery"
       ],
       [
         "_",
-        "cpu"
+        "host"
       ],
       [
         "_",
-        "disk"
-      ],
-      [
-        "_",
-        "kernel"
-      ],
-      [
-        "_",
-        "uptime"
-      ],
-      [
-        "_",
-        "memory"
+        "detect"
       ],
       [
         "_s",
-        "ervices"
+        "how"
+      ],
+      [
+        "f",
+        "ac"
+      ],
+      [
+        "i",
+        "c"
+      ],
+      [
+        "r",
+        "oc"
+      ],
+      [
+        "v",
+        "c"
+      ],
+      [
+        "to",
+        "ol"
+      ],
+      [
+        "oc",
+        "al"
+      ],
+      [
+        "or",
+        "t"
+      ],
+      [
+        "fac",
+        "e"
+      ],
+      [
+        "roc",
+        "s"
+      ],
+      [
+        "tool",
+        "s"
       ],
       [
         "_p",
-        "orts"
+        "rocs"
       ],
       [
-        "_p",
-        "rocesses"
+        "Ġ",
+        "s"
+      ],
+      [
+        "Ġ",
+        "ne"
+      ],
+      [
+        "Ġne",
+        "t"
+      ],
+      [
+        "_",
+        "in"
+      ],
+      [
+        "Ġ",
+        "host"
+      ],
+      [
+        "k",
+        "ali"
+      ],
+      [
+        "Ġ",
+        "p"
+      ],
+      [
+        "Ġ",
+        "kali"
       ],
       [
         "o",
@@ -774,67 +927,375 @@
       ],
       [
         "r",
-        "es"
+        "ou"
       ],
       [
-        "t",
-        "w"
-      ],
-      [
-        "te",
-        "m"
-      ],
-      [
-        "or",
-        "k"
-      ],
-      [
-        "ne",
-        "tw"
-      ],
-      [
-        "ys",
-        "tem"
-      ],
-      [
-        "ou",
-        "r"
-      ],
-      [
-        "res",
-        "our"
-      ],
-      [
-        "netw",
-        "ork"
-      ],
-      [
-        "_",
-        "resour"
-      ],
-      [
-        "_",
-        "network"
-      ],
-      [
-        "c",
-        "e"
-      ],
-      [
-        "_s",
-        "ystem"
-      ],
-      [
-        "_resour",
-        "ce"
+        "rou",
+        "te"
       ],
       [
         "Ġ",
-        "is"
+        "i"
       ],
       [
-        "Ġpy",
-        "healthcheck"
+        "h",
+        "e"
+      ],
+      [
+        "u",
+        "l"
+      ],
+      [
+        "a",
+        "p"
+      ],
+      [
+        "c",
+        "ac"
+      ],
+      [
+        "d",
+        "p"
+      ],
+      [
+        "e",
+        "e"
+      ],
+      [
+        "f",
+        "ul"
+      ],
+      [
+        "i",
+        "st"
+      ],
+      [
+        "i",
+        "me"
+      ],
+      [
+        "i",
+        "pt"
+      ],
+      [
+        "i",
+        "ve"
+      ],
+      [
+        "k",
+        "er"
+      ],
+      [
+        "m",
+        "ap"
+      ],
+      [
+        "n",
+        "map"
+      ],
+      [
+        "o",
+        "p"
+      ],
+      [
+        "o",
+        "s"
+      ],
+      [
+        "q",
+        "u"
+      ],
+      [
+        "r",
+        "ipt"
+      ],
+      [
+        "t",
+        "ive"
+      ],
+      [
+        "u",
+        "dp"
+      ],
+      [
+        "w",
+        "ee"
+      ],
+      [
+        "Ġ",
+        "arp"
+      ],
+      [
+        "sc",
+        "ript"
+      ],
+      [
+        "ac",
+        "tive"
+      ],
+      [
+        "in",
+        "g"
+      ],
+      [
+        "ne",
+        "l"
+      ],
+      [
+        "ali",
+        "ve"
+      ],
+      [
+        "pt",
+        "ime"
+      ],
+      [
+        "ic",
+        "k"
+      ],
+      [
+        "ort",
+        "s"
+      ],
+      [
+        "cac",
+        "he"
+      ],
+      [
+        "ful",
+        "l"
+      ],
+      [
+        "ker",
+        "nel"
+      ],
+      [
+        "op",
+        "en"
+      ],
+      [
+        "qu",
+        "ick"
+      ],
+      [
+        "wee",
+        "p"
+      ],
+      [
+        "_",
+        "ver"
+      ],
+      [
+        "_",
+        "top"
+      ],
+      [
+        "_",
+        "cache"
+      ],
+      [
+        "_",
+        "kernel"
+      ],
+      [
+        "_s",
+        "vc"
+      ],
+      [
+        "_s",
+        "weep"
+      ],
+      [
+        "_p",
+        "orts"
+      ],
+      [
+        "_l",
+        "ocal"
+      ],
+      [
+        "_l",
+        "ist"
+      ],
+      [
+        "_u",
+        "name"
+      ],
+      [
+        "_u",
+        "ptime"
+      ],
+      [
+        "_host",
+        "s"
+      ],
+      [
+        "_host",
+        "name"
+      ],
+      [
+        "l",
+        "ocal"
+      ],
+      [
+        "face",
+        "s"
+      ],
+      [
+        "e",
+        "s"
+      ],
+      [
+        "f",
+        "o"
+      ],
+      [
+        "t",
+        "er"
+      ],
+      [
+        "u",
+        "m"
+      ],
+      [
+        "v",
+        "ic"
+      ],
+      [
+        "w",
+        "or"
+      ],
+      [
+        "er",
+        "vic"
+      ],
+      [
+        "en",
+        "um"
+      ],
+      [
+        "Ġs",
+        "vc"
+      ],
+      [
+        "Ġs",
+        "ervic"
+      ],
+      [
+        "Ġnet",
+        "wor"
+      ],
+      [
+        "Ġp",
+        "ort"
+      ],
+      [
+        "ter",
+        "faces"
+      ],
+      [
+        "Ġservic",
+        "es"
+      ],
+      [
+        "Ġnetwor",
+        "k"
+      ],
+      [
+        "_",
+        "disc"
+      ],
+      [
+        "_",
+        "tools"
+      ],
+      [
+        "_",
+        "enum"
+      ],
+      [
+        "_in",
+        "fo"
+      ],
+      [
+        "_in",
+        "terfaces"
+      ],
+      [
+        "Ġi",
+        "s"
+      ],
+      [
+        "Ġ",
+        "local"
+      ],
+      [
+        "Ġ",
+        "route"
+      ],
+      [
+        "\"",
+        "sys"
+      ],
+      [
+        "p",
+        "ing"
+      ],
+      [
+        "Ġ",
+        "ver"
+      ],
+      [
+        "Ġ",
+        "top"
+      ],
+      [
+        "Ġ",
+        "tools"
+      ],
+      [
+        "Ġ",
+        "nmap"
+      ],
+      [
+        "Ġ",
+        "os"
+      ],
+      [
+        "Ġ",
+        "udp"
+      ],
+      [
+        "Ġ",
+        "script"
+      ],
+      [
+        "Ġ",
+        "active"
+      ],
+      [
+        "Ġ",
+        "alive"
+      ],
+      [
+        "Ġ",
+        "full"
+      ],
+      [
+        "Ġ",
+        "open"
+      ],
+      [
+        "Ġ",
+        "quick"
+      ],
+      [
+        "Ġp",
+        "ing"
+      ],
+      [
+        "a",
+        "t"
       ],
       [
         "a",
@@ -842,15 +1303,15 @@
       ],
       [
         "c",
-        "o"
+        "ol"
       ],
       [
         "h",
         "at"
       ],
       [
-        "l",
-        "or"
+        "i",
+        "face"
       ],
       [
         "r",
@@ -874,19 +1335,51 @@
       ],
       [
         "Ġ",
-        "co"
+        "col"
+      ],
+      [
+        "Ġi",
+        "face"
       ],
       [
         "Ġal",
         "ways"
       ],
       [
-        "Ġco",
-        "lor"
+        "Ġcol",
+        "or"
       ],
       [
         "Ġ",
         "g"
+      ],
+      [
+        "\"",
+        "ver"
+      ],
+      [
+        "\"",
+        "arp"
+      ],
+      [
+        "\"",
+        "nmap"
+      ],
+      [
+        "\"",
+        "open"
+      ],
+      [
+        "\"",
+        "quick"
+      ],
+      [
+        "\"",
+        "ping"
+      ],
+      [
+        "\"",
+        "iface"
       ],
       [
         "a",
@@ -905,16 +1398,8 @@
         "od"
       ],
       [
-        "u",
-        "te"
-      ],
-      [
         "Ġ",
         "bad"
-      ],
-      [
-        "ro",
-        "ute"
       ],
       [
         "re",
@@ -929,36 +1414,8 @@
         "ood"
       ],
       [
-        "route",
-        "s"
-      ],
-      [
-        "Ġpy",
-        "check"
-      ],
-      [
-        "g",
-        "reen"
-      ],
-      [
-        "Ġ",
-        "red"
-      ],
-      [
-        "Ġ",
-        "routes"
-      ],
-      [
-        "Ġg",
-        "reen"
-      ],
-      [
-        "d",
-        "e"
-      ],
-      [
         "f",
-        "i"
+        "in"
       ],
       [
         "Ġ",
@@ -966,7 +1423,7 @@
       ],
       [
         "Ġde",
-        "fi"
+        "fin"
       ],
       [
         ".",
@@ -977,104 +1434,332 @@
         "s"
       ],
       [
+        "e",
+        "d"
+      ],
+      [
         "Ġ",
         "as"
       ],
       [
-        "ne",
-        "d"
-      ],
-      [
-        "Ġdefi",
-        "ned"
-      ],
-      [
-        "py",
-        "check"
+        "Ġdefin",
+        "ed"
       ],
       [
         "\"",
         ".Ċ"
       ],
       [
-        "s",
-        "tatus"
+        "route",
+        "s"
       ],
       [
-        "Ġpycheck",
-        "p"
+        "Ġroute",
+        "s"
       ],
       [
-        "s",
-        "ervices"
+        "\"",
+        "top"
       ],
       [
-        "s",
-        "ystem"
+        "\"",
+        "tools"
       ],
       [
-        "Ġpy",
-        "resour"
+        "\"",
+        "route"
       ],
       [
-        "Ġpy",
-        "network"
+        "\"",
+        "os"
       ],
       [
-        "Ġpy",
-        "system"
+        "\"",
+        "udp"
       ],
       [
-        "ces",
-        "tatus"
+        "\"",
+        "script"
       ],
       [
-        "Ġpycheck",
-        "cpu"
+        "\"",
+        "active"
       ],
       [
-        "Ġpycheck",
-        "disk"
+        "\"",
+        "alive"
       ],
       [
-        "Ġpycheck",
-        "kernel"
+        "\"",
+        "full"
       ],
       [
-        "Ġpycheck",
-        "uptime"
+        "g",
+        "reen"
       ],
       [
-        "Ġpycheck",
-        "memory"
+        "Ġ",
+        "red"
       ],
       [
-        "Ġpycheck",
-        "services"
+        "Ġg",
+        "reen"
       ],
       [
-        "Ġpycheckp",
+        "p",
+        "rocs"
+      ],
+      [
+        "l",
+        "ist"
+      ],
+      [
+        "p",
         "orts"
       ],
       [
-        "Ġpycheckp",
-        "rocesses"
+        "s",
+        "vc"
       ],
       [
-        "Ġpyresour",
-        "cestatus"
+        "s",
+        "weep"
       ],
       [
-        "Ġpynetwork",
-        "status"
+        "u",
+        "name"
       ],
       [
-        "Ġpysystem",
-        "status"
+        "u",
+        "ptime"
       ],
       [
-        "pycheck",
-        "p"
+        "host",
+        "s"
+      ],
+      [
+        "host",
+        "name"
+      ],
+      [
+        "faces",
+        "how"
+      ],
+      [
+        "in",
+        "fo"
+      ],
+      [
+        "in",
+        "terfaces"
+      ],
+      [
+        "Ġnet",
+        "interfaces"
+      ],
+      [
+        "Ġhost",
+        "disc"
+      ],
+      [
+        "Ġhost",
+        "info"
+      ],
+      [
+        "Ġkali",
+        "tools"
+      ],
+      [
+        "Ġsvc",
+        "enum"
+      ],
+      [
+        "Ġport",
+        "scan"
+      ],
+      [
+        "Ġservices",
+        "procs"
+      ],
+      [
+        "Ġnetwork",
+        "discovery"
+      ],
+      [
+        "Ġlocal",
+        "discovery"
+      ],
+      [
+        "i",
+        "faceshow"
+      ],
+      [
+        "ver",
+        "detect"
+      ],
+      [
+        "sys",
+        "kernel"
+      ],
+      [
+        "sys",
+        "uname"
+      ],
+      [
+        "sys",
+        "uptime"
+      ],
+      [
+        "sys",
+        "hostname"
+      ],
+      [
+        "Ġsys",
+        "kernel"
+      ],
+      [
+        "Ġsys",
+        "uname"
+      ],
+      [
+        "Ġsys",
+        "uptime"
+      ],
+      [
+        "Ġsys",
+        "hostname"
+      ],
+      [
+        "top",
+        "procs"
+      ],
+      [
+        "arp",
+        "cache"
+      ],
+      [
+        "arp",
+        "local"
+      ],
+      [
+        "tools",
+        "list"
+      ],
+      [
+        "Ġkali",
+        "discovery"
+      ],
+      [
+        "Ġi",
+        "faceshow"
+      ],
+      [
+        "nmap",
+        "ver"
+      ],
+      [
+        "os",
+        "detect"
+      ],
+      [
+        "udp",
+        "top"
+      ],
+      [
+        "Ġarp",
+        "cache"
+      ],
+      [
+        "Ġarp",
+        "local"
+      ],
+      [
+        "script",
+        "scan"
+      ],
+      [
+        "active",
+        "svc"
+      ],
+      [
+        "alive",
+        "hosts"
+      ],
+      [
+        "full",
+        "scan"
+      ],
+      [
+        "open",
+        "ports"
+      ],
+      [
+        "quick",
+        "scan"
+      ],
+      [
+        "ping",
+        "sweep"
+      ],
+      [
+        "Ġver",
+        "detect"
+      ],
+      [
+        "Ġtop",
+        "procs"
+      ],
+      [
+        "Ġtools",
+        "list"
+      ],
+      [
+        "Ġnmap",
+        "ver"
+      ],
+      [
+        "Ġos",
+        "detect"
+      ],
+      [
+        "Ġudp",
+        "top"
+      ],
+      [
+        "Ġscript",
+        "scan"
+      ],
+      [
+        "Ġactive",
+        "svc"
+      ],
+      [
+        "Ġalive",
+        "hosts"
+      ],
+      [
+        "Ġfull",
+        "scan"
+      ],
+      [
+        "Ġopen",
+        "ports"
+      ],
+      [
+        "Ġquick",
+        "scan"
+      ],
+      [
+        "Ġping",
+        "sweep"
+      ],
+      [
+        "routes",
+        "how"
+      ],
+      [
+        "Ġroutes",
+        "how"
       ],
       [
         "\"",
@@ -1089,24 +1774,12 @@
         "m"
       ],
       [
-        "a",
-        "r"
-      ],
-      [
-        "l",
-        "es"
-      ],
-      [
         "m",
         "ar"
       ],
       [
-        "n",
-        "es"
-      ],
-      [
         "r",
-        "u"
+        "ul"
       ],
       [
         "r",
@@ -1114,51 +1787,23 @@
       ],
       [
         "Ġ",
-        "ru"
+        "discovery"
+      ],
+      [
+        "Ġ",
+        "rul"
       ],
       [
         "Ġg",
         "ram"
       ],
       [
-        "Ġdefi",
-        "nes"
+        "Ġdefin",
+        "es"
       ],
       [
-        "pycheck",
-        "cpu"
-      ],
-      [
-        "pycheck",
-        "disk"
-      ],
-      [
-        "pycheck",
-        "kernel"
-      ],
-      [
-        "pycheck",
-        "uptime"
-      ],
-      [
-        "pycheck",
-        "memory"
-      ],
-      [
-        "pycheck",
-        "services"
-      ],
-      [
-        "pycheckp",
-        "orts"
-      ],
-      [
-        "pycheckp",
-        "rocesses"
-      ],
-      [
-        "Ġru",
-        "les"
+        "Ġrul",
+        "es"
       ],
       [
         "Ġgram",
