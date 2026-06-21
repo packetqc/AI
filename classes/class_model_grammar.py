@@ -610,18 +610,10 @@ class GrammarRunner:
         exec_mode = (self.commands or {}).get("_exec", "shell")
 
         if exec_mode == "python":
-            import io, contextlib
             self._log("info", "[exec/py] " + token)
             try:
-                buf = io.StringIO()
-                with contextlib.redirect_stdout(buf):
-                    exec(compile(cmd, "<" + token + ">", "exec"),  # noqa: S102
-                         {"__builtins__": __builtins__})
-                output = buf.getvalue().strip()
-                if output:
-                    print(output)
-                else:
-                    self._log("info", "  (no output)")
+                exec(compile(cmd, "<" + token + ">", "exec"),  # noqa: S102
+                     {"__builtins__": __builtins__})
             except Exception as exc:
                 self._log("error", "Python exec failed [" + token + "]: " + str(exc))
             return
