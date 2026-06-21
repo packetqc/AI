@@ -85,8 +85,6 @@ On subsequent runs the saved state is restored and the model is re-exported with
 | `/grammar <file>` | Load a BNF/EBNF grammar file and augment the model in-flight |
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
 | `/run [grammar] <expr>` | Parse and evaluate an expression, or execute a procedure grammar |
-| `/play <path…>` | Walk the playbook tree: list routes or show a leaf answer |
-| `/cmd <path…>` | Run a command leaf on the OS (with confirmation) |
 | `/bye` | Exit |
 
 ### Auto-detect modes

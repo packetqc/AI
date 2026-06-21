@@ -538,48 +538,6 @@ local_log_path = "./chroma_db/chat_history.log"
 os.makedirs("./chroma_db", exist_ok=True)
 
 
-def run_os_commands(commands):
-    """Execute a list of shell commands on this OS, streaming each one's output.
-    Only ever called AFTER the user has confirmed the displayed command list."""
-    for cmd in commands:
-        logger.log("info", "EXEC", "$ " + cmd)
-        try:
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
-            output = (result.stdout or "") + (result.stderr or "")
-            if output.strip():
-                print(output.rstrip())
-            logger.log("ok" if result.returncode == 0 else "warning", "EXEC",
-                       "'" + cmd + "' exited with code " + str(result.returncode))
-        except subprocess.TimeoutExpired:
-            logger.log("error", "EXEC", "'" + cmd + "' timed out after 30s.")
-        except Exception as e:
-            logger.log("error", "EXEC", "'" + cmd + "' failed: " + str(e))
-
-
-def playbook_lookup(path_tokens):
-    """HYBRID step: query the MODEL with the stacked path AND resolve it in the playbook tree.
-    Returns (joined_prompt, model_answer, tree_node, found_in_tree)."""
-    prompt = " ".join(path_tokens)
-    node, found = ModelAssets.resolve_path(assets.playbook, path_tokens)
-    print("Thinking...querying the model...")
-    answer = get_ollama_answer(prompt=prompt, model_name=NAME, host_url=os.environ["OLLAMA_HOST"])
-    return prompt, answer, node, found
-
-
-def confirm_and_run(answer, label=""):
-    """Parse the model's comma-separated command answer, show it, and run AFTER y/N confirmation."""
-    commands = [c.strip() for c in answer.split(",") if c.strip()]
-    if not commands:
-        logger.log("error", "SYSTEM", "No commands to run" + (" for '" + label + "'" if label else "") + ".")
-        return
-    print("The model maps " + (("'" + label + "' ") if label else "") + "to " + str(len(commands)) + " command(s):")
-    for c in commands:
-        print("   $ " + c)
-    confirm = input("Execute these on this operating system? [y/N] ").strip().lower()
-    if confirm in ("y", "yes"):
-        run_os_commands(commands)
-    else:
-        logger.log("info", "SYSTEM", "Skipped execution.")
 
 
 while True:
@@ -601,8 +559,6 @@ while True:
             print( "  /read <file>         Train a markdown / .json (prose or playbook) file on the fly")
             print( "  /grammar <file>      Load a BNF/EBNF grammar file and augment the model")
             print( "  /run [grammar] <expr>  Parse and evaluate an expression via the loaded grammar")
-            print( "  /play <path...>      Walk the playbook tree: lists a node's routes, or shows a leaf")
-            print( "  /cmd <path...>       Run a command leaf's commands on the OS (after confirmation)")
             print( "  /bye                 Exit the interactive client session")
             print( "  /?                   Show this system help description summary")
             print( "  UP/DOWN Arrows       Navigate through your previously entered prompts\n")
@@ -658,53 +614,7 @@ while True:
                 logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
-        # 3d. PLAYBOOK NAVIGATION: "/play <path...>" walks the trained tree (stacked route).
-        #     Hybrid: the answer comes from the MODEL; the parsed tree tells us node vs leaf.
-        if user_input.split()[0].lower() == "/play":
-            readline.add_history(user_input)
-            tokens = user_input.split()[1:]
-            if not tokens:                                   # no path -> list the roots
-                roots = list(assets.playbook.keys())
-                logger.log("info", "PLAY", "roots: " + (", ".join(roots) or "(none)")
-                           + "   — descend with: /play <root>")
-                continue
-            prompt, answer, node, found = playbook_lookup(tokens)
-            print("[" + "/".join(tokens) + "]  model: " + answer.strip())
-            if not found:
-                logger.log("warning", "PLAY", "'" + prompt + "' is not a known route "
-                           + "(showing the model's answer only).")
-            elif isinstance(node, dict):                     # internal node -> routes to descend
-                logger.log("ok", "PLAY", "node — routes: " + ", ".join(node.keys())
-                           + "   — descend with: /play " + " ".join(tokens) + " <route>")
-            elif isinstance(node, list):                     # command leaf -> offer to run
-                confirm_and_run(answer, label=prompt)
-            else:                                            # answer leaf -> already printed
-                logger.log("ok", "PLAY", "answer leaf.")
-            continue
-
-        # 3e. GRAMMAR EXECUTION: "/cmd <path...>" resolves a COMMAND LEAF and runs it (after
-        #     confirmation). Backward-compatible with flat routine names, e.g. "/cmd healthcheck".
-        if user_input.split()[0].lower() == "/cmd":
-            readline.add_history(user_input)
-            tokens = user_input.split()[1:]
-            if not tokens:
-                logger.log("warning", "SYSTEM", "Usage: /cmd <path...>   (e.g. /cmd healthcheck  or  /cmd diagnostics disk)")
-                continue
-            prompt, answer, node, found = playbook_lookup(tokens)
-            if found and isinstance(node, dict):
-                logger.log("warning", "SYSTEM", "'" + prompt + "' is a node, not a command leaf. "
-                           + "Routes: " + ", ".join(node.keys()) + "  (use /play to descend).")
-                continue
-            if found and isinstance(node, str):
-                logger.log("info", "SYSTEM", "'" + prompt + "' is an answer leaf: " + answer.strip())
-                continue
-            if not found:
-                logger.log("warning", "SYSTEM", "'" + prompt + "' is not a known route; running the "
-                           + "model's answer anyway.")
-            confirm_and_run(answer, label=prompt)
-            continue
-
-        # 3f. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
+        # 3d. GRAMMAR RUNNER: "/run [grammar_name] <expr>" parses and evaluates an expression
         #     through the trained grammar using one model interaction per unique rule.
         if user_input.split()[0].lower() == "/run":
             readline.add_history(user_input)
