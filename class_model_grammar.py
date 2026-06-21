@@ -338,9 +338,9 @@ class GrammarRunner:
         r'|([(){}[\]*+?])'  # group 6 – EBNF grouping / quantifier
     )
 
-    def __init__(self, grammar_name, query_fn, logger=None, fallback_playbook=None):
+    def __init__(self, grammar_name, query_fn=None, logger=None, fallback_playbook=None):
         self.grammar_name = grammar_name
-        self.query_fn = query_fn            # fn(prompt_str) -> answer_str
+        self.query_fn = query_fn            # fn(prompt_str) -> answer_str; None = probe mode
         self.logger = logger
         self.fallback_playbook = fallback_playbook or {}
         self._rule_cache = {}               # rule_name -> [[alt_tokens], ...]
@@ -395,29 +395,57 @@ class GrammarRunner:
         return tokens
 
     def _query_rule(self, rule_name):
-        """Query the model for one grammar rule (cached). Returns [[alt_tokens], ...]."""
+        """Query the model for one grammar rule (cached). Returns [[alt_tokens], ...].
+
+        When query_fn is None (probe mode) the model is never called — only the stored
+        fallback_playbook is used. This lets probe() run completely offline."""
         if rule_name in self._rule_cache:
             return self._rule_cache[rule_name]
 
-        prompt = self.grammar_name + " " + rule_name
-        answer = self.query_fn(prompt).strip()
-        self._interaction_count += 1
+        alts = []
 
-        short = answer[:60] + ("..." if len(answer) > 60 else "")
-        self._log("info", "[model #" + str(self._interaction_count) + "] "
-                  + prompt + " → " + short)
+        if self.query_fn is not None:
+            prompt = self.grammar_name + " " + rule_name
+            answer = self.query_fn(prompt).strip()
+            self._interaction_count += 1
+            short = answer[:60] + ("..." if len(answer) > 60 else "")
+            self._log("info", "[model #" + str(self._interaction_count) + "] "
+                      + prompt + " → " + short)
+            alts = self._split_alt_groups(self._answer_tokens(answer))
 
-        alts = self._split_alt_groups(self._answer_tokens(answer))
-
-        # Fallback: if model gave no parseable alternatives, use stored playbook.
+        # Fallback: use stored playbook when model gave nothing, or in probe mode.
         if not alts and rule_name in self.fallback_playbook:
             fb = self.fallback_playbook[rule_name]
             alts = self._split_alt_groups(self._answer_tokens(fb))
-            if alts:
+            if alts and self.query_fn is not None:
                 self._log("info", "  (playbook fallback for '" + rule_name + "')")
 
         self._rule_cache[rule_name] = alts
         return alts
+
+    @classmethod
+    def probe(cls, grammar_name, input_str, fallback_playbook, start_rule=None):
+        """Return True if input_str fully parses against fallback_playbook (no model calls).
+
+        Used by the interactive loop to auto-detect whether a user's raw input matches a
+        loaded grammar before deciding to route it through GrammarRunner.run() instead of
+        sending it to the chat model. Fast and silent — zero model interactions.
+        """
+        if not fallback_playbook:
+            return False
+        if start_rule is None:
+            start_rule = next(iter(fallback_playbook))
+        runner = cls(
+            grammar_name=grammar_name,
+            query_fn=None,               # probe mode: playbook only
+            logger=None,                 # silent
+            fallback_playbook=fallback_playbook,
+        )
+        tokens = runner._tokenize_input(input_str)
+        if not tokens:
+            return False
+        node, pos = runner._parse_rule(start_rule, tokens, 0)
+        return node is not None and pos == len(tokens)
 
     # ----------------------------------------------------------- tokenizer
 
@@ -737,5 +765,29 @@ if __name__ == "__main__":
     assert result_bad is None or isinstance(result_bad, (int, float, str)), \
         "Partial parse should not crash"
     print("PASS  partial input '3 +' handled gracefully (result: " + str(result_bad) + ")")
+
+    # ── GrammarRunner.probe() self-test ──────────────────────────────────────
+    print("\n=== GrammarRunner.probe() self-test ===")
+
+    # Build a playbook subtree (same structure as assets.playbook["calculator"]).
+    calc_subtree = {name: ' | '.join(alts) for name, alts in rules.items()}
+
+    probe_cases = [
+        ("1+1",       True,  "valid single-digit arithmetic"),
+        ("3 + 4",     True,  "spaced arithmetic"),
+        ("(2+3)*4",   True,  "parenthesised expression"),
+        ("9/3-1",     True,  "division and subtraction"),
+        ("hello",     False, "plain word — not a calculator expression"),
+        ("",          False, "empty string"),
+        ("3 + + 4",   False, "double operator"),
+        ("1 + hello",  False, "identifier after operator — not a calculator expression"),
+    ]
+
+    for expr_in, expected, label in probe_cases:
+        got = GrammarRunner.probe("calculator", expr_in, calc_subtree)
+        ok = got == expected
+        print(("PASS" if ok else "FAIL") + "  probe('" + expr_in + "') = "
+              + str(got) + "  (" + label + ")")
+        assert ok, "probe('" + expr_in + "'): expected " + str(expected) + ", got " + str(got)
 
     print("\n✅ All assertions passed.")

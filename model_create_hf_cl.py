@@ -683,13 +683,38 @@ while True:
             if not run_grammar:
                 logger.log("warning", "SYSTEM", "No grammar loaded. Use /grammar <file> first.")
                 continue
+            run_subtree = assets.playbook.get(run_grammar, {})
+            run_start = next(iter(run_subtree)) if run_subtree else "expr"
             runner = GrammarRunner(
                 grammar_name=run_grammar,
                 query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
-                fallback_playbook=assets.playbook.get(run_grammar, {}),
+                fallback_playbook=run_subtree,
                 logger=logger,
             )
-            runner.run(run_expr, start_rule="expr")
+            runner.run(run_expr, start_rule=run_start)
+            continue
+
+        # 3g. AUTO-DETECT GRAMMAR: if the raw input fully parses against any loaded grammar
+        #     (using only the stored playbook, zero model calls), route to GrammarRunner
+        #     automatically — no /run prefix needed. Falls through to chat if no match.
+        auto_handled = False
+        for _gname, _gsubtree in assets.playbook.items():
+            if not isinstance(_gsubtree, dict) or not _gsubtree:
+                continue
+            _gstart = next(iter(_gsubtree))
+            if GrammarRunner.probe(_gname, user_input, _gsubtree, _gstart):
+                logger.log("info", "SYSTEM",
+                           "Auto-detected '" + _gname + "' expression — running grammar...")
+                _runner = GrammarRunner(
+                    grammar_name=_gname,
+                    query_fn=lambda p: get_ollama_answer(p, NAME, os.environ["OLLAMA_HOST"]),
+                    fallback_playbook=_gsubtree,
+                    logger=logger,
+                )
+                _runner.run(user_input, start_rule=_gstart)
+                auto_handled = True
+                break
+        if auto_handled:
             continue
 
         # 4. SEND USER INPUT TO MODEL AND GET THE ANSWER
