@@ -320,11 +320,10 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         # and many other dynamic-shape ops in one pass.
         try:
             from onnxsim import simplify as _onnxsim
-            # Keep batch=None (dynamic) so ST Edge AI Core identifies dim-0 as BATCH.
-            # Fix seq_len so Shape→Gather→Range chains constant-fold.
-            _input_shapes = {"input_ids":      [None, seq_len],
-                             "attention_mask": [None, seq_len]}
-            _g_sim, _sim_ok = _onnxsim(_g, overwrite_input_shapes=_input_shapes)
+            # seq_len=32 is already concrete in the exported graph (only batch is
+            # dynamic), so onnxsim can fold Shape→Gather→Range without any
+            # overwrite_input_shapes (which doesn't accept None for dynamic dims).
+            _g_sim, _sim_ok = _onnxsim(_g)
             if _sim_ok:
                 _g = _g_sim
                 _log("info", "onnxsim: graph simplified (constants propagated)")
