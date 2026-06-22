@@ -33,6 +33,8 @@ import os
 import sys
 import json
 import shutil
+import logging
+import warnings
 
 import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen2TokenizerFast
@@ -99,8 +101,8 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     dummy_ids  = torch.zeros(1, seq_len, dtype=torch.long)
     dummy_mask = torch.ones(1, seq_len, dtype=torch.long)
 
-    # Wrapper that returns logits only — avoids exporting KV-cache and other
-    # auxiliary outputs that confuse the TorchScript tracer.
+    # Wrapper that returns logits only — avoids KV-cache and auxiliary outputs
+    # that confuse the TorchScript tracer.  .eval() prevents training-mode warning.
     class _LogitsWrapper(torch.nn.Module):
         def __init__(self, mdl):
             super().__init__()
@@ -108,13 +110,24 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         def forward(self, input_ids, attention_mask):
             return self.mdl(input_ids=input_ids, attention_mask=attention_mask).logits
 
-    _export_model = _LogitsWrapper(model)
+    _export_model = _LogitsWrapper(model).eval()
 
+    # dynamic_axes used by the TorchScript path
     _dynamic_axes = {
         "input_ids":      {0: "batch", 1: "seq_len"},
         "attention_mask": {0: "batch", 1: "seq_len"},
         "logits":         {0: "batch", 1: "seq_len"},
     }
+
+    # dynamic_shapes used by the dynamo path (avoids the dynamic_axes warning)
+    try:
+        from torch.export import Dim as _Dim
+        _b = _Dim("batch",   min=1, max=8)
+        _s = _Dim("seq_len", min=1, max=2048)
+        _dynamic_shapes = ({"input_ids": {0: _b, 1: _s},
+                            "attention_mask": {0: _b, 1: _s}},)
+    except Exception:
+        _dynamic_shapes = None  # fall back to dynamic_axes for dynamo too
 
     # Strategy: try dynamo=True first (handles complex ops; needs onnxscript in env).
     # Fall back to legacy TorchScript tracer at progressively lower opsets.
@@ -127,31 +140,48 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     _exported = False
     _attempts = []
     if _has_onnxscript:
-        _attempts.append(("dynamo (opset 18)", dict(dynamo=True)))
+        _attempts.append(("dynamo opset 18", {"dynamo": True}))
     _attempts += [
-        ("TorchScript opset 17", dict(dynamo=False, opset_version=17)),
-        ("TorchScript opset 14", dict(dynamo=False, opset_version=14)),
+        ("TorchScript opset 17", {"dynamo": False, "opset_version": 17}),
+        ("TorchScript opset 14", {"dynamo": False, "opset_version": 14}),
+    ]
+
+    # Suppress noisy third-party / internal warnings that are irrelevant to export success
+    _warn_filters = [
+        ("ignore", ".*torchvision.*",          UserWarning),
+        ("ignore", ".*training mode.*",        UserWarning),
+        ("ignore", ".*dynamic_axes.*dynamo.*", UserWarning),
+        ("ignore", ".*LeafSpec.*",             FutureWarning),
     ]
 
     for _label, _kwargs in _attempts:
-        opset = _kwargs.get("opset_version", 18)
         _log("info", "Exporting FP32 ONNX (" + _label + ")...")
         try:
-            with torch.no_grad():
-                _export_kwargs = dict(
-                    input_names=["input_ids", "attention_mask"],
-                    output_names=["logits"],
-                    dynamic_axes=_dynamic_axes,
-                    do_constant_folding=True,
-                )
-                _export_kwargs.update(_kwargs)
-                if _kwargs.get("dynamo"):
-                    # dynamo export accepts the model + example inputs differently
-                    torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
-                                      fp32_path, **_export_kwargs)
-                else:
-                    torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
-                                      fp32_path, **_export_kwargs)
+            with warnings.catch_warnings():
+                for _action, _msg, _cat in _warn_filters:
+                    warnings.filterwarnings(_action, message=_msg, category=_cat)
+                with torch.no_grad():
+                    if _kwargs.get("dynamo"):
+                        _kw = dict(input_names=["input_ids", "attention_mask"],
+                                   output_names=["logits"],
+                                   do_constant_folding=True,
+                                   dynamo=True)
+                        if _dynamic_shapes:
+                            _kw["dynamic_shapes"] = _dynamic_shapes[0]
+                        else:
+                            _kw["dynamic_axes"] = _dynamic_axes
+                        torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
+                                          fp32_path, **_kw)
+                    else:
+                        torch.onnx.export(
+                            _export_model, (dummy_ids, dummy_mask), fp32_path,
+                            opset_version=_kwargs["opset_version"],
+                            input_names=["input_ids", "attention_mask"],
+                            output_names=["logits"],
+                            dynamic_axes=_dynamic_axes,
+                            do_constant_folding=True,
+                            dynamo=False,
+                        )
             _exported = True
             _log("ok", "FP32 ONNX written via " + _label)
             break
@@ -173,7 +203,13 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     # ── INT8 dynamic quantisation ──────────────────────────────────────────────
     _log("info", "Quantising to INT8 (dynamic)...")
     try:
-        quantize_dynamic(fp32_path, int8_path, weight_type=QuantType.QInt8)
+        _ort_log = logging.getLogger()
+        _prev_level = _ort_log.level
+        _ort_log.setLevel(logging.ERROR)   # silence onnxruntime pre-processing advisory
+        try:
+            quantize_dynamic(fp32_path, int8_path, weight_type=QuantType.QInt8)
+        finally:
+            _ort_log.setLevel(_prev_level)
         _log("ok", "INT8 ONNX written: " + int8_path)
     except Exception as exc:
         _log("warning", "INT8 quantisation failed (FP32 file still usable): " + str(exc))
