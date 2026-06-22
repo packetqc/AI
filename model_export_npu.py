@@ -36,6 +36,7 @@ import shutil
 import logging
 import warnings
 
+import numpy as np
 import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen2TokenizerFast
 
@@ -221,6 +222,31 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         _log("error", "ONNX export failed on all strategies. "
              "Tip: pip install onnxscript in your venv for the dynamo path.")
         return False
+
+    # ── Remove STM32Cube.AI-incompatible ops ──────────────────────────────────
+    # IsNaN comes from PyTorch's nan_to_num decomposition:
+    #   nan_to_num(x) → Where(IsNaN(x), 0.0, x)
+    # STM32Cube.AI (ST Edge AI Core) does not support IsNaN.
+    # Safe replacement: constant False — "assume no NaN in inference inputs,
+    # always keep the original value" — which is correct for a trained model.
+    try:
+        _g = onnx.load(fp32_path)
+        _isnan_nodes = [n for n in _g.graph.node if n.op_type == "IsNaN"]
+        if _isnan_nodes:
+            for _n in _isnan_nodes:
+                _g.graph.node.remove(_n)
+                # Scalar False broadcasts to any shape in the downstream Where node
+                _g.graph.node.insert(0, onnx.helper.make_node(
+                    "Constant", inputs=[], outputs=[_n.output[0]],
+                    value=onnx.numpy_helper.from_array(
+                        np.array(False, dtype=bool), name=_n.output[0] + "_c"
+                    )
+                ))
+            onnx.save(_g, fp32_path)
+            _log("info", "Removed " + str(len(_isnan_nodes)) +
+                 " IsNaN node(s) — not supported by ST Edge AI Core")
+    except Exception as exc:
+        _log("warning", "IsNaN removal failed: " + str(exc))
 
     # Validate the exported graph.
     try:
