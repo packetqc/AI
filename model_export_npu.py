@@ -338,9 +338,15 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         _r1 = _strip_isnan(_g.graph)
         _r2 = _decompose_shape(_g.graph)
         _r3 = _fix_reshape(_g.graph)
+
+        # ── Pass 3: re-infer shapes ───────────────────────────────────────────
+        # Ensures every intermediate tensor has explicit type/shape metadata so
+        # ST Edge AI Core's batch-dimension heuristic has full context.
+        _g = onnx.shape_inference.infer_shapes(_g)
+
         onnx.save(_g, fp32_path)
         _log("info", "Graph patch: %d IsNaN, %d Shape(start/end), "
-             "%d Reshape(allowzero)" % (_r1, _r2, _r3))
+             "%d Reshape(allowzero), shapes re-inferred" % (_r1, _r2, _r3))
     except Exception as exc:
         _log("warning", "Graph patch failed: " + str(exc))
 
