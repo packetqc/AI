@@ -252,17 +252,54 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
             graph.node.insert(0, _n)
         return count
 
+    # Shape(x, start=s, end=e) — start/end attrs added in opset 15, not supported
+    # by ST Edge AI Core.  Decompose into Shape(x) + Slice(result, [s], [e], [0]).
+    def _decompose_shape(graph):
+        count = 0
+        to_remove, to_add = [], []
+        for _n in graph.node:
+            if _n.op_type == "Shape":
+                _sa = next((a for a in _n.attribute if a.name == "start"), None)
+                _ea = next((a for a in _n.attribute if a.name == "end"),   None)
+                if _sa is not None or _ea is not None:
+                    _s = _sa.i if _sa else 0
+                    _e = _ea.i if _ea else 2147483647
+                    _tmp = _n.output[0] + "_fullshape"
+                    _sn  = _n.output[0] + "_s"
+                    _en  = _n.output[0] + "_e"
+                    _an  = _n.output[0] + "_ax"
+                    to_remove.append(_n)
+                    to_add += [
+                        onnx.helper.make_node("Shape", inputs=list(_n.input), outputs=[_tmp]),
+                        onnx.helper.make_node("Constant", inputs=[], outputs=[_sn],
+                            value=onnx.numpy_helper.from_array(np.array([_s], dtype=np.int64))),
+                        onnx.helper.make_node("Constant", inputs=[], outputs=[_en],
+                            value=onnx.numpy_helper.from_array(np.array([_e], dtype=np.int64))),
+                        onnx.helper.make_node("Constant", inputs=[], outputs=[_an],
+                            value=onnx.numpy_helper.from_array(np.array([0],  dtype=np.int64))),
+                        onnx.helper.make_node("Slice",
+                            inputs=[_tmp, _sn, _en, _an], outputs=list(_n.output)),
+                    ]
+                    count += 1
+            for _attr in _n.attribute:
+                if _attr.HasField("g"):
+                    count += _decompose_shape(_attr.g)
+        for _n in to_remove:
+            graph.node.remove(_n)
+        for _n in to_add:
+            graph.node.insert(0, _n)
+        return count
+
     try:
         _g = onnx.load(fp32_path)
-        _removed = _strip_isnan(_g.graph)
-        if _removed:
+        _r1 = _strip_isnan(_g.graph)
+        _r2 = _decompose_shape(_g.graph)
+        if _r1 or _r2:
             onnx.save(_g, fp32_path)
-            _log("info", "Removed " + str(_removed) +
-                 " IsNaN node(s) from graph (incl. subgraphs)")
-        else:
-            _log("info", "No IsNaN nodes found in graph")
+        _log("info", "Graph patch: removed " + str(_r1) + " IsNaN, decomposed " +
+             str(_r2) + " Shape(start/end) node(s)")
     except Exception as exc:
-        _log("warning", "IsNaN removal failed: " + str(exc))
+        _log("warning", "Graph patch failed: " + str(exc))
 
     # Validate the exported graph.
     try:
