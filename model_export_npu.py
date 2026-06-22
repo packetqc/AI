@@ -226,32 +226,35 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         return False
 
     # ── Remove STM32Cube.AI-incompatible ops ──────────────────────────────────
-    # IsNaN comes from PyTorch's nan_to_num decomposition:
-    #   nan_to_num(x) → Where(IsNaN(x), 0.0, x)
-    # STM32Cube.AI (ST Edge AI Core) does not support IsNaN.
-    # Safe replacement: constant False — "assume no NaN in inference inputs,
-    # always keep the original value" — correct for a trained model.
-    # Recurse into subgraphs (If/Loop/Scan attrs) to catch all occurrences.
+    # nan_to_num decomposes as: Where(IsNaN(x), fill, x)
+    # Replacing IsNaN with scalar False leaves Where with shape [] inputs —
+    # those become the (Empty) entries that break ST Edge AI Core's batch detector.
+    # Correct fix: find the full Where(IsNaN(x), *, x) pattern and replace it
+    # with Identity(x) — the "no NaN in inference" assumption holds for a trained model.
     def _strip_isnan(graph):
+        # Build map: isnan_output → original_input
+        _imap = {_n.output[0]: _n.input[0]
+                 for _n in graph.node if _n.op_type == "IsNaN"}
+        if not _imap:
+            return 0
         count = 0
-        to_remove, to_add = [], []
+        new_nodes = []
         for _n in graph.node:
             if _n.op_type == "IsNaN":
-                to_remove.append(_n)
-                to_add.append(onnx.helper.make_node(
-                    "Constant", inputs=[], outputs=[_n.output[0]],
-                    value=onnx.numpy_helper.from_array(
-                        np.array(False, dtype=bool), name=_n.output[0] + "_c"
-                    )
+                continue  # dropped; handled via Where below
+            if _n.op_type == "Where" and _n.input[0] in _imap:
+                # Where(IsNaN(x), fill, x) → Identity(x)  [Y branch = when not NaN]
+                new_nodes.append(onnx.helper.make_node(
+                    "Identity", inputs=[_n.input[2]], outputs=list(_n.output)
                 ))
                 count += 1
+                continue
+            new_nodes.append(_n)
             for _attr in _n.attribute:
                 if _attr.HasField("g"):
                     count += _strip_isnan(_attr.g)
-        for _n in to_remove:
-            graph.node.remove(_n)
-        for _n in to_add:
-            graph.node.insert(0, _n)
+        del graph.node[:]
+        graph.node.extend(new_nodes)
         return count
 
     # Shape(x, start=s, end=e) — start/end attrs added in opset 15, not supported
