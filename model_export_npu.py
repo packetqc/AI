@@ -101,6 +101,7 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
                     "logits":         {0: "batch", 1: "seq_len"},
                 },
                 do_constant_folding=True,
+                dynamo=False,       # use legacy TorchScript exporter — no onnxscript needed
             )
     except Exception as exc:
         _log("error", "ONNX export failed: " + str(exc))
