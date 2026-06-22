@@ -119,15 +119,39 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         "logits":         {0: "batch", 1: "seq_len"},
     }
 
-    # dynamic_shapes used by the dynamo path (avoids the dynamic_axes warning)
+    # dynamic_shapes for the dynamo path — separate Dim instances per input so
+    # PyTorch doesn't warn about shared axis names in the rename mapping.
     try:
         from torch.export import Dim as _Dim
-        _b = _Dim("batch",   min=1, max=8)
-        _s = _Dim("seq_len", min=1, max=2048)
-        _dynamic_shapes = ({"input_ids": {0: _b, 1: _s},
-                            "attention_mask": {0: _b, 1: _s}},)
+        _dynamic_shapes = {
+            "input_ids":      {0: _Dim("batch",       min=1, max=8),
+                               1: _Dim("ids_seq_len",  min=1, max=2048)},
+            "attention_mask": {0: _Dim("batch_mask",   min=1, max=8),
+                               1: _Dim("mask_seq_len", min=1, max=2048)},
+        }
     except Exception:
         _dynamic_shapes = None  # fall back to dynamic_axes for dynamo too
+
+    # Stderr line filter — drops glog/absl-formatted lines that Python's
+    # warnings module cannot intercept (e.g. torchvision registry notices).
+    class _StderrFilter:
+        _DROP = ("torchvision is not installed",)
+        def __init__(self, stream):
+            self._s, self._buf = stream, ""
+        def write(self, text):
+            self._buf += text
+            while "\n" in self._buf:
+                line, self._buf = self._buf.split("\n", 1)
+                if not any(d in line for d in self._DROP):
+                    self._s.write(line + "\n")
+        def flush(self):
+            if self._buf:
+                if not any(d in self._buf for d in self._DROP):
+                    self._s.write(self._buf)
+                self._buf = ""
+            self._s.flush()
+        def __getattr__(self, name):
+            return getattr(self._s, name)
 
     # Strategy: try dynamo=True first (handles complex ops; needs onnxscript in env).
     # Fall back to legacy TorchScript tracer at progressively lower opsets.
@@ -146,42 +170,47 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         ("TorchScript opset 14", {"dynamo": False, "opset_version": 14}),
     ]
 
-    # Suppress noisy third-party / internal warnings that are irrelevant to export success
     _warn_filters = [
-        ("ignore", ".*torchvision.*",          UserWarning),
         ("ignore", ".*training mode.*",        UserWarning),
         ("ignore", ".*dynamic_axes.*dynamo.*", UserWarning),
+        ("ignore", ".*axis name.*will not be used.*", UserWarning),
         ("ignore", ".*LeafSpec.*",             FutureWarning),
     ]
 
     for _label, _kwargs in _attempts:
         _log("info", "Exporting FP32 ONNX (" + _label + ")...")
         try:
-            with warnings.catch_warnings():
-                for _action, _msg, _cat in _warn_filters:
-                    warnings.filterwarnings(_action, message=_msg, category=_cat)
-                with torch.no_grad():
-                    if _kwargs.get("dynamo"):
-                        _kw = dict(input_names=["input_ids", "attention_mask"],
-                                   output_names=["logits"],
-                                   do_constant_folding=True,
-                                   dynamo=True)
-                        if _dynamic_shapes:
-                            _kw["dynamic_shapes"] = _dynamic_shapes[0]
+            _real_stderr = sys.stderr
+            sys.stderr = _StderrFilter(_real_stderr)
+            try:
+                with warnings.catch_warnings():
+                    for _action, _msg, _cat in _warn_filters:
+                        warnings.filterwarnings(_action, message=_msg, category=_cat)
+                    with torch.no_grad():
+                        if _kwargs.get("dynamo"):
+                            _kw = dict(input_names=["input_ids", "attention_mask"],
+                                       output_names=["logits"],
+                                       do_constant_folding=True,
+                                       dynamo=True)
+                            if _dynamic_shapes:
+                                _kw["dynamic_shapes"] = _dynamic_shapes
+                            else:
+                                _kw["dynamic_axes"] = _dynamic_axes
+                            torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
+                                              fp32_path, **_kw)
                         else:
-                            _kw["dynamic_axes"] = _dynamic_axes
-                        torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
-                                          fp32_path, **_kw)
-                    else:
-                        torch.onnx.export(
-                            _export_model, (dummy_ids, dummy_mask), fp32_path,
-                            opset_version=_kwargs["opset_version"],
-                            input_names=["input_ids", "attention_mask"],
-                            output_names=["logits"],
-                            dynamic_axes=_dynamic_axes,
-                            do_constant_folding=True,
-                            dynamo=False,
-                        )
+                            torch.onnx.export(
+                                _export_model, (dummy_ids, dummy_mask), fp32_path,
+                                opset_version=_kwargs["opset_version"],
+                                input_names=["input_ids", "attention_mask"],
+                                output_names=["logits"],
+                                dynamic_axes=_dynamic_axes,
+                                do_constant_folding=True,
+                                dynamo=False,
+                            )
+            finally:
+                sys.stderr.flush()
+                sys.stderr = _real_stderr
             _exported = True
             _log("ok", "FP32 ONNX written via " + _label)
             break
