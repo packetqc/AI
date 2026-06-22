@@ -16,18 +16,13 @@ gguf>=0.6.0
 # Numerical ops used by the training pipeline
 numpy>=1.24.0
 
-# NPU export: ONNX graph format + INT8 quantisation for STM32Cube.AI
+# NPU export: ONNX graph format + INT8 quantisation + dynamo op translation
 onnx>=1.15.0
 onnxruntime>=1.17.0
+onnxscript>=0.1.0
 
 # ── Optional ──────────────────────────────────────────────────────────────────
 
 # PDF grammar extraction (model_tools_grammar.py --format pdf)
 # pip install pypdf
 # pypdf>=4.0.0
-
-# ONNX dynamo export path (PyTorch >= 2.1 defaults to dynamo=True)
-# Required only if dynamo=True is used in torch.onnx.export — not needed
-# with the legacy TorchScript exporter (dynamo=False, current default here).
-# pip install onnxscript
-# onnxscript>=0.1.0
