@@ -59,7 +59,7 @@ _CLI_FILES = list(_args.train) + list(_args.grammar)
 #
 #################################################################################################
 version = "1"
-model_create = "model_optimized_" + version
+model_create = "model_calculator_version_" + version
 
 # model_path = "./"+model_create
 model_path = model_create
@@ -67,15 +67,18 @@ gguf_path = model_path+".gguf"
 
 modelfile_path = "./Modelfile"
 
-NAME = "model_hugging_face_optimized"
-OLLAMA_MODEL_NAME = "model_hugging_face_optimized"
+NAME = "model_calculator_test_npu"
+OLLAMA_MODEL_NAME = NAME
 
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
+# INIT_KNOWLEDGE_FILES = [
+#     "training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
+#     "grammars/playbook_kali_discovery.txt",
+# ]
 INIT_KNOWLEDGE_FILES = [
-    "training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
-    "grammars/playbook_kali_discovery.txt",
+    "grammars/playbook_model_calculator.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
@@ -915,24 +918,50 @@ while True:
         # 3d. NPU EXPORT: "/npu [output_dir]" exports the model to ONNX for STM32Cube.AI.
         if user_input.split()[0].lower() == "/npu":
             readline.add_history(user_input)
-            if _EXTERNAL_MODEL:
-                logger.log("warning", "NPU",
-                           "/npu is only available when the model was trained by this script (not in --model mode).")
-                continue
             parts = user_input.split(maxsplit=1)
             npu_out = parts[1].strip() if len(parts) > 1 else "npu_export"
             logger.log("info", "NPU", "Exporting model to '" + npu_out + "' for STM32Cube.AI...")
             try:
                 import model_export_npu as _npu_mod
-                _npu_mod.export_for_npu(
-                    model=artifacts["model"],
-                    tokenizer=artifacts["tokenizer"],
-                    config=artifacts["config"],
-                    arch=artifacts["arch"],
-                    model_path=model_path,
-                    output_dir=npu_out,
-                    logger=logger,
-                )
+                if _EXTERNAL_MODEL:
+                    # Chat uses an external Ollama model, but local weights may still exist.
+                    # Load them from disk exactly as the standalone script does.
+                    _npu_cfg_file = os.path.join(model_path, "config.json")
+                    _npu_has_wts  = any(
+                        os.path.isfile(os.path.join(model_path, f))
+                        for f in ("model.safetensors", "pytorch_model.bin")
+                    )
+                    if not os.path.isfile(_npu_cfg_file) or not _npu_has_wts:
+                        logger.log("warning", "NPU",
+                                   "No local weights found in '" + model_path + "/'. "
+                                   "Run without --model first to train and save the model.")
+                        continue
+                    from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen2TokenizerFast
+                    logger.log("info", "NPU", "Loading saved weights from " + model_path + "/ ...")
+                    _npu_config    = Qwen2Config.from_pretrained(model_path)
+                    _npu_model     = Qwen2ForCausalLM.from_pretrained(model_path)
+                    _npu_tokenizer = Qwen2TokenizerFast.from_pretrained(model_path)
+                    _npu_state     = ModelAssets.load_state(STATE_PATH)
+                    _npu_arch      = _npu_state.get("arch", {}) if _npu_state else {}
+                    _npu_mod.export_for_npu(
+                        model=_npu_model,
+                        tokenizer=_npu_tokenizer,
+                        config=_npu_config,
+                        arch=_npu_arch,
+                        model_path=model_path,
+                        output_dir=npu_out,
+                        logger=logger,
+                    )
+                else:
+                    _npu_mod.export_for_npu(
+                        model=artifacts["model"],
+                        tokenizer=artifacts["tokenizer"],
+                        config=artifacts["config"],
+                        arch=artifacts["arch"],
+                        model_path=model_path,
+                        output_dir=npu_out,
+                        logger=logger,
+                    )
             except Exception as _e:
                 logger.log("error", "NPU", "Export failed: " + str(_e))
             continue
