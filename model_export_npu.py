@@ -279,7 +279,10 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
             "tokenizer":  "tokenizer/",
         },
         "stm32cube_ai_notes": [
-            "Recommended import: model_npu_int8.onnx (INT8 dynamic quant, smaller + faster on NPU).",
+            "STM32Cube.AI import: use model_npu.onnx (FP32).",
+            "STM32Cube.AI runs its own quantization internally — do NOT import the _int8 file;",
+            "  dynamic-quant ops (DynamicQuantizeLinear, MatMulInteger) are not supported by the tool.",
+            "model_npu_int8.onnx is for host-side ONNX Runtime inference only (e.g. x86, RPi).",
             "Qwen2 uses RoPE (rotary positional embeddings) and GQA (grouped-query attention).",
             "Unsupported ops fall back to Cortex-M55 software — use the STM32Cube.AI profiler",
             "  to identify which layers land on the Neural-ART NPU and which stay on CPU.",
@@ -291,7 +294,7 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     _log("ok", "model_info.json written: " + info_path)
 
     _log("ok", "NPU export complete → " + output_dir)
-    _log("info", "STM32Cube.AI: File > Import Model > " + int8_path)
+    _log("info", "STM32Cube.AI: File > Import Model > " + fp32_path + "  (FP32 — STM32Cube.AI quantizes internally)")
     return True
 
 
