@@ -42,7 +42,7 @@ from classes.class_terminal_logs import TerminalLogger
 from classes.class_model_assets import ModelAssets
 
 _VERSION = "1"
-_MODEL_PATH = "model_optimized_" + _VERSION
+_MODEL_PATH = "model_calculator_version_" + _VERSION
 _STATE_PATH = _MODEL_PATH + ".state.json"
 _DEFAULT_OUT = "npu_export"
 
