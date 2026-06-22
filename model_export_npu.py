@@ -41,10 +41,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from classes.class_terminal_logs import TerminalLogger
 from classes.class_model_assets import ModelAssets
 
-_VERSION = "1"
-_MODEL_PATH = "model_calculator_version_" + _VERSION
-_STATE_PATH = _MODEL_PATH + ".state.json"
 _DEFAULT_OUT = "npu_export"
+
+
+def _discover_model():
+    """Return (model_path, state_path) by scanning for *.state.json in cwd.
+
+    Picks the most recently modified state file whose companion model directory
+    contains a config.json and at least one weight file — so this works regardless
+    of what the model was named.
+    """
+    import glob
+    for sf in sorted(glob.glob("*.state.json"), key=os.path.getmtime, reverse=True):
+        mp = sf[: -len(".state.json")]
+        if os.path.isfile(os.path.join(mp, "config.json")) and any(
+            os.path.isfile(os.path.join(mp, w))
+            for w in ("model.safetensors", "pytorch_model.bin")
+        ):
+            return mp, sf
+    return None, None
 
 
 def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logger=None):
@@ -179,23 +194,14 @@ if __name__ == "__main__":
     _out = sys.argv[1] if len(sys.argv) > 1 else _DEFAULT_OUT
     _logger = TerminalLogger()
 
-    # Require that the main script has been run at least once (weights saved).
-    if not os.path.isfile(os.path.join(_MODEL_PATH, "config.json")):
+    _MODEL_PATH, _STATE_PATH = _discover_model()
+    if not _MODEL_PATH:
         _logger.log("error", "NPU",
-                    "Model directory '" + _MODEL_PATH + "/' not found. "
+                    "No model found in current directory. "
                     "Run model_create_hf_cl.py first to train and save the model.")
         sys.exit(1)
 
-    _has_weights = any(
-        os.path.isfile(os.path.join(_MODEL_PATH, f))
-        for f in ("model.safetensors", "pytorch_model.bin")
-    )
-    if not _has_weights:
-        _logger.log("error", "NPU",
-                    "No saved weights in '" + _MODEL_PATH + "/'. "
-                    "Run model_create_hf_cl.py (or use /npu inside the session) to save weights first.")
-        sys.exit(1)
-
+    _logger.log("info", "NPU", "Found model: " + _MODEL_PATH + "/  (state: " + _STATE_PATH + ")")
     _logger.log("info", "NPU", "Loading saved model from " + _MODEL_PATH + "/ ...")
     _config    = Qwen2Config.from_pretrained(_MODEL_PATH)
     _model     = Qwen2ForCausalLM.from_pretrained(_MODEL_PATH)
