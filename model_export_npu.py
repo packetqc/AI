@@ -92,34 +92,75 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
             print("[" + level.upper() + "] NPU:", msg)
 
     # ── ONNX export ────────────────────────────────────────────────────────────
-    _log("info", "Exporting FP32 ONNX (opset 17)...")
     model.eval()
-    # Disable KV cache so the graph has clean input_ids + attention_mask only.
-    model.config.use_cache = False
+    model.config.use_cache = False  # clean graph: only input_ids + attention_mask
 
-    seq_len = 32
+    seq_len    = 32
     dummy_ids  = torch.zeros(1, seq_len, dtype=torch.long)
     dummy_mask = torch.ones(1, seq_len, dtype=torch.long)
 
+    # Wrapper that returns logits only — avoids exporting KV-cache and other
+    # auxiliary outputs that confuse the TorchScript tracer.
+    class _LogitsWrapper(torch.nn.Module):
+        def __init__(self, mdl):
+            super().__init__()
+            self.mdl = mdl
+        def forward(self, input_ids, attention_mask):
+            return self.mdl(input_ids=input_ids, attention_mask=attention_mask).logits
+
+    _export_model = _LogitsWrapper(model)
+
+    _dynamic_axes = {
+        "input_ids":      {0: "batch", 1: "seq_len"},
+        "attention_mask": {0: "batch", 1: "seq_len"},
+        "logits":         {0: "batch", 1: "seq_len"},
+    }
+
+    # Strategy: try dynamo=True first (handles complex ops; needs onnxscript in env).
+    # Fall back to legacy TorchScript tracer at progressively lower opsets.
+    _has_onnxscript = True
     try:
-        with torch.no_grad():
-            torch.onnx.export(
-                model,
-                (dummy_ids, dummy_mask),
-                fp32_path,
-                opset_version=17,
-                input_names=["input_ids", "attention_mask"],
-                output_names=["logits"],
-                dynamic_axes={
-                    "input_ids":      {0: "batch", 1: "seq_len"},
-                    "attention_mask": {0: "batch", 1: "seq_len"},
-                    "logits":         {0: "batch", 1: "seq_len"},
-                },
-                do_constant_folding=True,
-                dynamo=False,       # use legacy TorchScript exporter — no onnxscript needed
-            )
-    except Exception as exc:
-        _log("error", "ONNX export failed: " + str(exc))
+        import onnxscript  # noqa: F401
+    except ImportError:
+        _has_onnxscript = False
+
+    _exported = False
+    _attempts = []
+    if _has_onnxscript:
+        _attempts.append(("dynamo (opset 18)", dict(dynamo=True)))
+    _attempts += [
+        ("TorchScript opset 17", dict(dynamo=False, opset_version=17)),
+        ("TorchScript opset 14", dict(dynamo=False, opset_version=14)),
+    ]
+
+    for _label, _kwargs in _attempts:
+        opset = _kwargs.get("opset_version", 18)
+        _log("info", "Exporting FP32 ONNX (" + _label + ")...")
+        try:
+            with torch.no_grad():
+                _export_kwargs = dict(
+                    input_names=["input_ids", "attention_mask"],
+                    output_names=["logits"],
+                    dynamic_axes=_dynamic_axes,
+                    do_constant_folding=True,
+                )
+                _export_kwargs.update(_kwargs)
+                if _kwargs.get("dynamo"):
+                    # dynamo export accepts the model + example inputs differently
+                    torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
+                                      fp32_path, **_export_kwargs)
+                else:
+                    torch.onnx.export(_export_model, (dummy_ids, dummy_mask),
+                                      fp32_path, **_export_kwargs)
+            _exported = True
+            _log("ok", "FP32 ONNX written via " + _label)
+            break
+        except Exception as exc:
+            _log("warning", _label + " failed: " + str(exc) + " — trying next strategy...")
+
+    if not _exported:
+        _log("error", "ONNX export failed on all strategies. "
+             "Tip: pip install onnxscript in your venv for the dynamo path.")
         return False
 
     # Validate the exported graph.
