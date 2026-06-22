@@ -228,23 +228,39 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     #   nan_to_num(x) → Where(IsNaN(x), 0.0, x)
     # STM32Cube.AI (ST Edge AI Core) does not support IsNaN.
     # Safe replacement: constant False — "assume no NaN in inference inputs,
-    # always keep the original value" — which is correct for a trained model.
-    try:
-        _g = onnx.load(fp32_path)
-        _isnan_nodes = [n for n in _g.graph.node if n.op_type == "IsNaN"]
-        if _isnan_nodes:
-            for _n in _isnan_nodes:
-                _g.graph.node.remove(_n)
-                # Scalar False broadcasts to any shape in the downstream Where node
-                _g.graph.node.insert(0, onnx.helper.make_node(
+    # always keep the original value" — correct for a trained model.
+    # Recurse into subgraphs (If/Loop/Scan attrs) to catch all occurrences.
+    def _strip_isnan(graph):
+        count = 0
+        to_remove, to_add = [], []
+        for _n in graph.node:
+            if _n.op_type == "IsNaN":
+                to_remove.append(_n)
+                to_add.append(onnx.helper.make_node(
                     "Constant", inputs=[], outputs=[_n.output[0]],
                     value=onnx.numpy_helper.from_array(
                         np.array(False, dtype=bool), name=_n.output[0] + "_c"
                     )
                 ))
+                count += 1
+            for _attr in _n.attribute:
+                if _attr.HasField("g"):
+                    count += _strip_isnan(_attr.g)
+        for _n in to_remove:
+            graph.node.remove(_n)
+        for _n in to_add:
+            graph.node.insert(0, _n)
+        return count
+
+    try:
+        _g = onnx.load(fp32_path)
+        _removed = _strip_isnan(_g.graph)
+        if _removed:
             onnx.save(_g, fp32_path)
-            _log("info", "Removed " + str(len(_isnan_nodes)) +
-                 " IsNaN node(s) — not supported by ST Edge AI Core")
+            _log("info", "Removed " + str(_removed) +
+                 " IsNaN node(s) from graph (incl. subgraphs)")
+        else:
+            _log("info", "No IsNaN nodes found in graph")
     except Exception as exc:
         _log("warning", "IsNaN removal failed: " + str(exc))
 
