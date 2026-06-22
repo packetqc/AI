@@ -315,13 +315,32 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
 
     try:
         _g = onnx.load(fp32_path)
+
+        # ── Pass 1: onnxsim constant propagation ──────────────────────────────
+        # Folds Shape→Gather→Range chains (and similar) into Constant nodes,
+        # eliminating the ST Edge AI Core 'arange returns range not ndarray' bug
+        # and many other dynamic-shape ops in one pass.
+        try:
+            from onnxsim import simplify as _onnxsim
+            _input_shapes = {"input_ids":      [1, seq_len],
+                             "attention_mask": [1, seq_len]}
+            _g_sim, _sim_ok = _onnxsim(_g, overwrite_input_shapes=_input_shapes)
+            if _sim_ok:
+                _g = _g_sim
+                _log("info", "onnxsim: graph simplified (constants propagated)")
+            else:
+                _log("warning", "onnxsim: check failed — continuing with manual patches")
+        except ImportError:
+            _log("warning", "onnxsim not installed — Range/arange nodes may remain "
+                 "(pip install onnx-simplifier)")
+
+        # ── Pass 2: manual surgical patches (catch anything onnxsim misses) ──
         _r1 = _strip_isnan(_g.graph)
         _r2 = _decompose_shape(_g.graph)
         _r3 = _fix_reshape(_g.graph)
-        if _r1 or _r2 or _r3:
-            onnx.save(_g, fp32_path)
-        _log("info", "Graph patch: %d IsNaN removed, %d Shape(start/end) decomposed, "
-             "%d Reshape(allowzero) stripped" % (_r1, _r2, _r3))
+        onnx.save(_g, fp32_path)
+        _log("info", "Graph patch: %d IsNaN, %d Shape(start/end), "
+             "%d Reshape(allowzero)" % (_r1, _r2, _r3))
     except Exception as exc:
         _log("warning", "Graph patch failed: " + str(exc))
 
