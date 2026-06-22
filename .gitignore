@@ -8,6 +8,7 @@ venv
 model_version*
 .chroma_memory_db
 chroma_db
+STM32N6
 
 # Claude Code project artifacts (session settings, personal instructions)
 .claude/
@@ -20,3 +21,4 @@ CLAUDE.md
 # build artifacts
 __pycache__/
 
+.cli_history

@@ -679,6 +679,16 @@ readline.parse_and_bind("tab: complete")
 readline.set_completer_delims(" \t\n")
 readline.clear_history()
 
+_HISTORY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".cli_history")
+try:
+    readline.read_history_file(_HISTORY_FILE)
+    readline.set_history_length(500)
+except FileNotFoundError:
+    pass
+
+import atexit as _atexit
+_atexit.register(readline.write_history_file, _HISTORY_FILE)
+
 # ── Dynamic tab completion ─────────────────────────────────────────────────────
 # Multi-level: each Tab press descends one deeper into the grammar tree.
 #
@@ -822,7 +832,7 @@ while True:
         # 2. MATCH NATIVE OLLAMA SHUTDOWN COMMANDS
         if user_input.lower() in ["/bye", "exit", "quit"]:
             logger.log("ok", "SYSTEM", "👋 Closing client session cleanly. Goodbye!")
-            # Instantly break out of the script without hitting Mem0's broken JSON loops!
+            readline.write_history_file(_HISTORY_FILE)
             break
             
         # 3. MATCH NATIVE OLLAMA HELP SHORTCUTS
