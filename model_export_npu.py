@@ -154,8 +154,11 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         def __getattr__(self, name):
             return getattr(self._s, name)
 
-    # Strategy: try dynamo=True first (handles complex ops; needs onnxscript in env).
-    # Fall back to legacy TorchScript tracer at progressively lower opsets.
+    # Strategy:
+    #   1. dynamo static  — no dynamic_shapes; PyTorch constant-folds Range/Shape/arange
+    #                       at export time → simplest graph, best ST Edge AI Core compat.
+    #   2. dynamo dynamic — dynamic_shapes kept; more flexible but more complex ops.
+    #   3/4. TorchScript  — legacy fallback at opset 17/14.
     _has_onnxscript = True
     try:
         import onnxscript  # noqa: F401
@@ -165,17 +168,18 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     _exported = False
     _attempts = []
     if _has_onnxscript:
-        _attempts.append(("dynamo opset 18", {"dynamo": True}))
+        _attempts.append(("dynamo opset 18 static", {"dynamo": True, "_static": True}))
+        _attempts.append(("dynamo opset 18",         {"dynamo": True}))
     _attempts += [
         ("TorchScript opset 17", {"dynamo": False, "opset_version": 17}),
         ("TorchScript opset 14", {"dynamo": False, "opset_version": 14}),
     ]
 
     _warn_filters = [
-        ("ignore", ".*training mode.*",        UserWarning),
-        ("ignore", ".*dynamic_axes.*dynamo.*", UserWarning),
+        ("ignore", ".*training mode.*",               UserWarning),
+        ("ignore", ".*dynamic_axes.*dynamo.*",        UserWarning),
         ("ignore", ".*axis name.*will not be used.*", UserWarning),
-        ("ignore", ".*LeafSpec.*",             FutureWarning),
+        ("ignore", ".*LeafSpec.*",                    FutureWarning),
     ]
 
     for _label, _kwargs in _attempts:
@@ -193,7 +197,10 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
                                        output_names=["logits"],
                                        do_constant_folding=True,
                                        dynamo=True)
-                            if _dynamic_shapes:
+                            # Static: omit dynamic_shapes so PyTorch constant-folds
+                            # Range/Shape/arange with the fixed dummy seq_len.
+                            # Dynamic: pass dynamic_shapes for variable-length inference.
+                            if not _kwargs.get("_static") and _dynamic_shapes:
                                 _kw["dynamic_shapes"] = _dynamic_shapes
                             else:
                                 _kw["dynamic_axes"] = _dynamic_axes
