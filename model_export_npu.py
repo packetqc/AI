@@ -120,15 +120,14 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         "logits":         {0: "batch", 1: "seq_len"},
     }
 
-    # dynamic_shapes for the dynamo path — separate Dim instances per input so
-    # PyTorch doesn't warn about shared axis names in the rename mapping.
+    # dynamic_shapes for the dynamo path:
+    #   batch is kept DYNAMIC so ST Edge AI Core can clearly identify dim-0 as BATCH.
+    #   seq_len is left out (baked in as dummy seq_len) so Range/Shape/arange constant-fold.
     try:
         from torch.export import Dim as _Dim
         _dynamic_shapes = {
-            "input_ids":      {0: _Dim("batch",       min=1, max=8),
-                               1: _Dim("ids_seq_len",  min=1, max=2048)},
-            "attention_mask": {0: _Dim("batch_mask",   min=1, max=8),
-                               1: _Dim("mask_seq_len", min=1, max=2048)},
+            "input_ids":      {0: _Dim("batch",      min=1, max=8)},
+            "attention_mask": {0: _Dim("batch_mask", min=1, max=8)},
         }
     except Exception:
         _dynamic_shapes = None  # fall back to dynamic_axes for dynamo too
@@ -168,8 +167,7 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
     _exported = False
     _attempts = []
     if _has_onnxscript:
-        _attempts.append(("dynamo opset 18 static", {"dynamo": True, "_static": True}))
-        _attempts.append(("dynamo opset 18",         {"dynamo": True}))
+        _attempts.append(("dynamo opset 18", {"dynamo": True}))
     _attempts += [
         ("TorchScript opset 17", {"dynamo": False, "opset_version": 17}),
         ("TorchScript opset 14", {"dynamo": False, "opset_version": 14}),
@@ -197,10 +195,7 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
                                        output_names=["logits"],
                                        do_constant_folding=True,
                                        dynamo=True)
-                            # Static: omit dynamic_shapes so PyTorch constant-folds
-                            # Range/Shape/arange with the fixed dummy seq_len.
-                            # Dynamic: pass dynamic_shapes for variable-length inference.
-                            if not _kwargs.get("_static") and _dynamic_shapes:
+                            if _dynamic_shapes:
                                 _kw["dynamic_shapes"] = _dynamic_shapes
                             else:
                                 _kw["dynamic_axes"] = _dynamic_axes
@@ -322,8 +317,10 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         # and many other dynamic-shape ops in one pass.
         try:
             from onnxsim import simplify as _onnxsim
-            _input_shapes = {"input_ids":      [1, seq_len],
-                             "attention_mask": [1, seq_len]}
+            # Keep batch=None (dynamic) so ST Edge AI Core identifies dim-0 as BATCH.
+            # Fix seq_len so Shape→Gather→Range chains constant-fold.
+            _input_shapes = {"input_ids":      [None, seq_len],
+                             "attention_mask": [None, seq_len]}
             _g_sim, _sim_ok = _onnxsim(_g, overwrite_input_shapes=_input_shapes)
             if _sim_ok:
                 _g = _g_sim
