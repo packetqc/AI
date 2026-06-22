@@ -254,9 +254,10 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
 
     # Shape(x, start=s, end=e) — start/end attrs added in opset 15, not supported
     # by ST Edge AI Core.  Decompose into Shape(x) + Slice(result, [s], [e], [0]).
+    # Rebuild the node list in-order so Shape always precedes the Slice that reads it.
     def _decompose_shape(graph):
         count = 0
-        to_remove, to_add = [], []
+        new_nodes = []
         for _n in graph.node:
             if _n.op_type == "Shape":
                 _sa = next((a for a in _n.attribute if a.name == "start"), None)
@@ -268,8 +269,7 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
                     _sn  = _n.output[0] + "_s"
                     _en  = _n.output[0] + "_e"
                     _an  = _n.output[0] + "_ax"
-                    to_remove.append(_n)
-                    to_add += [
+                    new_nodes += [
                         onnx.helper.make_node("Shape", inputs=list(_n.input), outputs=[_tmp]),
                         onnx.helper.make_node("Constant", inputs=[], outputs=[_sn],
                             value=onnx.numpy_helper.from_array(np.array([_s], dtype=np.int64))),
@@ -281,13 +281,14 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
                             inputs=[_tmp, _sn, _en, _an], outputs=list(_n.output)),
                     ]
                     count += 1
+                    continue  # skip appending the original node
+            new_nodes.append(_n)
             for _attr in _n.attribute:
                 if _attr.HasField("g"):
                     count += _decompose_shape(_attr.g)
-        for _n in to_remove:
-            graph.node.remove(_n)
-        for _n in to_add:
-            graph.node.insert(0, _n)
+        # Rebuild graph node list preserving topological order
+        del graph.node[:]
+        graph.node.extend(new_nodes)
         return count
 
     try:
