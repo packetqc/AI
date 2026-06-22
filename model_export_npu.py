@@ -291,14 +291,30 @@ def export_for_npu(model, tokenizer, config, arch, model_path, output_dir, logge
         graph.node.extend(new_nodes)
         return count
 
+    # Reshape(allowzero=1) — allowzero added in opset 14, non-zero value unsupported
+    # by ST Edge AI Core.  Safe to strip: Qwen2 never produces zero-sized dimensions.
+    def _fix_reshape(graph):
+        count = 0
+        for _n in graph.node:
+            if _n.op_type == "Reshape":
+                for _a in list(_n.attribute):
+                    if _a.name == "allowzero" and _a.i != 0:
+                        _n.attribute.remove(_a)
+                        count += 1
+            for _attr in _n.attribute:
+                if _attr.HasField("g"):
+                    count += _fix_reshape(_attr.g)
+        return count
+
     try:
         _g = onnx.load(fp32_path)
         _r1 = _strip_isnan(_g.graph)
         _r2 = _decompose_shape(_g.graph)
-        if _r1 or _r2:
+        _r3 = _fix_reshape(_g.graph)
+        if _r1 or _r2 or _r3:
             onnx.save(_g, fp32_path)
-        _log("info", "Graph patch: removed " + str(_r1) + " IsNaN, decomposed " +
-             str(_r2) + " Shape(start/end) node(s)")
+        _log("info", "Graph patch: %d IsNaN removed, %d Shape(start/end) decomposed, "
+             "%d Reshape(allowzero) stripped" % (_r1, _r2, _r3))
     except Exception as exc:
         _log("warning", "Graph patch failed: " + str(exc))
 
