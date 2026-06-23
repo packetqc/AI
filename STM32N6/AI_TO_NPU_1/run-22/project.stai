@@ -1,0 +1,21 @@
+{
+  "toolchain": "Makefile",
+  "variant": "Validation",
+  "fromMx": false,
+  "isGenerated": true,
+  "name": "run-22",
+  "createdAt": 1782142595390,
+  "lastModified": 1782173796113,
+  "lastAccessed": 1782173796113,
+  "path": "/opt/DEV/AI/STM32N6/AI_TO_NPU_1",
+  "board": "STM32N6570-DK",
+  "mcu": "STM32N657X0H3Q",
+  "type": "BYOM",
+  "context": "Appli",
+  "contextProject": "FullSecure",
+  "uartInstance": {
+    "usart": "USART1",
+    "txpin": "PE5",
+    "rxpin": "PE6"
+  }
+}
