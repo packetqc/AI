@@ -507,7 +507,7 @@ The playbook is always authoritative: even if the tiny model mis-answers a rule 
 
 ## NPU export for STM32N6570-DK
 
-The `/npu` command (or standalone `model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK's Neural-ART NPU accelerator.
+The `/npu` command (or standalone `model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK (Cortex-M55 CPU, INT8 weights).
 
 ```bash
 # From the interactive session (requires locally trained model, not --model mode)
@@ -522,21 +522,27 @@ python model_export_npu.py [output_dir]
 ```
 npu_export/
   model_npu.onnx           FP32 ONNX (opset 17)
-  model_npu_int8.onnx      INT8 dynamic-quantized  ← recommended for NPU
-  model_info.json          arch, I/O specs, import notes
+  model_npu_qdq.onnx       INT8 QDQ — use this in STM32Cube.AI Studio
+  model_npu_int8.onnx      INT8 dynamic-quantized (alternative)
+  model_info.json          arch, I/O specs, full import instructions
   tokenizer/               tokenizer files for host-side pre/post-processing
+  generated_cpu/           ready-to-use network.c / network_data.c for STM32CubeIDE
+  validation_data/         validation.npz — valid token ID samples for Studio
 ```
 
-**Import into STM32Cube.AI Studio:**
-1. `File > Import Model` → select `npu_export/model_npu_int8.onnx`
-2. Run the NPU profiler to see which layers land on the Neural-ART accelerator
-3. Layers using RoPE or GQA (Qwen2-specific ops) may fall back to Cortex-M55 software
+**Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for full instructions. Quick summary:
+1. Import `npu_export/model_npu_qdq.onnx`
+2. **Disable** the Neural ART NPU toggle (use Cortex-M55 CPU path)
+3. Set validation dataset to `npu_export/validation_data/validation.npz`
+4. Click Generate Project
+
+> **Note:** The Neural ART NPU in STEdgeAI v4.0.0 only supports CNN architectures. Transformer models (RoPE, GQA, RMSNorm) run on the Cortex-M55 CPU with INT8 weights (1.32 MiB, 4× smaller than FP32).
 
 **Host-side inference flow:**
 ```
-input text → tokenise (tokenizer/) → input_ids tensor
-→ model inference (NPU) → logits[0, -1, :]
-→ argmax → token id → decode → output text
+input text → tokenise (tokenizer/) → input_ids [1, seq_len] int64
+→ model inference (Cortex-M55, INT8) → logits [1, seq_len, vocab_size]
+→ argmax last position → token id → decode → output text
 ```
 
 ## License
