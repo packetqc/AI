@@ -530,20 +530,34 @@ npu_export/
   validation_data/         validation.npz — valid token ID samples for Studio
 ```
 
-**Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for full instructions. Quick summary:
+**Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for the full end-to-end flow (host → ST Edge AI → on-device FSBL + interactive REPL). Quick summary:
 1. Import `npu_export/model_npu_qdq.onnx`
 2. **Disable** the Neural ART NPU toggle (use Cortex-M55 CPU path)
 3. Set validation dataset to `npu_export/validation_data/validation.npz`
 4. Click Generate Project
 
-> **Note:** The Neural ART NPU in STEdgeAI v4.0.0 only supports CNN architectures. Transformer models (RoPE, GQA, RMSNorm) run on the Cortex-M55 CPU with INT8 weights (1.32 MiB, 4× smaller than FP32).
+> **Note — architecture matters more than the chip.** The Neural-ART NPU is a CNN/conv+GEMM
+> int8 engine; transformer ops (RoPE, GQA, RMSNorm, softmax) are unsupported, so this Qwen2
+> model runs on the Cortex-M55 CPU via SW-fallback (INT8 weights, 1.32 MiB) — which is
+> **slow** (minutes/token, weights read from external flash). The *same task* re-expressed as
+> a **Conv1D / TCN** compiles **100% onto the NPU** (`stedgeai analyze`: 5/5 pure-HW epochs,
+> 481 KiB, fits internal SRAM) — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)
+> § *NPU-native architecture path*. The host export flow and the grammar runner are unchanged;
+> only the model architecture would change.
 
-**Host-side inference flow:**
+**End-to-end inference flow (host → device):**
 ```
-input text → tokenise (tokenizer/) → input_ids [1, seq_len] int64
-→ model inference (Cortex-M55, INT8) → logits [1, seq_len, vocab_size]
-→ argmax last position → token id → decode → output text
+host:    input text → tokenise (tokenizer/, BPE vocab 374)
+device:  CPU int8 embedding lookup → int8[1,256,32]
+         → NPU / SW-fallback body  → logits[1,seq,374]
+         → CPU argmax last position → token id → decode
+         → C++ GrammarRunner REPL over USART1 (115200) drives the dialog
 ```
+
+**On-device:** the model + a C++ port of the grammar engine run in the FSBL of
+`STM32N6/AI_TO_NPU_1/run-22`, exposing an interactive REPL over the ST-Link VCP
+(`/dev/ttyACM0`). See [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)
+§ *On-device deployment*.
 
 ## License
 

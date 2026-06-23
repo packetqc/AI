@@ -3,6 +3,13 @@
 C source files that replicate the interactive inference logic of `model_create_hf_cl.py`
 running on the STM32N6570-DK using the generated STAI network from run-22.
 
+> **Note (newer deployment):** this folder is the original **Appli**-based C example. The
+> maintained deployment now lives in the **FSBL** of `STM32N6/AI_TO_NPU_1/run-22`
+> (`llm_fsbl.c` + a C++ port of the grammar engine: `terminal_logger.cpp`,
+> `grammar_runner.cpp`, `llm_repl.cpp`) and runs an interactive REPL over USART1. For the
+> full export→device flow, the performance findings, and the NPU-native (Conv1D) path that
+> compiles 100% on the NPU, see [`docs/STM32_NPU_DEPLOYMENT.md`](../../docs/STM32_NPU_DEPLOYMENT.md).
+
 ## Files
 
 | File | Purpose |
