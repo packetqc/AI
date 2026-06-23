@@ -1,0 +1,42 @@
+{
+  "args": {
+    "model": "/opt/DEV/AI/npu_export/model_npu_qdq.onnx",
+    "valinput": "",
+    "valoutput": "",
+    "batch-size": 10,
+    "mode": "target",
+    "optimization": "balanced",
+    "name": "network",
+    "verbosity": 1,
+    "c-api": "st-ai"
+  },
+  "mempools": [
+    {
+      "name": "RAM",
+      "size": 2097152,
+      "offset": 872415232,
+      "driver": "RAM",
+      "max": 2097152,
+      "mode_available": []
+    },
+    {
+      "name": "AXISRAM3_4_5_6",
+      "size": 1835008,
+      "offset": 874512384,
+      "driver": "AXISRAM3_4_5_6",
+      "max": 1835008,
+      "mode_available": []
+    },
+    {
+      "driver": "xSPI1",
+      "name": "xSPI1",
+      "max": 32505856,
+      "offset": 2415919104,
+      "size": 32505856,
+      "mode_available": []
+    }
+  ],
+  "exportWeightsAsBin": false,
+  "copyWeightsToRam": false,
+  "automaticFlash": true
+}

@@ -1,0 +1,14 @@
+{
+  "toolchain": "Makefile",
+  "variant": "ApplicationTemplate",
+  "fromMx": false,
+  "isGenerated": false,
+  "name": "AI_TO_NPU_1",
+  "createdAt": 1782142595390,
+  "lastModified": 1782170702262,
+  "lastAccessed": 1782170702261,
+  "path": "/opt/DEV/AI/STM32N6",
+  "board": "STM32N6570-DK",
+  "mcu": "",
+  "type": "BYOM"
+}

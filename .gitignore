@@ -8,11 +8,54 @@ venv
 model_version*
 .chroma_memory_db
 chroma_db
-STM32N6
+
+# --- STM32N6 firmware projects: keep source, drop libraries/build/assets ---
+# (the tree was previously fully ignored via a blanket "STM32N6" line)
+# Kept in git: FSBL/Appli source (*.c/*.h/*.cpp/*.hpp), Makefiles, linker
+# scripts (*.ld), startup (*.s), CubeMX project (*.ioc) and small JSON configs.
+
+# ST firmware libraries (regenerable from CubeMX / firmware packages)
+STM32N6/**/Drivers/
+STM32N6/**/Middlewares/
+
+# build objects, debug, and link/flash outputs
+STM32N6/**/build/
+STM32N6/**/Debug/
+STM32N6/**/*.o
+STM32N6/**/*.d
+STM32N6/**/*.lst
+STM32N6/**/*.su
+STM32N6/**/*.map
+STM32N6/**/*.elf
+STM32N6/**/*.bin
+STM32N6/**/*.hex
+
+# ST Edge AI per-run workspace + validation outputs (generated, duplicated)
+STM32N6/**/.ai/
+STM32N6/**/st_ai_output/
+STM32N6/**/st_ai_ws/
+STM32N6/**/*.csv
+
+# NPU generation workspace + large binary / model / log assets
+STM32N6/**/npu_network_gen/
+STM32N6/**/*.stldr
+STM32N6/**/*.gguf
+STM32N6/**/*.onnx
+STM32N6/**/*.onnx.data
+STM32N6/**/*.bak
+STM32N6/**/result.json
+STM32N6/**/logs.txt
+
+# generated NPU weight table (3.6 MB; regenerated from the ONNX by ST Edge AI,
+# not used by the FSBL build which reads weights from XSPI flash at 0x70000000)
+STM32N6/**/network_data.c
 
 # Claude Code project artifacts (session settings, personal instructions)
 .claude/
 CLAUDE.md
+
+# Knowledge satellite installation (synced from hub, not part of this repo)
+Knowledge/
 
 # environment / secrets (never commit these)
 .env
