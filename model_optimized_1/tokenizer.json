@@ -309,60 +309,60 @@
       "Ń": 256,
       "sc": 257,
       "er": 258,
-      "ver": 259,
-      "te": 260,
-      "di": 261,
-      "disc": 262,
-      "en": 263,
-      "over": 264,
-      "discover": 265,
-      "discovery": 266,
-      "<|": 267,
-      "do": 268,
-      "fte": 269,
-      "xt": 270,
-      "|>": 271,
-      "endo": 272,
-      "ftext": 273,
-      "endoftext": 274,
-      "Ġ\"": 275,
-      "ho": 276,
-      "st": 277,
-      "al": 278,
-      "ys": 279,
-      "sys": 280,
-      "_s": 281,
-      "ac": 282,
-      "an": 283,
-      "to": 284,
-      "scan": 285,
-      "_scan": 286,
-      "oc": 287,
-      "host": 288,
-      "\"<|": 289,
-      "me": 290,
-      "or": 291,
-      "in": 292,
-      "_p": 293,
-      "ne": 294,
-      "ali": 295,
-      "ol": 296,
-      "de": 297,
-      "ar": 298,
-      "ame": 299,
-      "ct": 300,
-      "name": 301,
-      "pt": 302,
-      "ve": 303,
-      "Ġsys": 304,
-      "tect": 305,
-      "how": 306,
-      "top": 307,
-      "detect": 308,
+      "_d": 259,
+      "al": 260,
+      "ver": 261,
+      "te": 262,
+      "isc": 263,
+      "_disc": 264,
+      "en": 265,
+      "ali": 266,
+      "over": 267,
+      "overy": 268,
+      "_discovery": 269,
+      "kali": 270,
+      "<|": 271,
+      "do": 272,
+      "fte": 273,
+      "xt": 274,
+      "|>": 275,
+      "endo": 276,
+      "ftext": 277,
+      "endoftext": 278,
+      "Ġ\"": 279,
+      "ho": 280,
+      "st": 281,
+      "ys": 282,
+      "sys": 283,
+      "_s": 284,
+      "ac": 285,
+      "an": 286,
+      "to": 287,
+      "scan": 288,
+      "_scan": 289,
+      "oc": 290,
+      "host": 291,
+      "\"<|": 292,
+      "me": 293,
+      "or": 294,
+      "in": 295,
+      "_p": 296,
+      "ne": 297,
+      "ol": 298,
+      "ar": 299,
+      "ame": 300,
+      "ct": 301,
+      "ete": 302,
+      "name": 303,
+      "pt": 304,
+      "ve": 305,
+      "Ġsys": 306,
+      "how": 307,
+      "top": 308,
       "arp": 309,
-      "_l": 310,
-      "_u": 311,
-      "_discovery": 312,
+      "etect": 310,
+      "_l": 311,
+      "_u": 312,
       "_host": 313,
       "_detect": 314,
       "_show": 315,
@@ -381,232 +381,233 @@
       "Ġne": 328,
       "Ġnet": 329,
       "_in": 330,
-      "Ġhost": 331,
-      "kali": 332,
+      "Ġkali": 331,
+      "Ġhost": 332,
       "Ġp": 333,
-      "Ġkali": 334,
-      "ou": 335,
-      "rou": 336,
-      "route": 337,
-      "Ġi": 338,
-      "he": 339,
-      "ul": 340,
-      "ap": 341,
-      "cac": 342,
-      "dp": 343,
-      "ee": 344,
-      "ful": 345,
-      "ist": 346,
-      "ime": 347,
-      "ipt": 348,
-      "ive": 349,
-      "ker": 350,
-      "map": 351,
-      "nmap": 352,
-      "op": 353,
-      "os": 354,
-      "qu": 355,
-      "ript": 356,
-      "tive": 357,
-      "udp": 358,
-      "wee": 359,
-      "Ġarp": 360,
-      "script": 361,
+      "ou": 334,
+      "rou": 335,
+      "route": 336,
+      "Ġi": 337,
+      "he": 338,
+      "ul": 339,
+      "ap": 340,
+      "cac": 341,
+      "dp": 342,
+      "ee": 343,
+      "ful": 344,
+      "ist": 345,
+      "ime": 346,
+      "ipt": 347,
+      "ive": 348,
+      "ker": 349,
+      "map": 350,
+      "nmap": 351,
+      "op": 352,
+      "os": 353,
+      "qu": 354,
+      "ript": 355,
+      "tive": 356,
+      "udp": 357,
+      "wee": 358,
+      "Ġarp": 359,
+      "script": 360,
+      "alive": 361,
       "active": 362,
       "ing": 363,
       "nel": 364,
-      "alive": 365,
-      "ptime": 366,
-      "ick": 367,
-      "orts": 368,
-      "cache": 369,
-      "full": 370,
-      "kernel": 371,
-      "open": 372,
-      "quick": 373,
-      "weep": 374,
-      "_ver": 375,
-      "_top": 376,
-      "_cache": 377,
-      "_kernel": 378,
-      "_svc": 379,
-      "_sweep": 380,
-      "_ports": 381,
-      "_local": 382,
-      "_list": 383,
-      "_uname": 384,
-      "_uptime": 385,
-      "_hosts": 386,
-      "_hostname": 387,
-      "local": 388,
-      "faces": 389,
-      "es": 390,
-      "fo": 391,
-      "ter": 392,
-      "um": 393,
-      "vic": 394,
-      "wor": 395,
-      "ervic": 396,
-      "enum": 397,
-      "Ġsvc": 398,
-      "Ġservic": 399,
-      "Ġnetwor": 400,
-      "Ġport": 401,
-      "terfaces": 402,
-      "Ġservices": 403,
-      "Ġnetwork": 404,
-      "_disc": 405,
-      "_tools": 406,
-      "_enum": 407,
-      "_info": 408,
-      "_interfaces": 409,
-      "Ġis": 410,
-      "Ġlocal": 411,
-      "Ġroute": 412,
-      "\"sys": 413,
-      "ping": 414,
-      "Ġver": 415,
-      "Ġtop": 416,
-      "Ġtools": 417,
-      "Ġnmap": 418,
-      "Ġos": 419,
-      "Ġudp": 420,
-      "Ġscript": 421,
-      "Ġactive": 422,
-      "Ġalive": 423,
-      "Ġfull": 424,
-      "Ġopen": 425,
-      "Ġquick": 426,
-      "Ġping": 427,
-      "at": 428,
-      "ays": 429,
-      "col": 430,
-      "hat": 431,
-      "iface": 432,
-      "re": 433,
-      "ways": 434,
-      "what": 435,
-      "Ġ?": 436,
-      "Ġal": 437,
-      "Ġcol": 438,
-      "Ġiface": 439,
-      "Ġalways": 440,
-      "Ġcolor": 441,
-      "Ġg": 442,
-      "\"ver": 443,
-      "\"arp": 444,
-      "\"nmap": 445,
-      "\"open": 446,
-      "\"quick": 447,
-      "\"ping": 448,
-      "\"iface": 449,
-      "ad": 450,
-      "bad": 451,
-      "od": 452,
-      "ood": 453,
-      "Ġbad": 454,
-      "red": 455,
-      "reen": 456,
-      "Ġgood": 457,
-      "fin": 458,
-      "Ġde": 459,
-      "Ġdefin": 460,
-      ".Ċ": 461,
-      "as": 462,
-      "ed": 463,
-      "Ġas": 464,
-      "Ġdefined": 465,
-      "\".Ċ": 466,
-      "routes": 467,
-      "Ġroutes": 468,
-      "\"top": 469,
-      "\"tools": 470,
-      "\"route": 471,
-      "\"os": 472,
-      "\"udp": 473,
-      "\"script": 474,
+      "ptime": 365,
+      "ick": 366,
+      "orts": 367,
+      "cache": 368,
+      "full": 369,
+      "kernel": 370,
+      "open": 371,
+      "quick": 372,
+      "weep": 373,
+      "_ver": 374,
+      "_top": 375,
+      "_cache": 376,
+      "_kernel": 377,
+      "_svc": 378,
+      "_sweep": 379,
+      "_ports": 380,
+      "_local": 381,
+      "_list": 382,
+      "_uname": 383,
+      "_uptime": 384,
+      "_hosts": 385,
+      "_hostname": 386,
+      "local": 387,
+      "faces": 388,
+      "es": 389,
+      "fo": 390,
+      "ter": 391,
+      "um": 392,
+      "vic": 393,
+      "wor": 394,
+      "ervic": 395,
+      "enum": 396,
+      "Ġsvc": 397,
+      "Ġservic": 398,
+      "Ġnetwor": 399,
+      "Ġport": 400,
+      "terfaces": 401,
+      "Ġservices": 402,
+      "Ġnetwork": 403,
+      "_tools": 404,
+      "_enum": 405,
+      "_info": 406,
+      "_interfaces": 407,
+      "Ġis": 408,
+      "Ġlocal": 409,
+      "Ġroute": 410,
+      "\"sys": 411,
+      "ping": 412,
+      "Ġver": 413,
+      "Ġtop": 414,
+      "Ġtools": 415,
+      "Ġnmap": 416,
+      "Ġos": 417,
+      "Ġudp": 418,
+      "Ġscript": 419,
+      "Ġalive": 420,
+      "Ġactive": 421,
+      "Ġfull": 422,
+      "Ġopen": 423,
+      "Ġquick": 424,
+      "Ġping": 425,
+      "at": 426,
+      "ays": 427,
+      "col": 428,
+      "hat": 429,
+      "iface": 430,
+      "re": 431,
+      "ways": 432,
+      "what": 433,
+      "Ġ?": 434,
+      "Ġal": 435,
+      "Ġcol": 436,
+      "Ġiface": 437,
+      "Ġalways": 438,
+      "Ġcolor": 439,
+      "Ġg": 440,
+      "\"ver": 441,
+      "\"arp": 442,
+      "\"nmap": 443,
+      "\"open": 444,
+      "\"quick": 445,
+      "\"ping": 446,
+      "\"iface": 447,
+      "ad": 448,
+      "bad": 449,
+      "od": 450,
+      "ood": 451,
+      "Ġbad": 452,
+      "red": 453,
+      "reen": 454,
+      "Ġgood": 455,
+      "de": 456,
+      "fin": 457,
+      "Ġde": 458,
+      "Ġdefin": 459,
+      ".Ċ": 460,
+      "as": 461,
+      "ed": 462,
+      "Ġas": 463,
+      "Ġdefined": 464,
+      "\".Ċ": 465,
+      "routes": 466,
+      "Ġroutes": 467,
+      "\"top": 468,
+      "\"tools": 469,
+      "\"route": 470,
+      "\"os": 471,
+      "\"udp": 472,
+      "\"script": 473,
+      "\"alive": 474,
       "\"active": 475,
-      "\"alive": 476,
-      "\"full": 477,
-      "green": 478,
-      "Ġred": 479,
-      "Ġgreen": 480,
-      "procs": 481,
-      "list": 482,
-      "ports": 483,
-      "svc": 484,
-      "sweep": 485,
-      "uname": 486,
-      "uptime": 487,
-      "hosts": 488,
-      "hostname": 489,
-      "faceshow": 490,
-      "info": 491,
-      "interfaces": 492,
-      "Ġnetinterfaces": 493,
-      "Ġhostdisc": 494,
-      "Ġhostinfo": 495,
+      "\"full": 476,
+      "green": 477,
+      "Ġred": 478,
+      "Ġgreen": 479,
+      "disc": 480,
+      "discovery": 481,
+      "detect": 482,
+      "procs": 483,
+      "list": 484,
+      "ports": 485,
+      "svc": 486,
+      "sweep": 487,
+      "uname": 488,
+      "uptime": 489,
+      "hosts": 490,
+      "hostname": 491,
+      "faceshow": 492,
+      "info": 493,
+      "interfaces": 494,
+      "Ġnetinterfaces": 495,
       "Ġkalitools": 496,
-      "Ġsvcenum": 497,
-      "Ġportscan": 498,
-      "Ġservicesprocs": 499,
-      "Ġnetworkdiscovery": 500,
-      "Ġlocaldiscovery": 501,
-      "ifaceshow": 502,
-      "verdetect": 503,
-      "syskernel": 504,
-      "sysuname": 505,
-      "sysuptime": 506,
-      "syshostname": 507,
-      "Ġsyskernel": 508,
-      "Ġsysuname": 509,
-      "Ġsysuptime": 510,
-      "Ġsyshostname": 511,
-      "topprocs": 512,
-      "arpcache": 513,
-      "arplocal": 514,
-      "toolslist": 515,
-      "Ġkalidiscovery": 516,
-      "Ġifaceshow": 517,
-      "nmapver": 518,
-      "osdetect": 519,
-      "udptop": 520,
-      "Ġarpcache": 521,
-      "Ġarplocal": 522,
-      "scriptscan": 523,
-      "activesvc": 524,
-      "alivehosts": 525,
-      "fullscan": 526,
-      "openports": 527,
-      "quickscan": 528,
-      "pingsweep": 529,
-      "Ġverdetect": 530,
-      "Ġtopprocs": 531,
-      "Ġtoolslist": 532,
-      "Ġnmapver": 533,
-      "Ġosdetect": 534,
-      "Ġudptop": 535,
-      "Ġscriptscan": 536,
-      "Ġactivesvc": 537,
-      "Ġalivehosts": 538,
-      "Ġfullscan": 539,
-      "Ġopenports": 540,
-      "Ġquickscan": 541,
-      "Ġpingsweep": 542,
-      "routeshow": 543,
-      "Ġrouteshow": 544,
-      "\".": 545,
-      "The": 546,
-      "am": 547,
-      "mar": 548,
-      "rul": 549,
-      "ram": 550,
-      "Ġdiscovery": 551,
-      "Ġrul": 552,
-      "Ġgram": 553,
-      "Ġdefines": 554,
-      "Ġrules": 555,
-      "Ġgrammar": 556
+      "Ġkalidiscovery": 497,
+      "Ġhostdisc": 498,
+      "Ġhostinfo": 499,
+      "Ġsvcenum": 500,
+      "Ġportscan": 501,
+      "Ġservicesprocs": 502,
+      "Ġnetworkdiscovery": 503,
+      "Ġlocaldiscovery": 504,
+      "ifaceshow": 505,
+      "verdetect": 506,
+      "syskernel": 507,
+      "sysuname": 508,
+      "sysuptime": 509,
+      "syshostname": 510,
+      "Ġsyskernel": 511,
+      "Ġsysuname": 512,
+      "Ġsysuptime": 513,
+      "Ġsyshostname": 514,
+      "topprocs": 515,
+      "arpcache": 516,
+      "arplocal": 517,
+      "toolslist": 518,
+      "Ġifaceshow": 519,
+      "nmapver": 520,
+      "osdetect": 521,
+      "udptop": 522,
+      "Ġarpcache": 523,
+      "Ġarplocal": 524,
+      "scriptscan": 525,
+      "alivehosts": 526,
+      "activesvc": 527,
+      "fullscan": 528,
+      "openports": 529,
+      "quickscan": 530,
+      "pingsweep": 531,
+      "Ġverdetect": 532,
+      "Ġtopprocs": 533,
+      "Ġtoolslist": 534,
+      "Ġnmapver": 535,
+      "Ġosdetect": 536,
+      "Ġudptop": 537,
+      "Ġscriptscan": 538,
+      "Ġalivehosts": 539,
+      "Ġactivesvc": 540,
+      "Ġfullscan": 541,
+      "Ġopenports": 542,
+      "Ġquickscan": 543,
+      "Ġpingsweep": 544,
+      "routeshow": 545,
+      "Ġrouteshow": 546,
+      "\".": 547,
+      "The": 548,
+      "am": 549,
+      "mar": 550,
+      "rul": 551,
+      "ram": 552,
+      "Ġrul": 553,
+      "Ġgram": 554,
+      "Ġdefines": 555,
+      "Ġrules": 556,
+      "Ġgrammar": 557
     },
     "merges": [
       [
@@ -618,6 +619,14 @@
         "r"
       ],
       [
+        "_",
+        "d"
+      ],
+      [
+        "a",
+        "l"
+      ],
+      [
         "v",
         "er"
       ],
@@ -626,28 +635,36 @@
         "e"
       ],
       [
-        "d",
-        "i"
+        "i",
+        "sc"
       ],
       [
-        "di",
-        "sc"
+        "_d",
+        "isc"
       ],
       [
         "e",
         "n"
       ],
       [
+        "al",
+        "i"
+      ],
+      [
         "o",
         "ver"
       ],
       [
-        "disc",
-        "over"
+        "over",
+        "y"
       ],
       [
-        "discover",
-        "y"
+        "_disc",
+        "overy"
+      ],
+      [
+        "k",
+        "ali"
       ],
       [
         "<",
@@ -692,10 +709,6 @@
       [
         "s",
         "t"
-      ],
-      [
-        "a",
-        "l"
       ],
       [
         "y",
@@ -762,16 +775,8 @@
         "e"
       ],
       [
-        "al",
-        "i"
-      ],
-      [
         "o",
         "l"
-      ],
-      [
-        "d",
-        "e"
       ],
       [
         "a",
@@ -784,6 +789,10 @@
       [
         "c",
         "t"
+      ],
+      [
+        "e",
+        "te"
       ],
       [
         "n",
@@ -802,10 +811,6 @@
         "sys"
       ],
       [
-        "te",
-        "ct"
-      ],
-      [
         "ho",
         "w"
       ],
@@ -814,12 +819,12 @@
         "p"
       ],
       [
-        "de",
-        "tect"
-      ],
-      [
         "ar",
         "p"
+      ],
+      [
+        "ete",
+        "ct"
       ],
       [
         "_",
@@ -831,15 +836,11 @@
       ],
       [
         "_",
-        "discovery"
-      ],
-      [
-        "_",
         "host"
       ],
       [
-        "_",
-        "detect"
+        "_d",
+        "etect"
       ],
       [
         "_s",
@@ -907,19 +908,15 @@
       ],
       [
         "Ġ",
-        "host"
+        "kali"
       ],
       [
-        "k",
-        "ali"
+        "Ġ",
+        "host"
       ],
       [
         "Ġ",
         "p"
-      ],
-      [
-        "Ġ",
-        "kali"
       ],
       [
         "o",
@@ -1030,6 +1027,10 @@
         "ript"
       ],
       [
+        "ali",
+        "ve"
+      ],
+      [
         "ac",
         "tive"
       ],
@@ -1040,10 +1041,6 @@
       [
         "ne",
         "l"
-      ],
-      [
-        "ali",
-        "ve"
       ],
       [
         "pt",
@@ -1203,10 +1200,6 @@
       ],
       [
         "_",
-        "disc"
-      ],
-      [
-        "_",
         "tools"
       ],
       [
@@ -1271,11 +1264,11 @@
       ],
       [
         "Ġ",
-        "active"
+        "alive"
       ],
       [
         "Ġ",
-        "alive"
+        "active"
       ],
       [
         "Ġ",
@@ -1414,6 +1407,10 @@
         "ood"
       ],
       [
+        "d",
+        "e"
+      ],
+      [
         "f",
         "in"
       ],
@@ -1483,11 +1480,11 @@
       ],
       [
         "\"",
-        "active"
+        "alive"
       ],
       [
         "\"",
-        "alive"
+        "active"
       ],
       [
         "\"",
@@ -1504,6 +1501,18 @@
       [
         "Ġg",
         "reen"
+      ],
+      [
+        "d",
+        "isc"
+      ],
+      [
+        "disc",
+        "overy"
+      ],
+      [
+        "d",
+        "etect"
       ],
       [
         "p",
@@ -1558,16 +1567,20 @@
         "interfaces"
       ],
       [
+        "Ġkali",
+        "tools"
+      ],
+      [
+        "Ġkali",
+        "discovery"
+      ],
+      [
         "Ġhost",
         "disc"
       ],
       [
         "Ġhost",
         "info"
-      ],
-      [
-        "Ġkali",
-        "tools"
       ],
       [
         "Ġsvc",
@@ -1646,10 +1659,6 @@
         "list"
       ],
       [
-        "Ġkali",
-        "discovery"
-      ],
-      [
         "Ġi",
         "faceshow"
       ],
@@ -1678,12 +1687,12 @@
         "scan"
       ],
       [
-        "active",
-        "svc"
-      ],
-      [
         "alive",
         "hosts"
+      ],
+      [
+        "active",
+        "svc"
       ],
       [
         "full",
@@ -1730,12 +1739,12 @@
         "scan"
       ],
       [
-        "Ġactive",
-        "svc"
-      ],
-      [
         "Ġalive",
         "hosts"
+      ],
+      [
+        "Ġactive",
+        "svc"
       ],
       [
         "Ġfull",
@@ -1784,10 +1793,6 @@
       [
         "r",
         "am"
-      ],
-      [
-        "Ġ",
-        "discovery"
       ],
       [
         "Ġ",

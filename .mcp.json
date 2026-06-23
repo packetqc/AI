@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "stm32": {
+      "command": "python3",
+      "args": ["/opt/DEV/knowledge/Knowledge/K_STM32_MCP/mcp/server.py"],
+      "cwd": "/opt/DEV/knowledge"
+    }
+  }
+}
