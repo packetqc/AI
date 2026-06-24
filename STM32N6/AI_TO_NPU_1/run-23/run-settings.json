@@ -1,0 +1,142 @@
+{
+  "args": {
+    "model": "/opt/DEV/AI/npu_export/model_cnn_calc.onnx",
+    "valinput": "",
+    "valoutput": "",
+    "batch-size": 10,
+    "mode": "target",
+    "name": "network",
+    "verbosity": 1,
+    "c-api": "st-ai",
+    "st-neural-art": "default",
+    "atonnOptions": {
+      "native-float": true,
+      "cache-maintenance": true,
+      "Ocache-opt": true,
+      "enable-virtual-mem-pools": true,
+      "Os": true,
+      "Oauto-sched": true,
+      "enable-epoch-controller": true
+    }
+  },
+  "mempools": [
+    {
+      "driver": "AXIFLEXMEM",
+      "max": 409600,
+      "name": "flexMEM",
+      "offset": 872415232,
+      "size": 0,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM1",
+      "max": 638976,
+      "name": "cpuRAM1",
+      "offset": 872824832,
+      "size": 0,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM2",
+      "max": 1048576,
+      "name": "cpuRAM2",
+      "offset": 873463808,
+      "size": 1048576,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM3",
+      "max": 458752,
+      "name": "npuRAM3",
+      "offset": 874512384,
+      "size": 458752,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM4",
+      "max": 458752,
+      "name": "npuRAM4",
+      "offset": 874971136,
+      "size": 458752,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM5",
+      "max": 458752,
+      "name": "npuRAM5",
+      "offset": 875429888,
+      "size": 458752,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "AXISRAM6",
+      "max": 458752,
+      "name": "npuRAM6",
+      "offset": 875888640,
+      "size": 458752,
+      "mode": "activations-only",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "xSPI1",
+      "max": 32505856,
+      "name": "hyperRAM",
+      "offset": 2415919104,
+      "size": 33554432,
+      "mode": "activations-and-weights",
+      "mode_available": [
+        "activations-only",
+        "activations-and-weights",
+        "weights-only"
+      ]
+    },
+    {
+      "driver": "xSPI2",
+      "max": 117440512,
+      "name": "octoFlash",
+      "offset": 1895825408,
+      "size": 117440512,
+      "mode": "weights-only",
+      "mode_available": [
+        "weights-only"
+      ]
+    }
+  ],
+  "exportWeightsAsBin": false,
+  "copyWeightsToRam": false,
+  "automaticFlash": true
+}

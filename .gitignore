@@ -50,6 +50,11 @@ STM32N6/**/logs.txt
 # not used by the FSBL build which reads weights from XSPI flash at 0x70000000)
 STM32N6/**/network_data.c
 
+# generated NPU weight C array (~1.3 MB per run; regenerated from the ONNX by
+# ST Edge AI. The FSBL reads weights from XSPI flash @0x71000000 (PROVIDE symbol);
+# the Appli links this blob — flash it separately, don't bloat git with it).
+STM32N6/**/network_atonbuf*.c
+
 # Claude Code project artifacts (session settings, personal instructions)
 .claude/
 CLAUDE.md
