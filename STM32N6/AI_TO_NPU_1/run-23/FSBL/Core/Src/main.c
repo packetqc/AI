@@ -116,15 +116,19 @@ BSP_XSPI_NOR_Init_t xspiInit;
    * NOR flash is now memory-mapped (weights live at 0x71000000). Bring up the
    * Neural-ART, run ONE inference, and stay put. Read g_npu_done / g_npu_run_rc /
    * g_npu_run_ms over GDB to confirm the epoch completes. Do NOT jump to the Appli. */
-  extern void NPU_Config(void);
-  extern void RISAF_Config(void);
+  extern void aiPreInitialize(void);   /* SystemInit_POST + NPU_Config + RISAF_Config */
   extern void NPU_SelfTest(void);
   extern void NPU_UART_Init(void);
+  extern void NPU_LED_Init(void);
+  NPU_UART_Init();          /* USART1 VCP — set up BEFORE RISAF, used for the readout */
+  NPU_LED_Init();           /* user LEDs — set up BEFORE RISAF; GREEN=done, RED=init fail */
+  /* Full ST Edge AI pre-init (ref N6_EDGEAI_1). SystemInit_POST takes AXISRAM2-6
+   * out of SRAM-shutdown (RAMCFG_CR_SRAMSD), powers CACHEAXIRAM, and sets
+   * MEMSYSCTL.DCACTIVE/ICACTIVE (the boot leaves them 0) — without it the NPU
+   * streaming engine reads shut-down RAM and the epoch never completes. */
+  aiPreInitialize();
   SCB_EnableICache();
   SCB_EnableDCache();
-  NPU_UART_Init();          /* USART1 VCP — set up BEFORE RISAF, used for the readout */
-  NPU_Config();
-  RISAF_Config();
   NPU_SelfTest();
   while (1) { __NOP(); }   /* park here after the test — do not BOOT_Application() */
 

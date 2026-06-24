@@ -18,10 +18,49 @@
 #include <stdio.h>
 #include <string.h>
 #include "stm32n6xx_hal.h"
+#include "stm32n6570_discovery.h"   /* BSP_LED — RISAF-immune, physically visible readout */
 #include "stai.h"
 #include "stai_network.h"
 
 UART_HandleTypeDef huart1;
+
+/* LED readout (works even when RISAF masks memory + UART):
+ *   GREEN on = stai_network_run RETURNED  -> NPU epoch COMPLETED
+ *   RED   on = stai_network_init FAILED   -> NPU init problem
+ *   neither  = stuck inside stai_network_run -> epoch STALLED (run-22 behaviour) */
+void NPU_LED_Init(void)
+{
+    BSP_LED_Init(LED_GREEN);
+    BSP_LED_Init(LED_RED);
+    BSP_LED_Off(LED_GREEN);
+    BSP_LED_Off(LED_RED);
+}
+
+/* Power the NPU RAM banks BEFORE NPU_Config / the inference. Verbatim from the
+ * operational reference project N6_EDGEAI_1 (FSBL/Core/Src/main.c §
+ * Enable_NPU_RAM_ForCore / Enable_AXICACHE_RAM_ForCore). The chip default in
+ * run-mode boot leaves these power domains OFF; with RISAF8/15 (NPU_CACHE)
+ * enabled, the Neural-ART streaming engine uses CACHEAXIRAM — if that RAM is
+ * unpowered the engine reads dead memory and the epoch never completes (the
+ * LL_ATON_RT_WFE stall). Powering CACHEAXIRAM is the missing piece. */
+void NPU_PowerRAM(void)
+{
+    RAMCFG_HandleTypeDef h = {0};
+
+    /* AXISRAM3-6 — AI activations (0x34200000 - 0x343BFFFF) */
+    __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM5_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM6_MEM_CLK_ENABLE();
+    h.Instance = RAMCFG_SRAM3_AXI; HAL_RAMCFG_EnableAXISRAM(&h);
+    h.Instance = RAMCFG_SRAM4_AXI; HAL_RAMCFG_EnableAXISRAM(&h);
+    h.Instance = RAMCFG_SRAM5_AXI; HAL_RAMCFG_EnableAXISRAM(&h);
+    h.Instance = RAMCFG_SRAM6_AXI; HAL_RAMCFG_EnableAXISRAM(&h);
+
+    /* CACHEAXIRAM — the NPU cache RAM (0x343C0000 - 0x343FFFFF). THE FIX. */
+    __HAL_RCC_CACHEAXIRAM_MEM_CLK_ENABLE();
+    __HAL_RCC_CACHEAXI_CLK_ENABLE();
+}
 
 STAI_NETWORK_CONTEXT_DECLARE(g_npu_ctx, STAI_NETWORK_CONTEXT_SIZE)
 
@@ -69,7 +108,7 @@ void NPU_SelfTest(void)
 
     g_npu_init_rc = (int)stai_network_init(g_npu_ctx);
     snprintf(m, sizeof(m), "NPU init rc=%d\r\n", g_npu_init_rc); up(m);
-    if (g_npu_init_rc != STAI_SUCCESS) { up("init FAILED — stop\r\n"); g_npu_done = 1; return; }
+    if (g_npu_init_rc != STAI_SUCCESS) { up("init FAILED — stop\r\n"); BSP_LED_On(LED_RED); g_npu_done = 1; return; }
 
     stai_network_get_inputs(g_npu_ctx, in, &n);
     stai_network_get_outputs(g_npu_ctx, out, &n);
@@ -81,6 +120,7 @@ void NPU_SelfTest(void)
 
     g_npu_out0 = ((const int8_t *)out[0])[0];
     g_npu_done = 1;
+    BSP_LED_On(LED_GREEN);   /* epoch completed — visible even through the RISAF mask */
 
     snprintf(m, sizeof(m), "DONE rc=%d  ms=%lu  out0=%d  >>> NPU EPOCH COMPLETED <<<\r\n",
              g_npu_run_rc, (unsigned long)g_npu_run_ms, (int)g_npu_out0); up(m);
