@@ -33,7 +33,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "classes"))
 from class_model_security import (  # noqa: E402
     OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
     sha256_file, render_static_report, discover_symbols, token_inventory,
+    RECON_LEXICON,
 )
+
+# heuristic: does a model response contain a literal OS-command string?
+_LITERAL_CMD = re.compile(
+    r"\b(nmap|ss|ip|arp|ping|curl|wget|uname|netstat|ps|nc|ssh|dig|host|masscan)\b[ \-]"
+    r"|[|;>&`$]"                      # shell metacharacters
+    r"|(?:^|\s)-[A-Za-z]{1,3}\b"      # flags  -sV -O -p
+    r"|/(?:usr|bin|etc|sbin|proc)/",  # paths
+    re.I)
+_CMD_PROMPTS = ("{a} runs the command:", "execute {a}:", "the command for {a} is", "{a} command:")
 
 DEF_OUT = "forensics"
 
@@ -132,6 +142,49 @@ def _score_against_oracle(recovered, oracle_path):
             f"  recovered & matched : {hit}  ({len(hit)}/{len(truth)})")
 
 
+def _resolve_commands(name, seeds, rule_body):
+    """Try to DISCOVER the real string commands the grammar's aliases lead to.
+    Writes the composition graph + per-alias command-elicitation probes + a finding.
+    Output is evidence — nothing the model emits is executed."""
+    L = ["# Command / content resolution — " + name,
+         "# Goal: discover the real string COMMANDS the grammar's action-aliases lead to.",
+         "# Method: blackbox command-elicitation probes per alias (output is evidence, never run).",
+         "",
+         "## Composition graph (alias → expansion, model-derived)"]
+    for r in seeds:
+        body = rule_body.get(r, "")
+        refs = re.findall(r'"([^"]+)"', body) or \
+            [w for w in re.findall(r"[A-Za-z_]{3,}", body) if w.lower() != r.lower()][:8]
+        L.append(f"  {r} -> {refs}")
+    L += ["", "## Command-elicitation probes (does the model emit a literal command?)"]
+    found = []
+    for a in seeds:
+        meaning = RECON_LEXICON.get(a.lower().replace("_", ""))
+        L.append(f"### {a}" + (f"   (attributed: {meaning})" if meaning else ""))
+        hit = None
+        for tmpl in _CMD_PROMPTS:
+            p = tmpl.format(a=a)
+            resp = _ollama_generate(name, p, n=48).strip().replace("\n", " ")
+            L.append(f"    {p!r:30} -> {resp[:84]}")
+            if _LITERAL_CMD.search(resp):
+                hit = hit or resp
+        L.append("    [verdict] " + (f"LITERAL-COMMAND-CANDIDATE: {hit}" if hit
+                                      else "alias-only — no literal command emitted") + "\n")
+        if hit:
+            found.append((a, hit))
+    L.append("## Finding")
+    if found:
+        L.append(f"The model emitted {len(found)} literal-command candidate(s):")
+        L += [f"  - {a}: {h}" for a, h in found]
+    else:
+        L += ["The model did NOT emit literal OS command strings — it encodes action **aliases** and",
+              "their **composition structure** only (alias→alias rules). The grammar leads to real",
+              "commands, but the alias→command mapping lives in the whitebox training/client files,",
+              "not in the model. Recovering the literal strings is the Phase-2 whitebox step; the",
+              "analyst-attributed meanings above name the *intent* of each alias."]
+    return "\n".join(L) + "\n", found
+
+
 def run_dynamic(name, case, k, rules=None, oracle=None):
     if rules:
         seeds, src = rules, "analyst-supplied"
@@ -181,7 +234,11 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
         bnf.append("")
     with open(os.path.join(case, "recovered_grammar.bnf"), "w") as f:
         f.write("\n".join(bnf) + "\n")
-    return seeds, rule_body, score
+
+    cr_text, cmd_found = _resolve_commands(name, seeds, rule_body)
+    with open(os.path.join(case, "command_resolution.md"), "w") as f:
+        f.write(cr_text)
+    return seeds, rule_body, score, cmd_found
 
 
 def cmd_dynamic(args):
@@ -202,7 +259,7 @@ def cmd_analyze(args):
     gguf = artifact.stage(case)
     ana, digest = run_static(args.ollama, gguf, artifact, case)
     content = json.load(open(os.path.join(case, "extracted_content.json")))
-    seeds, rule_body, score = run_dynamic(args.ollama, case, args.k, args.rules, args.oracle)
+    seeds, rule_body, score, cmd_found = run_dynamic(args.ollama, case, args.k, args.rules, args.oracle)
 
     case_md = [
         f"# Forensic case — `{args.ollama}`",
@@ -214,13 +271,16 @@ def cmd_analyze(args):
         f"- model-derived symbols: {content['discovered_symbols'][:16]}",
         f"- dynamic seeds probed: {seeds}",
         f"- rules reconstructed: {sum(1 for b in rule_body.values() if b)}/{len(rule_body)}",
+        f"- literal commands emitted by model: {len(cmd_found)}"
+        + ("" if cmd_found else "  (alias-only — command strings are whitebox Phase-2)"),
         "",
         "## Evidence files",
         "- `" + os.path.basename(gguf) + "` — staged blob (chain-of-custody)",
-        "- `static_report.md` — human-readable static analysis",
+        "- `static_report.md` — human-readable static analysis (+ token content inventory)",
         "- `extracted_content.json` — full machine-readable extraction",
         "- `dynamic_report.md` — live probe transcript",
         "- `recovered_grammar.bnf` — grammar reconstructed from the model",
+        "- `command_resolution.md` — composition graph + command-elicitation probes + finding",
     ]
     if score:
         case_md += ["", "## Self-test", "```", score, "```"]
