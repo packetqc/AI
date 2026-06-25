@@ -129,10 +129,14 @@ _GENERIC_VERBS = {
 # L1 — structured literal signatures (syntax, not single English words)
 _DIRECT_SIGNATURES = {
     "reverse_shell": r"/dev/tcp/|bash\s+-i\s*>&|nc\s+-e|ncat\s+-e|mkfifo\b.*\bnc\b",
-    "code_exec":     r"os\.system|subprocess\.|__import__\(|eval\(|exec\(|powershell\s+-enc|base64\.b64decode|/bin/sh\b|/bin/bash\b",
-    "c2_endpoint":   r"https?://[a-z0-9.\-]+\.[a-z]{2,}|\b[a-z2-7]{16,}\.onion\b",
+    "code_exec":     r"os\.system|subprocess\.|__import__\(|powershell\s+-enc|base64\.b64decode",
     "download_exec": r"\b(curl|wget|certutil|Invoke-WebRequest)\b\s+\S*https?://",
 }
+# benign provenance domains — a URL to these is NOT a C2 indicator
+_BENIGN_DOMAINS = ("huggingface.co", "hf.co", "github.com", "githubusercontent.com",
+                   "ollama.com", "ollama.ai", "apache.org", "python.org", "pytorch.org",
+                   "googleapis.com", "schema.org", "w3.org", "json-schema.org",
+                   "modelscope.cn", "qwenlm.github.io", "alibaba", "arxiv.org")
 
 
 def classify_model_type(md):
@@ -158,6 +162,19 @@ def threat_scan(md, model_type, decoded_tokens, syms, template=None):
         m = re.search(pat, region, re.I)
         if m:
             findings.append(("L1-DIRECT", "CRITICAL", name, m.group(0)[:60]))
+    # network endpoints — allowlist benign provenance (huggingface.co etc.), flag only
+    # genuinely suspicious endpoints (.onion / raw IP / non-allowlisted host)
+    onions = sorted(set(re.findall(r"\b[a-z2-7]{16,}\.onion\b", region, re.I)))
+    ips = sorted({ip for ip in re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", region)
+                  if not ip.startswith(("0.", "127.", "255.", "1.5", "2.0"))})
+    hosts = re.findall(r"https?://([a-z0-9.\-]+\.[a-z]{2,})", region, re.I)
+    sus_hosts = sorted({h for h in hosts if not any(b in h.lower() for b in _BENIGN_DOMAINS)})
+    if onions:
+        findings.append(("L1-DIRECT", "CRITICAL", "c2_onion", str(onions[:3])))
+    if ips:
+        findings.append(("L1-DIRECT", "HIGH", "ip_literal", str(ips[:5])))
+    if sus_hosts:
+        findings.append(("L1-DIRECT", "MEDIUM", "external_url", str(sus_hosts[:5])))
 
     if model_type == "generative" and len(decoded_tokens) < 4000 and syms:
         verbhits = [s for s in syms if any(v in s.lower() for v in _GENERIC_VERBS)]
@@ -167,6 +184,18 @@ def threat_scan(md, model_type, decoded_tokens, syms, template=None):
                              f"{len(verbhits)}/{len(syms)} symbols are imperative action aliases "
                              f"({verbhits[:6]}) — a command grammar hides executable actions behind "
                              "benign tokens; literal commands resolve in the client (evades L1)"))
+
+    # L3 — execution-directed template (tool/function calling): the real risk surface
+    # in public instruct/coder models (excessive agency / insecure output handling)
+    _TPL_EXEC = ["tool_call", "tool_calls", "<tool", "function_call", "code_interpreter",
+                 "<|python_tag|>", "functions", "\"tools\""]
+    low = region.lower()
+    thits = sorted({t for t in _TPL_EXEC if t in low})
+    if thits:
+        findings.append(("L3-AGENCY", "MEDIUM", "tool-calling-template",
+                         f"chat template routes model output to client execution ({thits}) — "
+                         "excessive-agency / insecure-output-handling surface: a client that "
+                         "auto-runs tool/function calls is an RCE path"))
     return findings
 
 
@@ -177,6 +206,9 @@ def threat_verdict(findings):
     if any(f[0] == "L2-OBFUSCATION" for f in findings):
         return ("OBFUSCATED-EXEC — hidden alias/action-grammar drives command execution via a "
                 "client (no literal commands in the model — evades string scanning)")
+    if any(f[0] == "L3-AGENCY" for f in findings):
+        return ("EXECUTION-SURFACE — tool/function-calling template (excessive agency): benign by "
+                "design but an RCE path with a naive client that auto-runs tool calls")
     return "CLEAN — no literal executable/C2 content and no hidden action-grammar"
 
 
