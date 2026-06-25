@@ -1,438 +1,193 @@
 #!/usr/bin/env python3
 """
-model_security_re.py — Blackbox security reverse-engineering of a loadable model.
+model_security_re.py — Model Security Reverse-Decoder CLI (host-only).
 
-Two tracks (host-only, blackbox):
-  static   parse the Ollama-downloaded GGUF file WITHOUT running it
-           (format-safety triage + content extraction + exec-capability sweep)
-  dynamic  query the model live via Ollama (behavioral probing + grammar
-           reconstruction from outputs — output is evidence, never executed)
-  analyze  run BOTH into one forensic case folder + write CASE.md
+Produces a 3-section analyst report from the `model_security/` package:
+  1 Reconstitution (blackbox)  2 Integrity (vs approved business models)  3 Security risks
 
-Trust boundary: uses ONLY the model artifact + live query access. Never the
-client/app source, the training files, or the HF source.
-
-All evidence + extractions are written to a dated forensic case folder:
-  forensics/<YYYY-MM-DD>/<model>/
-    <model>.gguf            staged blob (chain-of-custody)
-    static_report.md        human-readable static analysis
-    extracted_content.json  machine-readable extraction (metadata/vocab/merges/tensors/sweep)
-    dynamic_report.md        live probe transcript
-    recovered_grammar.bnf    best-effort grammar reconstructed from the model
-    CASE.md                 case summary + file index (analyze)
+Analysis MODE is managed & gated: default STATIC (artifact-only, never loads the model);
+`--dynamic` is permitted ONLY for generative + static-safe models (encoder/embedding and
+unsafe artifacts are refused, with the reason recorded).
 
 Usage:
-  python3 model_security_re.py static  --ollama <name>  [--out forensics]
-  python3 model_security_re.py static  --gguf <path>    [--out forensics]
-  python3 model_security_re.py dynamic --ollama <name>  [--k N] [--oracle FILE]
-  python3 model_security_re.py analyze --ollama <name>  [--k N] [--oracle FILE]
+  model_security_re.py analyze     --ollama <name> [--dynamic] [--registry approved_models.json | --assets .]
+  model_security_re.py reconstruct --ollama <name> [--dynamic]
+  model_security_re.py threat      --ollama <name>          (or --gguf <path>)
+  model_security_re.py integrity   --ollama <name> [--dynamic] (--registry ... | --assets .)
 """
-import argparse, datetime, json, os, re, sys, urllib.request
+import argparse, datetime, json, os, re, sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "classes"))
-from class_model_security import (  # noqa: E402
-    OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
-    sha256_file, render_static_report, discover_symbols, token_inventory,
-    RECON_LEXICON, binary_forensics, binary_forensics_verdict,
-    render_tokens_decoded, decode_tokens,
-)
-
-DEF_YAR = os.path.join(os.path.dirname(__file__), "model_security_rules", "recon_c2.yar")
-
-# heuristic: does a model response contain a literal OS-command string?
-_LITERAL_CMD = re.compile(
-    r"\b(nmap|ss|ip|arp|ping|curl|wget|uname|netstat|ps|nc|ssh|dig|host|masscan)\b[ \-]"
-    r"|[|;>&`$]"                      # shell metacharacters
-    r"|(?:^|\s)-[A-Za-z]{1,3}\b"      # flags  -sV -O -p
-    r"|/(?:usr|bin|etc|sbin|proc)/",  # paths
-    re.I)
-_CMD_PROMPTS = ("{a} runs the command:", "execute {a}:", "the command for {a} is", "{a} command:")
+sys.path.insert(0, os.path.dirname(__file__))
+from model_security import acquire, reconstruct, integrity, threat, report  # noqa: E402
 
 DEF_OUT = "forensics"
+DEF_YAR = os.path.join(os.path.dirname(__file__), "model_security_rules", "recon_c2.yar")
 
 
-# ---------------------------------------------------------------------------
-# forensic case folder
-# ---------------------------------------------------------------------------
 def case_dir(out_root, model_name):
-    """forensics/<UTC-date>/<sanitized-model>/ — created if missing."""
     day = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
-    safe = re.sub(r"[^\w.-]", "_", model_name)
-    d = os.path.join(out_root, day, safe)
+    d = os.path.join(out_root, day, re.sub(r"[^\w.-]", "_", model_name))
     os.makedirs(d, exist_ok=True)
     return d
 
 
-def _content_json(name, gguf, sha, artifact, ana):
-    tok = ana.tokenizer()
-    md = ana.metadata()
-    det = ExecCapabilityDetector()
-    syms = discover_symbols(tok["decoded"], top=24)
-    high, low_counts, enc = det.scan_vocab(tok["decoded"])
-    template = det.scan_template(md, artifact.template if artifact else None)
-    symfind = det.scan_symbols(syms)
-    cats, _ = decode_tokens(tok["tokens"], tok["decoded"], tok["types"])
-    return {
-        "name": name, "file": os.path.basename(gguf), "size_bytes": ana.size, "sha256": sha,
-        "architecture": md.get("general.architecture"),
-        "model_class": det.model_class(tok["n"]), "vocab_size": tok["n"],
-        "ollama_template": (artifact.template if artifact else None),
-        "metadata": {k: str(v) for k, v in md.items()},
-        "special_tokens": tok["specials"],
-        "digit_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")}),
-        "operator_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+", "-", "*", "/", "(", ")", "=", "."]}),
-        "discovered_symbols": syms,
-        "token_inventory": token_inventory(tok["decoded"], syms),
-        "token_decode_categories": {k: len(v) for k, v in cats.items()},
-        "tokens": tok["decoded"],
-        "token_types": tok["types"],
-        "merges": tok["merges"],
-        "tensors": ana.tensors(),
-        "exec_sweep": {
-            "high": [f.__dict__ for f in high],
-            "low_word_counts": dict(low_counts),
-            "encoded": [f.__dict__ for f in enc],
-            "template_pattern_C": (template.__dict__ if template else None),
-            "action_grammar_pattern_D": (symfind.__dict__ if symfind else None),
-            "verdict": det.verdict(tok["n"], high, low_counts, template, enc, symfind),
-        },
-    }
-
-
-# ---------------------------------------------------------------------------
-# static
-# ---------------------------------------------------------------------------
-def render_binary_forensics(name, bf):
-    L = [f"# Binary forensics — `{name}`",
-         "**Method:** raw-blob `strings` + `binwalk` + YARA — no GGUF parse, no model load.",
-         f"- YARA rules: `{bf.get('yara_rules')}`", ""]
-    s = bf["strings"]
-    L.append(f"## strings ({s['total']:,} total)")
-    L.append(f"- network endpoints — URLs: {s['urls'] or '—'} · IPs: {s['ips'] or '—'} · .onion: {s['onion'] or '—'}")
-    L.append(f"- shell/exec strings: {s['shell'] or '—'}")
-    L.append(f"- recon-related strings ({len(s['recon'])}): {s['recon'][:50]}")
-    L.append("\n## binwalk signatures")
-    L += ([f"- {row}" for row in bf["binwalk"][:30]] or
-          ["- none (no embedded/compressed signatures detected)"])
-    L.append("\n## YARA matches (engineer-editable rules)")
-    if bf.get("yara_error"):
-        L.append(f"- (yara error: {bf['yara_error']})")
-    elif bf["yara"]:
-        for y in bf["yara"]:
-            L.append(f"- **[{y['severity']}]** `{y['rule']}` — {y['description']}  ({y['match_count']} hits)")
-    else:
-        L.append("- no rule matched")
-    L.append(f"\n**VERDICT:** {binary_forensics_verdict(bf)}")
-    return "\n".join(L) + "\n"
-
-
-def run_static(name, gguf, artifact, case, yar=None):
-    digest = sha256_file(gguf)
-    ana = GgufStaticAnalyzer(gguf)
-    with open(os.path.join(case, "static_report.md"), "w") as f:
-        f.write(render_static_report(name, gguf, digest, artifact, ana))
-    with open(os.path.join(case, "tokens_decoded.md"), "w") as f:
-        f.write(render_tokens_decoded(name, ana.tokenizer()))
-    bf = binary_forensics(gguf, yar)
-    with open(os.path.join(case, "binary_forensics.md"), "w") as f:
-        f.write(render_binary_forensics(name, bf))
-    content = _content_json(name, gguf, digest, artifact, ana)
-    content["binary_forensics"] = bf
-    with open(os.path.join(case, "extracted_content.json"), "w") as f:
-        json.dump(content, f, indent=2, default=str)
-    return ana, digest, bf
-
-
-def cmd_static(args):
-    if args.ollama:
-        artifact = OllamaArtifact.resolve(args.ollama)
-        if not artifact.blob_path or not os.path.exists(artifact.blob_path):
-            sys.exit(f"could not resolve blob for '{args.ollama}' via `ollama show`")
-        case = case_dir(args.out, args.ollama)
-        gguf = artifact.stage(case)
-        name = args.ollama
-    else:
-        artifact, gguf = None, args.gguf
-        case = case_dir(args.out, os.path.splitext(os.path.basename(gguf))[0])
-        name = os.path.basename(gguf)
-    run_static(name, gguf, artifact, case, args.yar)
-    print(open(os.path.join(case, "static_report.md")).read())
-    print(open(os.path.join(case, "binary_forensics.md")).read())
-    _list_case(case)
-
-
-# ---------------------------------------------------------------------------
-# dynamic
-# ---------------------------------------------------------------------------
-def _ollama_generate(name, prompt, n=48):
-    body = json.dumps({"model": name, "prompt": prompt, "stream": False,
-                       "options": {"temperature": 0, "num_predict": n}}).encode()
-    req = urllib.request.Request("http://localhost:11434/api/generate", data=body,
-                                 headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r).get("response", "")
-
-
-def _score_against_oracle(recovered, oracle_path):
-    truth = set(re.findall(r"<([A-Za-z_]\w*)>\s*::=", open(oracle_path).read()))
-    hit = sorted(truth & set(recovered))
-    return (f"[SELF-TEST vs {os.path.basename(oracle_path)} — validation only, NOT a method input]\n"
-            f"  oracle nonterminals : {sorted(truth)}\n"
-            f"  recovered & matched : {hit}  ({len(hit)}/{len(truth)})")
-
-
-def _resolve_commands(name, seeds, rule_body):
-    """Try to DISCOVER the real string commands the grammar's aliases lead to.
-    Writes the composition graph + per-alias command-elicitation probes + a finding.
-    Output is evidence — nothing the model emits is executed."""
-    L = ["# Command / content resolution — " + name,
-         "# Goal: discover the real string COMMANDS the grammar's action-aliases lead to.",
-         "# Method: blackbox command-elicitation probes per alias (output is evidence, never run).",
-         "",
-         "## Composition graph (alias → expansion, model-derived)"]
-    for r in seeds:
-        body = rule_body.get(r, "")
-        refs = re.findall(r'"([^"]+)"', body) or \
-            [w for w in re.findall(r"[A-Za-z_]{3,}", body) if w.lower() != r.lower()][:8]
-        L.append(f"  {r} -> {refs}")
-    L += ["", "## Command-elicitation probes (does the model emit a literal command?)"]
-    found = []
-    for a in seeds:
-        meaning = RECON_LEXICON.get(a.lower().replace("_", ""))
-        L.append(f"### {a}" + (f"   (attributed: {meaning})" if meaning else ""))
-        hit = None
-        for tmpl in _CMD_PROMPTS:
-            p = tmpl.format(a=a)
-            resp = _ollama_generate(name, p, n=48).strip().replace("\n", " ")
-            L.append(f"    {p!r:30} -> {resp[:84]}")
-            if _LITERAL_CMD.search(resp):
-                hit = hit or resp
-        L.append("    [verdict] " + (f"LITERAL-COMMAND-CANDIDATE: {hit}" if hit
-                                      else "alias-only — no literal command emitted") + "\n")
-        if hit:
-            found.append((a, hit))
-    L.append("## Finding")
-    if found:
-        L.append(f"The model emitted {len(found)} literal-command candidate(s):")
-        L += [f"  - {a}: {h}" for a, h in found]
-    else:
-        L += ["The model did NOT emit literal OS command strings — it encodes action **aliases** and",
-              "their **composition structure** only (alias→alias rules). The grammar leads to real",
-              "commands, but the alias→command mapping lives in the whitebox training/client files,",
-              "not in the model. Recovering the literal strings is the Phase-2 whitebox step; the",
-              "analyst-attributed meanings above name the *intent* of each alias."]
-    return "\n".join(L) + "\n", found
-
-
-def _decode_sym(s):
-    """Decoded meaning of an alias/token (analyst-attributed, general knowledge)."""
-    return RECON_LEXICON.get(re.sub(r"[^a-z0-9]", "", s.lower()))
-
-
-def _decode_body(body):
-    """Substitute every LEAF token in a rule body with its decoded meaning, so the
-    reconstituted rule reads as the actual procedure instead of code aliases.
-    Unknown tokens are left as-is; nonterminals <x> are preserved."""
-    def repl(m):
-        raw = m.group(0)
-        meaning = _decode_sym(raw.strip('"<> '))
-        return f'⟦{meaning}⟧' if meaning else raw
-    # match quoted tokens, <nonterminals>, and bare alias words
-    return re.sub(r'"[^"]+"|<[A-Za-z_]\w*>|[A-Za-z_]{3,}', repl, body)
-
-
-def _decoded_grammar_lines(seeds, rule_body):
-    """Recovered grammar rules with every LEAF decoded inline (⟦meaning⟧ replaces the
-    alias). The raw alias rule is kept as a `# raw:` line for traceability."""
-    L = []
-    for r in seeds:
-        body = rule_body.get(r, "").strip()
-        decoded = _decode_body(body)
-        rm = _decode_sym(r)
-        head = f"<{r}>" + (f"  ⟦{rm}⟧" if rm else "")
-        L.append(f"  {head} ::= {decoded}")
-        if decoded != body:
-            L.append(f"      # raw: {body}")
-        L.append("")
-    return L
-
-
-def _render_grammar_decoded(name, seeds, rule_body):
-    """Standalone grammar_decoded.md file."""
-    L = [f"# Decoded grammar — `{name}`",
-         "# recovered grammar (model-derived) with every alias/token decoded inline.",
-         "# `;` lines = decoded meaning (analyst-attributed general knowledge).", ""]
-    L += _decoded_grammar_lines(seeds, rule_body)
-    L += ["# Note: literal OS command strings are not in the model (see command_resolution.md);",
-          "# the decoded meanings name each action's INTENT, recovered blackbox."]
-    return "\n".join(L) + "\n"
-
-
-def run_dynamic(name, case, k, rules=None, oracle=None):
-    if rules:
-        seeds, src = rules, "analyst-supplied"
-    else:
-        art = OllamaArtifact.resolve(name)
+def _acquire(args):
+    """Resolve artifact, stage to a case folder, parse + triage + classify + gate mode."""
+    if getattr(args, "ollama", None):
+        art = acquire.OllamaArtifact.resolve(args.ollama)
         if not art.blob_path or not os.path.exists(art.blob_path):
-            sys.exit(f"cannot resolve blob for '{name}' to discover symbols")
-        decoded = GgufStaticAnalyzer(art.blob_path).tokenizer()["decoded"]
-        seeds, src = discover_symbols(decoded, top=k), "model-derived (vocab merges)"
-
-    transcript, recovered, rule_body, rule_alts = [], {}, {}, {}
-    _stop = {"defined", "is", "as", "can", "be", "or", "the", "routes", "an", "a"}
-
-    def _informative(resp):
-        # rank by distinct meaningful tokens (len>=3, not a stopword) — this beats
-        # the junk '", ", defined,' responses and prefers real symbol/command bodies
-        toks = {w for w in re.findall(r"[A-Za-z_]{3,}", resp.lower()) if w not in _stop}
-        return (len(toks), len(resp))
-
-    for r in seeds:
-        probes = []
-        for p in (f"<{r}> ::=", f"A {r} is", r):
-            resp = _ollama_generate(name, p).strip().replace("\n", " ")
-            transcript.append(f"  {p!r:26} -> {resp[:120]}")
-            probes.append(resp)
-            recovered.setdefault(r, []).append(resp)
-        transcript.append("")
-        rule_body[r] = max(probes, key=_informative, default="")
-        rule_alts[r] = probes
-
-    # ── report order: RECONSTITUTION first, then analysis (transcript), then risks ──
-    recon_rules = sum(1 for b in rule_body.values() if b)
-    lines = [f"# Dynamic analysis — {name}  (live blackbox probing)",
-             f"# reconstruction seeds [{src}]: {seeds}", "",
-             "# 1 · Reconstitution",
-             "## Reconstructed grammar (decoded — leaves shown as their decoded meaning)",
-             f"_{recon_rules}/{len(seeds)} rules recovered; structure model-derived, leaves shown "
-             "⟦decoded⟧, raw alias on `# raw:`:_", "```"]
-    lines += _decoded_grammar_lines(seeds, rule_body)
-    lines += ["```",
-              "_Literal OS command strings are not in the model (see command_resolution.md) — "
-              "the decoded meanings name each action's intent._",
-              "", "# 2 · Analysis & discoveries",
-              "## Probe transcript (raw — model output is evidence, never executed)"]
-    lines += transcript
-    score = _score_against_oracle(recovered, oracle) if oracle else None
-    if score:
-        lines += ["# 3 · Self-test", "```", score, "```"]
-    with open(os.path.join(case, "dynamic_report.md"), "w") as f:
-        f.write("\n".join(lines) + "\n")
-
-    bnf = ["# Recovered grammar (blackbox, best-effort) — seeds are MODEL-derived, not host-sourced",
-           f"# model: {name}   reconstructed: {datetime.datetime.now(datetime.timezone.utc).isoformat()}",
-           "# primary body = most-informative probe response; ## alts = the other probes", ""]
-    for r, b in rule_body.items():
-        bnf.append(f"<{r}> ::= {b}")
-        for alt in rule_alts[r]:
-            if alt != b:
-                bnf.append(f"    ## alt: {alt[:100]}")
-        bnf.append("")
-    with open(os.path.join(case, "recovered_grammar.bnf"), "w") as f:
-        f.write("\n".join(bnf) + "\n")
-
-    with open(os.path.join(case, "grammar_decoded.md"), "w") as f:
-        f.write(_render_grammar_decoded(name, seeds, rule_body))
-
-    cr_text, cmd_found = _resolve_commands(name, seeds, rule_body)
-    with open(os.path.join(case, "command_resolution.md"), "w") as f:
-        f.write(cr_text)
-    return seeds, rule_body, score, cmd_found
+            sys.exit(f"could not resolve blob for '{args.ollama}' via `ollama show`")
+        name = args.ollama
+        case = case_dir(args.out, name)
+        # large blobs: reference in place (custody via sha256) — don't copy hundreds of MB
+        gguf = art.blob_path if os.path.getsize(art.blob_path) > 64 * 1024 * 1024 else art.stage(case)
+    else:
+        art, name = None, os.path.basename(args.gguf)
+        case = case_dir(args.out, os.path.splitext(name)[0])
+        gguf = args.gguf
+    # Ollama blobs are named by their sha256 — use it (free) instead of re-hashing GBs
+    bm = re.search(r"sha256-([0-9a-f]{64})", art.blob_path) if art else None
+    sha = bm.group(1) if bm else acquire.sha256_file(gguf)
+    ana = acquire.GgufStaticAnalyzer(gguf)
+    md = ana.metadata()
+    mtype = acquire.classify_model_type(md)
+    safe = acquire.static_safety_ok(ana.triage())
+    want_dyn = bool(getattr(args, "dynamic", False)) and art is not None  # dynamic needs a live model
+    mode, reason = acquire.resolve_mode(mtype, safe, want_dyn)
+    if getattr(args, "dynamic", False) and art is None:
+        reason = "dynamic REFUSED — --gguf has no live Ollama endpoint to probe"
+    return {"name": name, "case": case, "gguf": gguf, "sha": sha, "art": art,
+            "ana": ana, "md": md, "mtype": mtype, "safe": safe, "mode": mode, "reason": reason}
 
 
-def cmd_dynamic(args):
-    case = case_dir(args.out, args.ollama)
-    run_dynamic(args.ollama, case, args.k, args.rules, args.oracle)
-    print(open(os.path.join(case, "dynamic_report.md")).read())
-    _list_case(case)
+def _section1(ctx):
+    """Reconstitution: static tier always; dynamic tier only if mode permits."""
+    ana = ctx["ana"]
+    syms = reconstruct.discover_symbols(ana.tokenizer()["decoded"], top=40)
+    dyn = None
+    if ctx["mode"] == "static+dynamic":
+        dyn = reconstruct.reconstruct_dynamic(ctx["name"], syms[:12])
+    md = reconstruct.render_reconstitution(ctx["name"], ana, dyn, ctx["reason"])
+    # integrity matches on the CLEAN static-discovered symbols (vocab-derived) plus the
+    # underscore alias forms the dynamic probes leaked — but NOT free-text probe noise,
+    # which would wreck precision and falsely flag a genuine model as TAMPERED.
+    recon_syms = set(syms)
+    if dyn:
+        _noise = {"defined", "routes", "rules", "color", "green", "red", "good", "bad", "always"}
+        for body in dyn["rule_body"].values():
+            for w in re.findall(r"[A-Za-z][A-Za-z_]{3,}", body):
+                if "_" in w and w.lower() not in _noise:   # keep alias forms (sys_hostname), drop prose
+                    recon_syms.add(w)
+    return md, sorted(recon_syms), dyn
 
 
-# ---------------------------------------------------------------------------
-# analyze — both tracks into one case folder + CASE.md
-# ---------------------------------------------------------------------------
+def _section3(ctx, integral=False):
+    ana = ctx["ana"]
+    # cheap vocab-size check first — avoid decoding 150k tokens on a general model
+    if ana.vocab_size() < 4000:
+        decoded = ana.tokenizer()["decoded"]
+        syms = reconstruct.discover_symbols(decoded, top=24)
+    else:
+        decoded, syms = [], []
+    f = threat.threat_scan(ctx["md"], ctx["mtype"], decoded, syms,
+                           ctx["art"].template if ctx["art"] else None)
+    # deep binary forensics is for the grammar-model scope; skip the heavy blob scan
+    # on large open models (best-effort) — the metadata/template threat scan still ran
+    bf = threat.binary_forensics(ctx["gguf"], DEF_YAR) if os.path.getsize(ctx["gguf"]) <= 64 * 1024 * 1024 else None
+    v = threat.threat_verdict(f)
+    md = threat.render_threat(ctx["name"], f, v, bf)
+    return md, threat.threat_incident(ctx["name"], f, v, integral)
+
+
+def _section2(ctx, recon_syms, registry, assets):
+    if not registry and not assets:
+        return None, None, False
+    approved = integrity.load_registry(registry) if registry else integrity.load_assets_dir(assets)
+    result = integrity.check_integrity(recon_syms, approved, gguf_sha256=ctx["sha"])
+    resolved = integrity.resolve_commands(result.get("approved")) if result["verdict"] == "INTEGRAL" else {}
+    md = integrity.render_integrity(ctx["name"], result, resolved)
+    return md, integrity.integrity_incident(ctx["name"], result), result["verdict"] == "INTEGRAL"
+
+
 def cmd_analyze(args):
-    artifact = OllamaArtifact.resolve(args.ollama)
-    if not artifact.blob_path or not os.path.exists(artifact.blob_path):
-        sys.exit(f"could not resolve blob for '{args.ollama}' via `ollama show`")
-    case = case_dir(args.out, args.ollama)
-    gguf = artifact.stage(case)
-    ana, digest, bf = run_static(args.ollama, gguf, artifact, case, args.yar)
-    content = json.load(open(os.path.join(case, "extracted_content.json")))
-    seeds, rule_body, score, cmd_found = run_dynamic(args.ollama, case, args.k, args.rules, args.oracle)
-
-    case_md = [
-        f"# Forensic case — `{args.ollama}`",
-        f"- date (UTC): {datetime.datetime.now(datetime.timezone.utc).isoformat()}",
-        f"- artifact: `{os.path.basename(gguf)}`  ({ana.size:,} bytes)",
-        f"- sha256: `{digest}`",
-        f"- model-class: **{content['model_class']}**  ·  vocab {content['vocab_size']:,}",
-        f"- static verdict: **{content['exec_sweep']['verdict']}**",
-        f"- binary-forensics verdict: **{binary_forensics_verdict(bf)}**",
-        f"- model-derived symbols: {content['discovered_symbols'][:16]}",
-        f"- dynamic seeds probed: {seeds}",
-        f"- rules reconstructed: {sum(1 for b in rule_body.values() if b)}/{len(rule_body)}",
-        f"- literal commands emitted by model: {len(cmd_found)}"
-        + ("" if cmd_found else "  (alias-only — command strings are whitebox Phase-2)"),
-        "",
-        "## Evidence files",
-        "- `" + os.path.basename(gguf) + "` — staged blob (chain-of-custody)",
-        "- `static_report.md` — human-readable static analysis (+ token content inventory)",
-        "- `tokens_decoded.md` — every token decoded (raw → human) + categorised",
-        "- `binary_forensics.md` — raw-blob strings + binwalk + YARA matches",
-        "- `extracted_content.json` — full machine-readable extraction",
-        "- `dynamic_report.md` — live probe transcript",
-        "- `recovered_grammar.bnf` — grammar reconstructed from the model",
-        "- `grammar_decoded.md` — recovered grammar with every alias/token decoded inline",
-        "- `command_resolution.md` — composition graph + command-elicitation probes + finding",
-    ]
-    if score:
-        case_md += ["", "## Self-test", "```", score, "```"]
-    with open(os.path.join(case, "CASE.md"), "w") as f:
-        f.write("\n".join(case_md) + "\n")
-    print("\n".join(case_md))
-    _list_case(case)
+    ctx = _acquire(args)
+    s1, recon_syms, _ = _section1(ctx)
+    s2, inc2, integral = _section2(ctx, recon_syms, args.registry, args.assets)
+    s3, inc3 = _section3(ctx, integral)
+    ident = report.identity_block(ctx["name"], ctx["gguf"], ctx["sha"], ctx["ana"],
+                                  ctx["mtype"], ctx["mode"], ctx["reason"])
+    master = report.assemble(ident, s1, s2, s3, [inc2, inc3])
+    open(os.path.join(ctx["case"], "report.md"), "w").write(master)
+    for fn, txt in (("section1_reconstitution.md", s1), ("section3_security_risks.md", s3)):
+        open(os.path.join(ctx["case"], fn), "w").write(txt)
+    if s2:
+        open(os.path.join(ctx["case"], "section2_integrity.md"), "w").write(s2)
+    incident_path = report.write_incidents(ctx["case"], [inc2, inc3])
+    print(master)
+    print(f"\n[case] {ctx['case']}")
+    if incident_path:
+        print(f"[INCIDENT] {incident_path}")
 
 
-def _list_case(case):
-    print(f"\n[forensic case folder] {case}")
-    for fn in sorted(os.listdir(case)):
-        sz = os.path.getsize(os.path.join(case, fn))
-        print(f"  - {fn}  ({sz:,} B)")
+def cmd_reconstruct(args):
+    ctx = _acquire(args)
+    s1, _, _ = _section1(ctx)
+    open(os.path.join(ctx["case"], "section1_reconstitution.md"), "w").write(s1)
+    print(report.identity_block(ctx["name"], ctx["gguf"], ctx["sha"], ctx["ana"],
+                                ctx["mtype"], ctx["mode"], ctx["reason"]) + s1)
+    print(f"[case] {ctx['case']}")
 
 
-# ---------------------------------------------------------------------------
+def cmd_threat(args):
+    ctx = _acquire(args)
+    s3, inc = _section3(ctx)
+    open(os.path.join(ctx["case"], "section3_security_risks.md"), "w").write(s3)
+    report.write_incidents(ctx["case"], [inc])
+    print(s3)
+    print(f"[case] {ctx['case']}")
+
+
+def cmd_integrity(args):
+    ctx = _acquire(args)
+    if not args.registry and not args.assets:
+        sys.exit("integrity needs --registry approved_models.json or --assets <dir>")
+    _, recon_syms, _ = _section1(ctx)
+    s2, inc, _ = _section2(ctx, recon_syms, args.registry, args.assets)
+    open(os.path.join(ctx["case"], "section2_integrity.md"), "w").write(s2)
+    report.write_incidents(ctx["case"], [inc])
+    print(s2)
+    print(f"[case] {ctx['case']}")
+
+
 def main():
-    ap = argparse.ArgumentParser(description="Blackbox model security RE (forensic file output)")
+    ap = argparse.ArgumentParser(description="Model Security Reverse-Decoder (3-section report)")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    s = sub.add_parser("static", help="artifact-only analysis (no model load)")
-    g = s.add_mutually_exclusive_group(required=True)
-    g.add_argument("--ollama", help="ollama model name (resolved via `ollama show`)")
-    g.add_argument("--gguf", help="direct path to a .gguf file")
-    s.add_argument("--out", default=DEF_OUT, help="forensic root (default: forensics/)")
-    s.add_argument("--yar", default=DEF_YAR, help="YARA rules file (engineer-editable)")
-    s.set_defaults(func=cmd_static)
+    def common(p, gguf=True, dyn=True, integ=False):
+        g = p.add_mutually_exclusive_group(required=True)
+        g.add_argument("--ollama", help="ollama model name")
+        if gguf:
+            g.add_argument("--gguf", help="direct .gguf path (static only)")
+        p.add_argument("--out", default=DEF_OUT)
+        if dyn:
+            p.add_argument("--dynamic", action="store_true",
+                           help="opt in to dynamic probing (gated: generative + static-safe only)")
+        if integ:
+            p.add_argument("--registry", help="approved_models.json (enterprise allowlist)")
+            p.add_argument("--assets", help="fallback dir scanned for grammars/ + training/")
 
-    d = sub.add_parser("dynamic", help="live behavioral probing (model-only seeds)")
-    d.add_argument("--ollama", required=True)
-    d.add_argument("--out", default=DEF_OUT)
-    d.add_argument("--rules", nargs="+", default=None,
-                   help="optional analyst seeds; default = discover from the model's vocab")
-    d.add_argument("--k", type=int, default=12, help="number of model-derived symbols to probe")
-    d.add_argument("--oracle", default=None,
-                   help="SELF-TEST ONLY: grammar file to score recall against (never a method input)")
-    d.set_defaults(func=cmd_dynamic)
-
-    a = sub.add_parser("analyze", help="static + dynamic into one forensic case folder")
-    a.add_argument("--ollama", required=True)
-    a.add_argument("--out", default=DEF_OUT)
-    a.add_argument("--rules", nargs="+", default=None)
-    a.add_argument("--k", type=int, default=12)
-    a.add_argument("--oracle", default=None)
-    a.add_argument("--yar", default=DEF_YAR, help="YARA rules file (engineer-editable)")
-    a.set_defaults(func=cmd_analyze)
+    a = sub.add_parser("analyze", help="all 3 sections → master report")
+    common(a, integ=True); a.set_defaults(func=cmd_analyze)
+    r = sub.add_parser("reconstruct", help="Section 1 only")
+    common(r); r.set_defaults(func=cmd_reconstruct)
+    t = sub.add_parser("threat", help="Section 3 only")
+    common(t, dyn=False); t.set_defaults(func=cmd_threat)
+    i = sub.add_parser("integrity", help="Section 2 (needs --registry/--assets)")
+    common(i, integ=True); i.set_defaults(func=cmd_integrity)
 
     args = ap.parse_args()
+    if not hasattr(args, "registry"):
+        args.registry = args.assets = None
     args.func(args)
 
 
