@@ -19,9 +19,9 @@
 #ifndef __USER_INIT_H__
 #define __USER_INIT_H__
 
-#include "network.h"
+#include "stai_network.h"
 
-#define STAI_NETWORK_WEIGHTS_TOTAL_SIZE_BYTES STAI_NETWORK_WEIGHTS_SIZE_BYTES
+#define STAI_NETWORK_WEIGHTS_TOTAL_SIZE_BYTES 488994
 
 // uncomment the line and change address to load the weights to a specific address
 // #define WEIGHTS_DEST_ADDRESS 0x0

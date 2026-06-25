@@ -94,6 +94,11 @@ public:
 
     int  interaction_count() const { return interaction_count_; }
 
+    /* Toggle the NPU oracle at runtime. null = pure-CPU playbook mode (minimal,
+     * instant — the embedded grammar is authoritative); non-null = also query
+     * the model per rule for the visible dialog. */
+    void set_query(QueryFn q, void* user) { query_fn_ = q; user_ = user; }
+
 private:
     /* ── tokenizers ── */
     int  tokenize_input(const char* s);                 /* → input_toks_[]   */

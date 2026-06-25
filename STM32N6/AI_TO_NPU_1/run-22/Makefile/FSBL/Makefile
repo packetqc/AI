@@ -90,6 +90,7 @@ C_SOURCES =  ../../FSBL/Core/Src/main.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/ll_aton/ecloader.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/Devices/STM32N6xx/npu_cache.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/Devices/STM32N6xx/mcu_cache.c \
+../../Appli/AI/App/network_atonbuf.xSPI2.c \
 ../../FSBL/Core/Src/llm_tokenizer.c \
 ../../FSBL/Core/Src/llm_fsbl.c \
 ../../FSBL/Core/Src/llm_test_fsbl.c
@@ -157,7 +158,7 @@ C_DEFS =  \
 -DWEIGHTS_SOURCE_ADDRESS=0x70000000 \
 -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 \
 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL \
--DLL_ATON_RT_MODE=LL_ATON_RT_POLLING \
+-DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC \
 -DLL_ATON_SW_FALLBACK
 
 
@@ -184,6 +185,7 @@ C_INCLUDES =  -I../../FSBL/Core/Inc \
 -I../../Appli/Core/Inc \
 -I../../Middlewares/ST/AI/Inc \
 -I/opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/ll_aton \
+-I/opt/DEV/ST/C/ST/STEdgeAI/4.0/scripts/epoch_controller/include \
 -I/opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/Devices/STM32N6xx \
 -I/opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Inc \
 -I/opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Validation/Inc

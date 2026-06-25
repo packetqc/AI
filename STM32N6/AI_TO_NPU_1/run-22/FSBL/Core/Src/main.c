@@ -166,10 +166,11 @@ int main(void)
   NPU_Config();
   RISAF_Config();
 
-  /* LLM inference on NPU — interactive grammar REPL over USART1 */
-  if (LLM_FSBL_Init() == 0) {
-    LLM_Repl_Run();   /* read expr → probe/parse/evaluate → query NPU per rule */
-  }
+  /* nocode grammar REPL over USART1 — the host solution on the N6.
+   * Runs on the CM55 CPU: the embedded grammar (playbook) is the authoritative
+   * oracle, so parse + evaluate are instant. The NPU model dialog is opt-in and
+   * lazily initialised inside the REPL via '/model on'. */
+  LLM_Repl_Run();
   while (1) {}  /* prevent BOOT_Application() — remove to restore normal boot */
 
   /* USER CODE END 2 */
@@ -622,6 +623,11 @@ static void MX_GPIO_Init(void)
 static void Enable_NPU_RAM_ForCore(void)
 {
     RAMCFG_HandleTypeDef hramcfg = {0};
+
+    /* AXISRAM1 (0x34000000) — holds the NPU weights (.npu_weights section,
+     * loaded via load-and-run). Boot ROM parks it; power it before use. */
+    __HAL_RCC_AXISRAM1_MEM_CLK_ENABLE();
+    hramcfg.Instance = RAMCFG_SRAM1_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
 
     __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
     __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();

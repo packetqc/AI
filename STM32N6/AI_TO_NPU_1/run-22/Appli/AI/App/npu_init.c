@@ -22,10 +22,7 @@
 #include "app_config.h"
 #include "npu_cache.h"  // Used in NPU_config
 
-/* USE_NPU_CACHE disabled: CACHEAXI uses CID≠1; RISAF8 (CACHEAXIRAM) locked by Boot ROM to CID=1 only.
- * With CACHEAXI enabled, every NOR flash read miss stalls forever when CACHEAXI tries to write to CACHEAXIRAM.
- * In passthrough mode, streaming engines access NOR flash directly via the AXI bus (no CACHEAXIRAM needed). */
-// #define USE_NPU_CACHE
+#define USE_NPU_CACHE
 
 #if defined(LL_ATON_PLATFORM)
 #include "ai_wrapper_ATON.h"    // Used to get NPU cache enable / counters info
@@ -115,11 +112,10 @@ void NPU_Config(void)
   __HAL_RCC_NPU_CLK_ENABLE();
   __HAL_RCC_NPU_FORCE_RESET();
   __HAL_RCC_NPU_RELEASE_RESET();
-  /* Enable Cache-AXI clock only — do NOT reset CACHEAXI.
-   * Boot ROM configures CACHEAXI with CID=1 so RISAF8 allows its CACHEAXIRAM fills.
-   * Resetting CACHEAXI (FORCE/RELEASE) clears that configuration; subsequent cache fills
-   * get RISAF8 SLVERR → NPU streaming engines stall forever waiting for NOR flash data. */
+  // Enable Cache-AXI
   __HAL_RCC_CACHEAXI_CLK_ENABLE();
+  __HAL_RCC_CACHEAXI_FORCE_RESET();
+  __HAL_RCC_CACHEAXI_RELEASE_RESET();
   
   // __HAL_RCC_CACHEAXI_CLK_SLEEP_DISABLE();
   // __HAL_RCC_NPU_CLK_SLEEP_DISABLE();
@@ -157,9 +153,15 @@ void RISAF_Config(void)
   Set_RISAF_Default(RISAF6_S);          /* SRAM3,4,5,6_AXI */
   Set_RISAF_Default(RISAF7_S);          /* FLEXMEM */
   
-  /* RISAF8_S (NPU_CACHE) and RISAF15_S (NPU_CACHE config) skipped:
-   * these RISAF instances cause a bus fault in FSBL-direct mode
-   * (Boot ROM locks them via RIFSC before handing off to FSBL). */
+#if defined(LL_ATON_PLATFORM)
+#ifdef USE_NPU_CACHE
+  /* RISAF8/15 (NPU_CACHE) DISABLED for FSBL-direct: boot ROM locks RISAF8 to
+   * CID=1; Set_RISAF_Default uses CID!=1 -> SLVERR -> NPU streaming engines stall
+   * forever. Weights live in AXISRAM1 (fast, uncached) so the cache is not needed. */
+  /* Set_RISAF_Default(RISAF8_S);          // NPU_CACHE (skip in FSBL-direct) */
+  /* Set_RISAF_Default(RISAF15_S);         // NPU_CACHE config (skip in FSBL-direct) */
+#endif  
+#endif
   
   // Set_RISAF_Default(RISAF9_S);       /* VENC */
   
