@@ -572,12 +572,11 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
     if inv["aliases"]:
         # STATIC reconstitution: the model-derived symbols, each decoded inline.
         L.append("\n## Decoded grammar symbols (static reconstruction)")
-        L.append("_model-derived symbols (from vocab/merges) with each decoded inline; "
-                 "`;` meanings analyst-attributed (general knowledge, NOT from training files):_")
+        L.append("_model-derived leaf symbols shown DECODED (⟦meaning⟧) instead of the raw alias; "
+                 "meanings analyst-attributed (general knowledge, NOT from training files):_")
         L.append("```")
         for a in inv["aliases"]:
-            L.append(f"  {a['alias']}")
-            L.append(f"      ; {a['alias']} = {a['meaning']}")
+            L.append(f"  ⟦{a['meaning']}⟧   ← {a['alias']}")
         L.append("```")
         L.append("_Structure (how symbols compose) needs live probing — see dynamic_report.md; "
                  "literal OS commands are not in the model (command_resolution.md)._")

@@ -229,26 +229,30 @@ def _decode_sym(s):
     return RECON_LEXICON.get(re.sub(r"[^a-z0-9]", "", s.lower()))
 
 
+def _decode_body(body):
+    """Substitute every LEAF token in a rule body with its decoded meaning, so the
+    reconstituted rule reads as the actual procedure instead of code aliases.
+    Unknown tokens are left as-is; nonterminals <x> are preserved."""
+    def repl(m):
+        raw = m.group(0)
+        meaning = _decode_sym(raw.strip('"<> '))
+        return f'⟦{meaning}⟧' if meaning else raw
+    # match quoted tokens, <nonterminals>, and bare alias words
+    return re.sub(r'"[^"]+"|<[A-Za-z_]\w*>|[A-Za-z_]{3,}', repl, body)
+
+
 def _decoded_grammar_lines(seeds, rule_body):
-    """The recovered grammar rules with each alias/token decoded inline (`;` meaning)."""
+    """Recovered grammar rules with every LEAF decoded inline (⟦meaning⟧ replaces the
+    alias). The raw alias rule is kept as a `# raw:` line for traceability."""
     L = []
     for r in seeds:
         body = rule_body.get(r, "").strip()
-        L.append(f"  <{r}> ::= {body}")
+        decoded = _decode_body(body)
         rm = _decode_sym(r)
-        if rm:
-            L.append(f"      ; {r} = {rm}")
-        refs = re.findall(r'"([^"]+)"', body) or re.findall(r"[A-Za-z_]{3,}", body)
-        rnorm = re.sub(r"[^a-z0-9]", "", r.lower())
-        seen = set()
-        for t in refs:
-            tnorm = re.sub(r"[^a-z0-9]", "", t.lower())
-            if tnorm == rnorm or tnorm in seen:   # skip self-reference + dupes
-                continue
-            seen.add(tnorm)
-            m = _decode_sym(t)
-            if m:
-                L.append(f"      ;   {t} = {m}")
+        head = f"<{r}>" + (f"  ⟦{rm}⟧" if rm else "")
+        L.append(f"  {head} ::= {decoded}")
+        if decoded != body:
+            L.append(f"      # raw: {body}")
         L.append("")
     return L
 
