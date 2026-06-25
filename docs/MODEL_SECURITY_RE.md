@@ -196,6 +196,41 @@ files (`.bin`/`.pt`) in the later whitebox phase — not to the blackbox GGUF.
 
 ---
 
+## Forensic tooling landscape (community libraries & tools)
+
+Curated for *extracting and forensically analysing a ready-to-load model*, with honest positioning.
+
+**Core extraction (artifact) — directly useful:**
+| Tool | Role | Status here |
+|---|---|---|
+| **`gguf-py` `GGUFReader`** | structured GGUF parse (metadata/vocab/tensors), memory-safe | ✅ in use |
+| **`strings`** | pull embedded ASCII/UTF strings straight from the blob — complements the structured parse (recovers the recon vocabulary directly) | ✅ available, to wire |
+| **`binwalk`** | entropy scan + carving — flag encrypted/compressed/appended regions (hidden payloads) | ✅ available, to wire |
+| **YARA** | signature rules over the blob — command / C2 / payload patterns | ✅ available (py), to wire |
+| **FLOSS** (Mandiant) | de-obfuscate hidden/stacked strings — for evasion & crypted payloads | ☐ recommend |
+| **capa** (Mandiant) | capability detection (defense-evasion, networking) | ☐ recommend |
+
+**Whitebox / behavioural (later phases):** ModelScan · picklescan · fickling (pickle in HF source);
+garak (behavioural red-team); safetensors + HF `transformers`/`tokenizers` (conception inspection).
+
+**Graph / analysis:** **NetworkX** — model the alias **composition graph** / recon procedure tree
+(we emit a text graph today; NetworkX enables traversal + visualisation). numpy/scikit-learn —
+cluster token-embedding weights to surface anomalous/off-theme tokens.
+
+**mem0 / chromadb — honest positioning.** These are **vector-DB / agent-memory** layers, *not*
+model-file forensic extractors (they don't open a GGUF). They are valuable as a **layer on top of**
+extraction:
+- **chromadb** (+ an embedding model) — embed extracted tokens/strings/aliases and run **semantic
+  similarity** to flag content close to *shell-command / recon / C2 / exfiltration* even when
+  obfuscated or novel — catches what a keyword list misses (strengthens patterns A/E and the C2
+  phase).
+- **mem0** — **cross-case forensic memory**: accumulate findings across analysed models so the
+  detector recognises *"this alias-set ≈ a known recon family"* and recalls similar prior cases
+  (the "train the detector" direction).
+
+Verdict: use **strings/binwalk/YARA/FLOSS/capa** for *extraction & payload discovery*; use
+**chromadb/mem0** for *semantic detection & case memory* — complementary, not substitutes.
+
 ## Reproduce
 
 ```bash
