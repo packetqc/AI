@@ -224,6 +224,42 @@ def _resolve_commands(name, seeds, rule_body):
     return "\n".join(L) + "\n", found
 
 
+def _decode_sym(s):
+    """Decoded meaning of an alias/token (analyst-attributed, general knowledge)."""
+    return RECON_LEXICON.get(re.sub(r"[^a-z0-9]", "", s.lower()))
+
+
+def _render_grammar_decoded(name, seeds, rule_body):
+    """The recovered grammar PRESENTED WITH ITS TOKENS DECODED — each alias and each
+    referenced token annotated with its decoded meaning. Structure is model-derived;
+    meanings are analyst-attributed general knowledge."""
+    L = [f"# Decoded grammar — `{name}`",
+         "# recovered grammar (model-derived) with every alias/token decoded inline.",
+         "# `;` lines = decoded meaning (analyst-attributed general knowledge).", ""]
+    for r in seeds:
+        body = rule_body.get(r, "").strip()
+        L.append(f"<{r}> ::= {body}")
+        rm = _decode_sym(r)
+        if rm:
+            L.append(f"    ; {r} = {rm}")
+        refs = re.findall(r'"([^"]+)"', body) or \
+            re.findall(r"[A-Za-z_]{3,}", body)
+        rnorm = re.sub(r"[^a-z0-9]", "", r.lower())
+        seen = set()
+        for t in refs:
+            tnorm = re.sub(r"[^a-z0-9]", "", t.lower())
+            if tnorm == rnorm or tnorm in seen:   # skip self-reference + dupes
+                continue
+            seen.add(tnorm)
+            m = _decode_sym(t)
+            if m:
+                L.append(f"    ;   {t} = {m}")
+        L.append("")
+    L.append("# Note: literal OS command strings are not in the model (see command_resolution.md);")
+    L.append("# the decoded meanings name each action's INTENT, recovered blackbox.")
+    return "\n".join(L) + "\n"
+
+
 def run_dynamic(name, case, k, rules=None, oracle=None):
     if rules:
         seeds, src = rules, "analyst-supplied"
@@ -274,6 +310,9 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
     with open(os.path.join(case, "recovered_grammar.bnf"), "w") as f:
         f.write("\n".join(bnf) + "\n")
 
+    with open(os.path.join(case, "grammar_decoded.md"), "w") as f:
+        f.write(_render_grammar_decoded(name, seeds, rule_body))
+
     cr_text, cmd_found = _resolve_commands(name, seeds, rule_body)
     with open(os.path.join(case, "command_resolution.md"), "w") as f:
         f.write(cr_text)
@@ -322,6 +361,7 @@ def cmd_analyze(args):
         "- `extracted_content.json` — full machine-readable extraction",
         "- `dynamic_report.md` — live probe transcript",
         "- `recovered_grammar.bnf` — grammar reconstructed from the model",
+        "- `grammar_decoded.md` — recovered grammar with every alias/token decoded inline",
         "- `command_resolution.md` — composition graph + command-elicitation probes + finding",
     ]
     if score:
