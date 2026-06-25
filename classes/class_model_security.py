@@ -542,7 +542,14 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
     high, low_counts, enc = det.scan_vocab(tok["decoded"])
     template = det.scan_template(md, artifact.template if artifact else None)
     mc = det.model_class(tok["n"])
+    syms = discover_symbols(tok["decoded"], top=24)
+    symfind = det.scan_symbols(syms)
+    inv = token_inventory(tok["decoded"], syms)
+    digits = sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")})
+    ops = sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+", "-", "*", "/", "(", ")", "=", "."]})
+
     L = []
+    # ── identity ──
     L.append(f"# Static analysis — `{name}`\n")
     L.append("**Track:** STATIC (artifact-only, model never loaded/executed)\n")
     L.append(f"- file: `{os.path.basename(gguf_path)}`  ({ana.size:,} bytes)")
@@ -550,27 +557,10 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
     L.append(f"- arch: {md.get('general.architecture','?')}  ·  model-class: **{mc}** (vocab {tok['n']:,})")
     if artifact and artifact.template:
         L.append(f"- ollama template: `{str(artifact.template)[:80]}`")
-    L.append("\n## Format-safety triage (CVE-2025-53630 / CVE-2026-27940 class)")
-    for i in issues:
-        L.append(f"- **[{i.severity}]** {i.code}: {i.detail}")
-    L.append("\n## Metadata")
-    for k in sorted(md):
-        L.append(f"- `{k}` = {str(md[k])[:100]}")
-    L.append(f"\n## Tokenizer — {tok['n']:,} tokens, {len(tok['merges']):,} merges")
-    L.append(f"- special/control tokens: {tok['specials'][:8]}")
-    digits = sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")})
-    ops = sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+","-","*","/","(",")","=","."]})
-    L.append(f"- digit terminals: {digits}")
-    L.append(f"- operator terminals: {ops}")
-    syms = discover_symbols(tok["decoded"], top=24)
-    L.append(f"- model-derived symbol candidates (reconstruction seeds): {syms[:16]}")
-    inv = token_inventory(tok["decoded"], syms)
-    if inv["tools"] or inv["aliases"]:
-        L.append("\n## Token content inventory (what the tokens mean)")
-        L.append(f"- recon tool tokens carried directly: {inv['tools']}")
-        L.append(f"- action fragments (BPE-assembled): {inv['action_fragments'][:24]}")
+
+    # ── 1 · RECONSTITUTION (first) ──
+    L.append("\n# 1 · Reconstitution")
     if inv["aliases"]:
-        # STATIC reconstitution: the model-derived symbols, each decoded inline.
         L.append("\n## Decoded grammar symbols (static reconstruction)")
         L.append("_model-derived leaf symbols shown DECODED (⟦meaning⟧) instead of the raw alias; "
                  "meanings analyst-attributed (general knowledge, NOT from training files):_")
@@ -580,13 +570,32 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
         L.append("```")
         L.append("_Structure (how symbols compose) needs live probing — see dynamic_report.md; "
                  "literal OS commands are not in the model (command_resolution.md)._")
+    L.append("\n## Token content inventory")
+    L.append(f"- model-derived symbol candidates: {syms[:16]}")
+    if inv["tools"]:
+        L.append(f"- recon tool tokens carried directly: {inv['tools']}")
+    if inv["action_fragments"]:
+        L.append(f"- action fragments (BPE-assembled): {inv['action_fragments'][:24]}")
+    L.append(f"- digit terminals: {digits}  ·  operator terminals: {ops}")
+
+    # ── 2 · ANALYSIS & DISCOVERIES ──
+    L.append("\n# 2 · Analysis & discoveries")
+    L.append(f"\n## Tokenizer — {tok['n']:,} tokens, {len(tok['merges']):,} merges")
+    L.append(f"- special/control tokens: {tok['specials'][:8]}")
+    L.append("\n## Metadata")
+    for k in sorted(md):
+        L.append(f"- `{k}` = {str(md[k])[:100]}")
     L.append(f"\n## Tensors — {len(tns)}")
     for t in tns[:6]:
         L.append(f"- `{t['name']}`  {t['shape']}  {t['dtype']}  {t['n_bytes']:,}B @ {t['data_offset']}")
     if len(tns) > 6:
         L.append(f"- … {len(tns)-6} more")
-    symfind = det.scan_symbols(syms)
-    L.append("\n## Exec-capability sweep (patterns A,C,D,E — model-class aware)")
+    L.append("\n## Format-safety triage (CVE-2025-53630 / CVE-2026-27940 class)")
+    for i in issues:
+        L.append(f"- **[{i.severity}]** {i.code}: {i.detail}")
+
+    # ── 3 · RISKS ──
+    L.append("\n# 3 · Risks — exec-capability sweep (patterns A,C,D,E — model-class aware)")
     if template:
         L.append(f"- **[C/HIGH]** {template.token} — {template.why}")
     if symfind:

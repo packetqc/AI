@@ -278,10 +278,7 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
         decoded = GgufStaticAnalyzer(art.blob_path).tokenizer()["decoded"]
         seeds, src = discover_symbols(decoded, top=k), "model-derived (vocab merges)"
 
-    lines = [f"# Dynamic analysis — {name}  (live blackbox probing)",
-             f"# reconstruction seeds [{src}]: {seeds}", "",
-             "## Probe transcript (raw — model output is evidence, never executed)"]
-    recovered, rule_body, rule_alts = {}, {}, {}
+    transcript, recovered, rule_body, rule_alts = [], {}, {}, {}
     _stop = {"defined", "is", "as", "can", "be", "or", "the", "routes", "an", "a"}
 
     def _informative(resp):
@@ -294,26 +291,31 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
         probes = []
         for p in (f"<{r}> ::=", f"A {r} is", r):
             resp = _ollama_generate(name, p).strip().replace("\n", " ")
-            lines.append(f"  {p!r:26} -> {resp[:120]}")
+            transcript.append(f"  {p!r:26} -> {resp[:120]}")
             probes.append(resp)
             recovered.setdefault(r, []).append(resp)
-        lines.append("")
+        transcript.append("")
         rule_body[r] = max(probes, key=_informative, default="")
         rule_alts[r] = probes
 
-    # RECONSTITUTION presented INSIDE the dynamic report (not only in side files)
+    # ── report order: RECONSTITUTION first, then analysis (transcript), then risks ──
     recon_rules = sum(1 for b in rule_body.values() if b)
-    lines += ["",
-              "## Reconstructed grammar (decoded — tokens annotated with meaning)",
-              f"_{recon_rules}/{len(seeds)} rules recovered; structure model-derived, "
-              "`;` meanings analyst-attributed:_", "```"]
+    lines = [f"# Dynamic analysis — {name}  (live blackbox probing)",
+             f"# reconstruction seeds [{src}]: {seeds}", "",
+             "# 1 · Reconstitution",
+             "## Reconstructed grammar (decoded — leaves shown as their decoded meaning)",
+             f"_{recon_rules}/{len(seeds)} rules recovered; structure model-derived, leaves shown "
+             "⟦decoded⟧, raw alias on `# raw:`:_", "```"]
     lines += _decoded_grammar_lines(seeds, rule_body)
     lines += ["```",
               "_Literal OS command strings are not in the model (see command_resolution.md) — "
-              "the decoded meanings name each action's intent._"]
+              "the decoded meanings name each action's intent._",
+              "", "# 2 · Analysis & discoveries",
+              "## Probe transcript (raw — model output is evidence, never executed)"]
+    lines += transcript
     score = _score_against_oracle(recovered, oracle) if oracle else None
     if score:
-        lines += ["", "## Self-test", "```", score, "```"]
+        lines += ["# 3 · Self-test", "```", score, "```"]
     with open(os.path.join(case, "dynamic_report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
 
