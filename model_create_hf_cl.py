@@ -59,7 +59,7 @@ _CLI_FILES = list(_args.train) + list(_args.grammar)
 #
 #################################################################################################
 version = "1"
-model_create = "model_calculator_version_" + version
+model_create = "model_discoverit_version_" + version
 
 # model_path = "./"+model_create
 model_path = model_create
@@ -67,7 +67,7 @@ gguf_path = model_path+".gguf"
 
 modelfile_path = "./Modelfile"
 
-NAME = "model_calculator_test_npu"
+NAME = "model_to_discover"
 OLLAMA_MODEL_NAME = NAME
 
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
@@ -77,8 +77,12 @@ OLLAMA_MODEL_NAME = NAME
 #     "training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
 #     "grammars/playbook_kali_discovery.txt",
 # ]
+# INIT_KNOWLEDGE_FILES = [
+#     "grammars/playbook_model_calculator.txt",
+# ]
 INIT_KNOWLEDGE_FILES = [
-    "grammars/playbook_model_calculator.txt",
+    "training/train_python_healthcheck_commands.json",
+    "grammars/playbook_pyhealthcheck.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a

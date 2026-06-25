@@ -1,4 +1,4 @@
-FROM /opt/DEV/AI/model_calculator_version_1.gguf
+FROM /opt/DEV/AI/model_discoverit_version_1.gguf
 
 TEMPLATE """<|endoftext|>{{ .Prompt }}"""
 
