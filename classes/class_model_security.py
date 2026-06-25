@@ -569,11 +569,18 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
         L.append("\n## Token content inventory (what the tokens mean)")
         L.append(f"- recon tool tokens carried directly: {inv['tools']}")
         L.append(f"- action fragments (BPE-assembled): {inv['action_fragments'][:24]}")
-        if inv["aliases"]:
-            L.append("- assembled action aliases → analyst-attributed meaning "
-                     "(general knowledge, NOT from training files; literal OS command not in model):")
-            for a in inv["aliases"]:
-                L.append(f"    - `{a['alias']}` → {a['meaning']}")
+    if inv["aliases"]:
+        # STATIC reconstitution: the model-derived symbols, each decoded inline.
+        L.append("\n## Decoded grammar symbols (static reconstruction)")
+        L.append("_model-derived symbols (from vocab/merges) with each decoded inline; "
+                 "`;` meanings analyst-attributed (general knowledge, NOT from training files):_")
+        L.append("```")
+        for a in inv["aliases"]:
+            L.append(f"  {a['alias']}")
+            L.append(f"      ; {a['alias']} = {a['meaning']}")
+        L.append("```")
+        L.append("_Structure (how symbols compose) needs live probing — see dynamic_report.md; "
+                 "literal OS commands are not in the model (command_resolution.md)._")
     L.append(f"\n## Tensors — {len(tns)}")
     for t in tns[:6]:
         L.append(f"- `{t['name']}`  {t['shape']}  {t['dtype']}  {t['n_bytes']:,}B @ {t['data_offset']}")

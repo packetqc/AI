@@ -229,21 +229,16 @@ def _decode_sym(s):
     return RECON_LEXICON.get(re.sub(r"[^a-z0-9]", "", s.lower()))
 
 
-def _render_grammar_decoded(name, seeds, rule_body):
-    """The recovered grammar PRESENTED WITH ITS TOKENS DECODED — each alias and each
-    referenced token annotated with its decoded meaning. Structure is model-derived;
-    meanings are analyst-attributed general knowledge."""
-    L = [f"# Decoded grammar — `{name}`",
-         "# recovered grammar (model-derived) with every alias/token decoded inline.",
-         "# `;` lines = decoded meaning (analyst-attributed general knowledge).", ""]
+def _decoded_grammar_lines(seeds, rule_body):
+    """The recovered grammar rules with each alias/token decoded inline (`;` meaning)."""
+    L = []
     for r in seeds:
         body = rule_body.get(r, "").strip()
-        L.append(f"<{r}> ::= {body}")
+        L.append(f"  <{r}> ::= {body}")
         rm = _decode_sym(r)
         if rm:
-            L.append(f"    ; {r} = {rm}")
-        refs = re.findall(r'"([^"]+)"', body) or \
-            re.findall(r"[A-Za-z_]{3,}", body)
+            L.append(f"      ; {r} = {rm}")
+        refs = re.findall(r'"([^"]+)"', body) or re.findall(r"[A-Za-z_]{3,}", body)
         rnorm = re.sub(r"[^a-z0-9]", "", r.lower())
         seen = set()
         for t in refs:
@@ -253,10 +248,19 @@ def _render_grammar_decoded(name, seeds, rule_body):
             seen.add(tnorm)
             m = _decode_sym(t)
             if m:
-                L.append(f"    ;   {t} = {m}")
+                L.append(f"      ;   {t} = {m}")
         L.append("")
-    L.append("# Note: literal OS command strings are not in the model (see command_resolution.md);")
-    L.append("# the decoded meanings name each action's INTENT, recovered blackbox.")
+    return L
+
+
+def _render_grammar_decoded(name, seeds, rule_body):
+    """Standalone grammar_decoded.md file."""
+    L = [f"# Decoded grammar — `{name}`",
+         "# recovered grammar (model-derived) with every alias/token decoded inline.",
+         "# `;` lines = decoded meaning (analyst-attributed general knowledge).", ""]
+    L += _decoded_grammar_lines(seeds, rule_body)
+    L += ["# Note: literal OS command strings are not in the model (see command_resolution.md);",
+          "# the decoded meanings name each action's INTENT, recovered blackbox."]
     return "\n".join(L) + "\n"
 
 
@@ -271,7 +275,8 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
         seeds, src = discover_symbols(decoded, top=k), "model-derived (vocab merges)"
 
     lines = [f"# Dynamic analysis — {name}  (live blackbox probing)",
-             f"# reconstruction seeds [{src}]: {seeds}", ""]
+             f"# reconstruction seeds [{src}]: {seeds}", "",
+             "## Probe transcript (raw — model output is evidence, never executed)"]
     recovered, rule_body, rule_alts = {}, {}, {}
     _stop = {"defined", "is", "as", "can", "be", "or", "the", "routes", "an", "a"}
 
@@ -291,10 +296,20 @@ def run_dynamic(name, case, k, rules=None, oracle=None):
         lines.append("")
         rule_body[r] = max(probes, key=_informative, default="")
         rule_alts[r] = probes
-    lines.append("Outputs are evidence only — nothing emitted by the model is executed.")
+
+    # RECONSTITUTION presented INSIDE the dynamic report (not only in side files)
+    recon_rules = sum(1 for b in rule_body.values() if b)
+    lines += ["",
+              "## Reconstructed grammar (decoded — tokens annotated with meaning)",
+              f"_{recon_rules}/{len(seeds)} rules recovered; structure model-derived, "
+              "`;` meanings analyst-attributed:_", "```"]
+    lines += _decoded_grammar_lines(seeds, rule_body)
+    lines += ["```",
+              "_Literal OS command strings are not in the model (see command_resolution.md) — "
+              "the decoded meanings name each action's intent._"]
     score = _score_against_oracle(recovered, oracle) if oracle else None
     if score:
-        lines += ["", score]
+        lines += ["", "## Self-test", "```", score, "```"]
     with open(os.path.join(case, "dynamic_report.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
 
