@@ -23,6 +23,18 @@ onnxscript>=0.1.0
 torchvision>=0.15.0
 onnx-simplifier>=0.4.0
 
+# ── Blackbox model security RE (model_security_re.py) ───────────────────────────
+# YARA rule matching over the raw model blob (binary_forensics.md).
+yara-python>=4.5.0
+# Composition-graph modelling for grammar reconstruction.
+networkx>=3.0
+# Note: `strings` and `binwalk` are SYSTEM tools (not pip):
+#   Debian/Kali:  sudo apt install binwalk binutils
+# Optional (recommended) deeper binary forensics — Mandiant tools:
+#   pip install flare-floss flare-capa
+# Optional semantic-detection / cross-case memory layer (Phase 2):
+#   pip install chromadb sentence-transformers mem0ai scikit-learn
+
 # ── Optional ──────────────────────────────────────────────────────────────────
 
 # PDF grammar extraction (model_tools_grammar.py --format pdf)

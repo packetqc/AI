@@ -33,8 +33,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "classes"))
 from class_model_security import (  # noqa: E402
     OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
     sha256_file, render_static_report, discover_symbols, token_inventory,
-    RECON_LEXICON,
+    RECON_LEXICON, binary_forensics, binary_forensics_verdict,
 )
+
+DEF_YAR = os.path.join(os.path.dirname(__file__), "model_security_rules", "recon_c2.yar")
 
 # heuristic: does a model response contain a literal OS-command string?
 _LITERAL_CMD = re.compile(
@@ -94,15 +96,43 @@ def _content_json(name, gguf, sha, artifact, ana):
 # ---------------------------------------------------------------------------
 # static
 # ---------------------------------------------------------------------------
-def run_static(name, gguf, artifact, case):
+def render_binary_forensics(name, bf):
+    L = [f"# Binary forensics — `{name}`",
+         "**Method:** raw-blob `strings` + `binwalk` + YARA — no GGUF parse, no model load.",
+         f"- YARA rules: `{bf.get('yara_rules')}`", ""]
+    s = bf["strings"]
+    L.append(f"## strings ({s['total']:,} total)")
+    L.append(f"- network endpoints — URLs: {s['urls'] or '—'} · IPs: {s['ips'] or '—'} · .onion: {s['onion'] or '—'}")
+    L.append(f"- shell/exec strings: {s['shell'] or '—'}")
+    L.append(f"- recon-related strings ({len(s['recon'])}): {s['recon'][:50]}")
+    L.append("\n## binwalk signatures")
+    L += ([f"- {row}" for row in bf["binwalk"][:30]] or
+          ["- none (no embedded/compressed signatures detected)"])
+    L.append("\n## YARA matches (engineer-editable rules)")
+    if bf.get("yara_error"):
+        L.append(f"- (yara error: {bf['yara_error']})")
+    elif bf["yara"]:
+        for y in bf["yara"]:
+            L.append(f"- **[{y['severity']}]** `{y['rule']}` — {y['description']}  ({y['match_count']} hits)")
+    else:
+        L.append("- no rule matched")
+    L.append(f"\n**VERDICT:** {binary_forensics_verdict(bf)}")
+    return "\n".join(L) + "\n"
+
+
+def run_static(name, gguf, artifact, case, yar=None):
     digest = sha256_file(gguf)
     ana = GgufStaticAnalyzer(gguf)
-    report = render_static_report(name, gguf, digest, artifact, ana)
     with open(os.path.join(case, "static_report.md"), "w") as f:
-        f.write(report)
+        f.write(render_static_report(name, gguf, digest, artifact, ana))
+    bf = binary_forensics(gguf, yar)
+    with open(os.path.join(case, "binary_forensics.md"), "w") as f:
+        f.write(render_binary_forensics(name, bf))
+    content = _content_json(name, gguf, digest, artifact, ana)
+    content["binary_forensics"] = bf
     with open(os.path.join(case, "extracted_content.json"), "w") as f:
-        json.dump(_content_json(name, gguf, digest, artifact, ana), f, indent=2, default=str)
-    return ana, digest
+        json.dump(content, f, indent=2, default=str)
+    return ana, digest, bf
 
 
 def cmd_static(args):
@@ -117,8 +147,9 @@ def cmd_static(args):
         artifact, gguf = None, args.gguf
         case = case_dir(args.out, os.path.splitext(os.path.basename(gguf))[0])
         name = os.path.basename(gguf)
-    run_static(name, gguf, artifact, case)
+    run_static(name, gguf, artifact, case, args.yar)
     print(open(os.path.join(case, "static_report.md")).read())
+    print(open(os.path.join(case, "binary_forensics.md")).read())
     _list_case(case)
 
 
@@ -257,7 +288,7 @@ def cmd_analyze(args):
         sys.exit(f"could not resolve blob for '{args.ollama}' via `ollama show`")
     case = case_dir(args.out, args.ollama)
     gguf = artifact.stage(case)
-    ana, digest = run_static(args.ollama, gguf, artifact, case)
+    ana, digest, bf = run_static(args.ollama, gguf, artifact, case, args.yar)
     content = json.load(open(os.path.join(case, "extracted_content.json")))
     seeds, rule_body, score, cmd_found = run_dynamic(args.ollama, case, args.k, args.rules, args.oracle)
 
@@ -268,6 +299,7 @@ def cmd_analyze(args):
         f"- sha256: `{digest}`",
         f"- model-class: **{content['model_class']}**  ·  vocab {content['vocab_size']:,}",
         f"- static verdict: **{content['exec_sweep']['verdict']}**",
+        f"- binary-forensics verdict: **{binary_forensics_verdict(bf)}**",
         f"- model-derived symbols: {content['discovered_symbols'][:16]}",
         f"- dynamic seeds probed: {seeds}",
         f"- rules reconstructed: {sum(1 for b in rule_body.values() if b)}/{len(rule_body)}",
@@ -277,6 +309,7 @@ def cmd_analyze(args):
         "## Evidence files",
         "- `" + os.path.basename(gguf) + "` — staged blob (chain-of-custody)",
         "- `static_report.md` — human-readable static analysis (+ token content inventory)",
+        "- `binary_forensics.md` — raw-blob strings + binwalk + YARA matches",
         "- `extracted_content.json` — full machine-readable extraction",
         "- `dynamic_report.md` — live probe transcript",
         "- `recovered_grammar.bnf` — grammar reconstructed from the model",
@@ -307,6 +340,7 @@ def main():
     g.add_argument("--ollama", help="ollama model name (resolved via `ollama show`)")
     g.add_argument("--gguf", help="direct path to a .gguf file")
     s.add_argument("--out", default=DEF_OUT, help="forensic root (default: forensics/)")
+    s.add_argument("--yar", default=DEF_YAR, help="YARA rules file (engineer-editable)")
     s.set_defaults(func=cmd_static)
 
     d = sub.add_parser("dynamic", help="live behavioral probing (model-only seeds)")
@@ -325,6 +359,7 @@ def main():
     a.add_argument("--rules", nargs="+", default=None)
     a.add_argument("--k", type=int, default=12)
     a.add_argument("--oracle", default=None)
+    a.add_argument("--yar", default=DEF_YAR, help="YARA rules file (engineer-editable)")
     a.set_defaults(func=cmd_analyze)
 
     args = ap.parse_args()

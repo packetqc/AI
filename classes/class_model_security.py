@@ -15,7 +15,7 @@ files, or the HF source. It never loads/executes the model.
 Reuse: llama.cpp/gguf-py GGUFReader (memory-safe pure-Python parser).
 """
 from __future__ import annotations
-import os, re, json, math, base64, hashlib, subprocess, sys
+import os, re, json, math, base64, hashlib, subprocess, shutil, sys
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -111,6 +111,73 @@ def sha256_file(path: str) -> str:
 # ---------------------------------------------------------------------------
 # Static GGUF analysis
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Binary forensics — strings + binwalk + YARA over the raw blob
+# ---------------------------------------------------------------------------
+_RECON_KW = ("nmap", "scan", "sweep", "detect", "port", "discovery", "arp",
+             "uname", "host", "svc", "proc", "kernel", "route", "iface", "ping")
+_SHELL_KW = ("/bin/", "/etc/", "subprocess", "os.system", "powershell",
+             "eval(", "exec(", "bash", "sh -c", "curl", "wget")
+
+
+def binary_forensics(path, yar_path=None):
+    """Forensic pass over the RAW model file (no parse, no load): embedded strings,
+    binwalk signature scan, and YARA rule matches. Complements the structured GGUF
+    parse — catches content/payloads the parser would miss. Security engineers tune
+    detection by editing the YARA rules file."""
+    res = {"strings": {}, "binwalk": [], "yara": [], "yara_rules": yar_path}
+    # --- strings ---
+    out = ""
+    if shutil.which("strings"):
+        try:
+            out = subprocess.run(["strings", "-n", "4", path], capture_output=True,
+                                 text=True, timeout=90).stdout
+        except Exception:
+            out = ""
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    s = res["strings"]
+    s["total"] = len(lines)
+    s["urls"] = sorted(set(re.findall(r"https?://[\w.\-/]{4,}", out)))
+    s["ips"] = sorted(set(re.findall(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", out)))
+    s["onion"] = sorted(set(re.findall(r"\b[\w-]+\.onion\b", out)))
+    s["recon"] = sorted({l for l in lines if any(k in l.lower() for k in _RECON_KW)})[:80]
+    s["shell"] = sorted({l for l in lines if any(k in l.lower() for k in _SHELL_KW)})[:40]
+    # --- binwalk signature scan (embedded files / hidden payloads) ---
+    if shutil.which("binwalk"):
+        try:
+            bw = subprocess.run(["binwalk", path], capture_output=True, text=True, timeout=120).stdout
+            res["binwalk"] = [l.rstrip() for l in bw.splitlines() if re.match(r"^\s*\d+\s+0x", l)]
+        except Exception:
+            pass
+    # --- YARA ---
+    if yar_path and os.path.exists(yar_path):
+        try:
+            import yara
+            rules = yara.compile(filepath=yar_path)
+            for m in rules.match(path):
+                res["yara"].append({
+                    "rule": m.rule,
+                    "severity": m.meta.get("severity", "?"),
+                    "description": m.meta.get("description", ""),
+                    "match_count": len(m.strings),
+                })
+        except Exception as e:
+            res["yara_error"] = str(e)
+    return res
+
+
+def binary_forensics_verdict(res):
+    sev = {y["severity"] for y in res.get("yara", [])}
+    s = res["strings"]
+    if "critical" in sev or s.get("urls") or s.get("onion") or s.get("ips"):
+        return "FLAGGED — critical YARA hit or network endpoint (URL/IP/.onion) in blob"
+    if "high" in sev or s.get("shell"):
+        return "ELEVATED — recon vocabulary / shell signature present in blob"
+    if res.get("yara"):
+        return "NOTED — YARA matches present (review)"
+    return "CLEAN — no recon/C2/shell/encoded signatures matched"
+
+
 @dataclass
 class Issue:
     severity: str   # INFO | LOW | MED | HIGH
