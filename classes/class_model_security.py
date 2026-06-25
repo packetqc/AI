@@ -313,6 +313,11 @@ RECON_TOOLS = {"nmap", "curl", "wget", "ssh", "scp", "nc", "ncat", "ping", "arp"
 _ACTION_FRAGMENTS = ("scan", "detect", "sweep", "port", "host", "svc", "proc",
                      "route", "arp", "iface", "kernel", "uptime", "ping", "nmap",
                      "disc", "enum", "tool", "uname")
+# imperative verbs that mark a symbol as an *action/command* (pattern D)
+_ACTION_VERBS = ("scan", "detect", "sweep", "enum", "disc", "probe", "exec", "run",
+                 "list", "show", "send", "connect", "fetch", "download", "upload",
+                 "spawn", "kill", "sniff", "crack", "brute", "ping", "map", "dump",
+                 "inject", "shell", "beacon", "exfil")
 # analyst-attributed meanings (GENERAL recon knowledge — NOT from training files).
 # Keyed by normalised alias (underscores removed). Flags interpretation, not model
 # extraction: the model carries the alias; the literal OS command is not in it.
@@ -352,9 +357,62 @@ def token_inventory(decoded_tokens, discovered_symbols):
     return {"tools": tools, "action_fragments": frags, "aliases": aliases}
 
 
+def decode_tokens(raw_tokens, decoded, types):
+    """Decode every vocab token (gpt2 byte-level raw -> human form) and categorise it.
+    This is the ground-truth 'what are the tokens' view: control/special, digits,
+    operators, single chars, byte tokens, sub-word fragments, and full words/aliases."""
+    DIG, OPS = set("0123456789"), set("+-*/()=.,;:|")
+    cats = {k: [] for k in ("control", "digit", "operator", "char", "byte",
+                            "fragment", "word", "space_word")}
+    rows = []
+    for i, (raw, d, t) in enumerate(zip(raw_tokens, decoded, types)):
+        s = d
+        core = s.strip()
+        if t == 3:
+            cat = "control"
+        elif s in DIG:
+            cat = "digit"
+        elif s in OPS:
+            cat = "operator"
+        elif s.startswith(" ") and core.isalpha() and len(core) >= 2:
+            cat = "space_word"
+        elif any(not (32 <= ord(c) < 127) for c in s):
+            cat = "byte"
+        elif len(core) == 1:
+            cat = "char"
+        elif core.isalpha() and len(core) >= 3:
+            cat = "word"
+        else:
+            cat = "fragment"
+        cats[cat].append(core or s)
+        rows.append((i, raw, d, cat))
+    return cats, rows
+
+
+def render_tokens_decoded(name, tok):
+    cats, rows = decode_tokens(tok["tokens"], tok["decoded"], tok["types"])
+    L = [f"# Token decode — `{name}`",
+         f"**{len(rows):,} tokens** decoded (gpt2 byte-level raw → human form) and categorised.",
+         "", "## Category counts"]
+    for c in ("control", "digit", "operator", "char", "byte", "fragment", "word", "space_word"):
+        if cats[c]:
+            L.append(f"- {c}: {len(cats[c])}")
+    words = sorted(set(cats["word"]) | {w for w in cats["space_word"]})
+    L.append(f"\n## Word / alias tokens ({len(words)})")
+    L.append(", ".join(words) if words else "—")
+    if len(rows) <= 2000:
+        L += ["\n## Full token table (raw → decoded)", "| # | raw token | decoded | category |",
+              "|---|---|---|---|"]
+        for i, raw, d, cat in rows:
+            L.append(f"| {i} | `{raw}` | `{d}` | {cat} |")
+    else:
+        L.append("\n_(full table omitted for large vocab — see `extracted_content.json` `tokens[]`)_")
+    return "\n".join(L) + "\n"
+
+
 @dataclass
 class CapFinding:
-    pattern: str        # A | C | E
+    pattern: str        # A | C | D | E
     confidence: str     # HIGH | LOW
     token: str
     why: str
@@ -430,11 +488,37 @@ class ExecCapabilityDetector:
         conf = "HIGH" if printable > 0.7 else "LOW"
         return CapFinding("E", conf, s[:24] + ("…" if len(s) > 24 else ""), "encoded blob: " + why)
 
+    @staticmethod
+    def scan_symbols(discovered_symbols):
+        """Pattern D — do the model-derived symbols form an ACTION/COMMAND grammar
+        (imperative aliases that resolve to operations) rather than inert data terms
+        like a calculator's expr/term/factor? This catches recon/command models that
+        carry no single HIGH-signature token but whose whole vocabulary is actions."""
+        if not discovered_symbols:
+            return None
+
+        def is_action(s):
+            n = s.lower().replace("_", "")
+            return (n in RECON_LEXICON
+                    or any(v in n for v in _ACTION_VERBS)
+                    or any(f in n for f in _ACTION_FRAGMENTS))
+
+        actions = [s for s in discovered_symbols if is_action(s)]
+        if len(actions) >= 4 and len(actions) / len(discovered_symbols) >= 0.4:
+            return CapFinding("D", "HIGH", "symbol-set",
+                              f"{len(actions)}/{len(discovered_symbols)} model-derived symbols are "
+                              f"action/command aliases (e.g. {actions[:6]}) — an action-sequence "
+                              "grammar that drives execution")
+        return None
+
     @classmethod
-    def verdict(cls, vocab_size, high, low_counts, template, encoded):
+    def verdict(cls, vocab_size, high, low_counts, template, encoded, symbols=None):
         mc = cls.model_class(vocab_size)
         if high or any(f.confidence == "HIGH" for f in encoded):
             return f"EXECUTABLE-CAPABILITY (HIGH) — artifact encodes command/code signatures [{mc}]"
+        if symbols:
+            return ("EXECUTABLE-CAPABILITY (action-sequence grammar) — model-derived symbols form a "
+                    f"command/recon action grammar [{mc}]")
         if template:
             return ("EXECUTION-DIRECTED TEMPLATE — output is tool/function-call routed; a client "
                     f"that auto-runs tool calls is an RCE surface [{mc}]")
@@ -495,9 +579,12 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
         L.append(f"- `{t['name']}`  {t['shape']}  {t['dtype']}  {t['n_bytes']:,}B @ {t['data_offset']}")
     if len(tns) > 6:
         L.append(f"- … {len(tns)-6} more")
-    L.append("\n## Exec-capability sweep (patterns A,C,E — model-class aware)")
+    symfind = det.scan_symbols(syms)
+    L.append("\n## Exec-capability sweep (patterns A,C,D,E — model-class aware)")
     if template:
         L.append(f"- **[C/HIGH]** {template.token} — {template.why}")
+    if symfind:
+        L.append(f"- **[D/HIGH]** {symfind.token} — {symfind.why}")
     for f in high:
         L.append(f"- **[A/HIGH]** `{f.token}` — {f.why}")
     if low_counts:
@@ -507,7 +594,7 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
         L.append(f"- **[A/LOW]** {total} command-word tokens {dict(low_counts)} — {note}")
     for f in enc:
         L.append(f"- **[E/{f.confidence}]** `{f.token}` — {f.why}")
-    if not (template or high or low_counts or enc):
+    if not (template or symfind or high or low_counts or enc):
         L.append("- no findings")
-    L.append(f"\n**VERDICT:** {det.verdict(tok['n'], high, low_counts, template, enc)}")
+    L.append(f"\n**VERDICT:** {det.verdict(tok['n'], high, low_counts, template, enc, symfind)}")
     return "\n".join(L) + "\n"

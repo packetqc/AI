@@ -34,6 +34,7 @@ from class_model_security import (  # noqa: E402
     OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
     sha256_file, render_static_report, discover_symbols, token_inventory,
     RECON_LEXICON, binary_forensics, binary_forensics_verdict,
+    render_tokens_decoded, decode_tokens,
 )
 
 DEF_YAR = os.path.join(os.path.dirname(__file__), "model_security_rules", "recon_c2.yar")
@@ -66,8 +67,11 @@ def _content_json(name, gguf, sha, artifact, ana):
     tok = ana.tokenizer()
     md = ana.metadata()
     det = ExecCapabilityDetector()
+    syms = discover_symbols(tok["decoded"], top=24)
     high, low_counts, enc = det.scan_vocab(tok["decoded"])
     template = det.scan_template(md, artifact.template if artifact else None)
+    symfind = det.scan_symbols(syms)
+    cats, _ = decode_tokens(tok["tokens"], tok["decoded"], tok["types"])
     return {
         "name": name, "file": os.path.basename(gguf), "size_bytes": ana.size, "sha256": sha,
         "architecture": md.get("general.architecture"),
@@ -77,8 +81,9 @@ def _content_json(name, gguf, sha, artifact, ana):
         "special_tokens": tok["specials"],
         "digit_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")}),
         "operator_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+", "-", "*", "/", "(", ")", "=", "."]}),
-        "discovered_symbols": discover_symbols(tok["decoded"], top=24),
-        "token_inventory": token_inventory(tok["decoded"], discover_symbols(tok["decoded"], top=24)),
+        "discovered_symbols": syms,
+        "token_inventory": token_inventory(tok["decoded"], syms),
+        "token_decode_categories": {k: len(v) for k, v in cats.items()},
         "tokens": tok["decoded"],
         "token_types": tok["types"],
         "merges": tok["merges"],
@@ -88,7 +93,8 @@ def _content_json(name, gguf, sha, artifact, ana):
             "low_word_counts": dict(low_counts),
             "encoded": [f.__dict__ for f in enc],
             "template_pattern_C": (template.__dict__ if template else None),
-            "verdict": det.verdict(tok["n"], high, low_counts, template, enc),
+            "action_grammar_pattern_D": (symfind.__dict__ if symfind else None),
+            "verdict": det.verdict(tok["n"], high, low_counts, template, enc, symfind),
         },
     }
 
@@ -125,6 +131,8 @@ def run_static(name, gguf, artifact, case, yar=None):
     ana = GgufStaticAnalyzer(gguf)
     with open(os.path.join(case, "static_report.md"), "w") as f:
         f.write(render_static_report(name, gguf, digest, artifact, ana))
+    with open(os.path.join(case, "tokens_decoded.md"), "w") as f:
+        f.write(render_tokens_decoded(name, ana.tokenizer()))
     bf = binary_forensics(gguf, yar)
     with open(os.path.join(case, "binary_forensics.md"), "w") as f:
         f.write(render_binary_forensics(name, bf))
@@ -309,6 +317,7 @@ def cmd_analyze(args):
         "## Evidence files",
         "- `" + os.path.basename(gguf) + "` — staged blob (chain-of-custody)",
         "- `static_report.md` — human-readable static analysis (+ token content inventory)",
+        "- `tokens_decoded.md` — every token decoded (raw → human) + categorised",
         "- `binary_forensics.md` — raw-blob strings + binwalk + YARA matches",
         "- `extracted_content.json` — full machine-readable extraction",
         "- `dynamic_report.md` — live probe transcript",
