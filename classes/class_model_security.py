@@ -238,6 +238,53 @@ def discover_symbols(decoded_tokens, min_len=3, top=24):
     return [w for w, _ in cand.most_common(top)]
 
 
+# recon tool names that may appear directly as vocab tokens (general knowledge)
+RECON_TOOLS = {"nmap", "curl", "wget", "ssh", "scp", "nc", "ncat", "ping", "arp",
+               "ss", "netstat", "ip", "uname", "ps", "dig", "nslookup", "whoami",
+               "ifconfig", "route", "traceroute", "masscan", "hydra", "nikto"}
+# action-alias fragments that BPE assembles into command aliases
+_ACTION_FRAGMENTS = ("scan", "detect", "sweep", "port", "host", "svc", "proc",
+                     "route", "arp", "iface", "kernel", "uptime", "ping", "nmap",
+                     "disc", "enum", "tool", "uname")
+# analyst-attributed meanings (GENERAL recon knowledge — NOT from training files).
+# Keyed by normalised alias (underscores removed). Flags interpretation, not model
+# extraction: the model carries the alias; the literal OS command is not in it.
+RECON_LEXICON = {
+    "nmap": "Nmap port/host scanner", "nmapver": "Nmap version/service detection (-sV)",
+    "pingsweep": "ICMP host-discovery sweep", "quickscan": "fast TCP port scan",
+    "fullscan": "full TCP port scan", "udptop": "top UDP port scan", "portscan": "port scan",
+    "osdetect": "OS fingerprinting (-O)", "verdetect": "service version detection",
+    "scriptscan": "Nmap NSE script scan (-sC)", "svcenum": "service enumeration",
+    "openports": "enumerate open ports", "activesvc": "active services",
+    "topprocs": "top processes", "syshostname": "hostname", "sysuname": "uname/kernel info",
+    "syskernel": "kernel version", "sysuptime": "uptime", "ifaceshow": "network interfaces",
+    "routeshow": "routing table", "arpcache": "ARP cache", "arplocal": "local ARP discovery",
+    "alivehosts": "live hosts", "toolslist": "available tools", "hostdisc": "host discovery",
+    "hostinfo": "host information", "netinterfaces": "network interfaces",
+    "localdiscovery": "local discovery phase", "networkdiscovery": "network discovery phase",
+    "kalidiscovery": "top-level Kali recon procedure", "servicesprocs": "services & processes",
+    "svcshow": "show services",
+}
+
+
+def token_inventory(decoded_tokens, discovered_symbols):
+    """Reconstruct the model's 'content' tokens from the artifact: real recon TOOL
+    names carried directly, action FRAGMENTS that BPE assembles, and the assembled
+    ALIASES with analyst-attributed meaning. The model carries aliases + structure;
+    literal OS command strings are NOT encoded (verify by probing)."""
+    dec = [d.strip() for d in decoded_tokens]
+    tools = sorted({t for t in dec if t.lower() in RECON_TOOLS})
+    frags = sorted({t for t in dec if 2 <= len(t) <= 12
+                    and any(fr in t.lower() for fr in _ACTION_FRAGMENTS)})
+    aliases = []
+    for s in discovered_symbols:
+        norm = s.lower().replace("_", "")
+        meaning = RECON_LEXICON.get(norm)
+        if meaning:
+            aliases.append({"alias": s, "meaning": meaning})
+    return {"tools": tools, "action_fragments": frags, "aliases": aliases}
+
+
 @dataclass
 class CapFinding:
     pattern: str        # A | C | E
@@ -364,7 +411,18 @@ def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
     ops = sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+","-","*","/","(",")","=","."]})
     L.append(f"- digit terminals: {digits}")
     L.append(f"- operator terminals: {ops}")
-    L.append(f"- model-derived symbol candidates (reconstruction seeds): {discover_symbols(tok['decoded'], top=16)}")
+    syms = discover_symbols(tok["decoded"], top=24)
+    L.append(f"- model-derived symbol candidates (reconstruction seeds): {syms[:16]}")
+    inv = token_inventory(tok["decoded"], syms)
+    if inv["tools"] or inv["aliases"]:
+        L.append("\n## Token content inventory (what the tokens mean)")
+        L.append(f"- recon tool tokens carried directly: {inv['tools']}")
+        L.append(f"- action fragments (BPE-assembled): {inv['action_fragments'][:24]}")
+        if inv["aliases"]:
+            L.append("- assembled action aliases → analyst-attributed meaning "
+                     "(general knowledge, NOT from training files; literal OS command not in model):")
+            for a in inv["aliases"]:
+                L.append(f"    - `{a['alias']}` → {a['meaning']}")
     L.append(f"\n## Tensors — {len(tns)}")
     for t in tns[:6]:
         L.append(f"- `{t['name']}`  {t['shape']}  {t['dtype']}  {t['n_bytes']:,}B @ {t['data_offset']}")

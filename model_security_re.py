@@ -32,7 +32,7 @@ import argparse, datetime, json, os, re, sys, urllib.request
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "classes"))
 from class_model_security import (  # noqa: E402
     OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
-    sha256_file, render_static_report, discover_symbols,
+    sha256_file, render_static_report, discover_symbols, token_inventory,
 )
 
 DEF_OUT = "forensics"
@@ -66,6 +66,7 @@ def _content_json(name, gguf, sha, artifact, ana):
         "digit_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")}),
         "operator_terminals": sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+", "-", "*", "/", "(", ")", "=", "."]}),
         "discovered_symbols": discover_symbols(tok["decoded"], top=24),
+        "token_inventory": token_inventory(tok["decoded"], discover_symbols(tok["decoded"], top=24)),
         "tokens": tok["decoded"],
         "token_types": tok["types"],
         "merges": tok["merges"],
