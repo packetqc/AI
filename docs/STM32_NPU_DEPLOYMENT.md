@@ -3,10 +3,18 @@
 Deploying a grammar-driven model to the STM32N6570-DK, end to end — from the host export
 through ST Edge AI code generation to live on-device inference with an interactive UART REPL.
 
-**Status: WORKING** — the transformer runs on-device (Cortex-M55, INT8) and the interactive
-grammar REPL is validated live on hardware. See [Performance](#performance--why-its-cpu-bound)
-for the key finding (this transformer is CPU-bound on the NPU) and
-[NPU-native path](#npu-native-architecture-path-light-speed) for the proven fast alternative.
+**Status: WORKING (CPU path)** — the transformer runs on-device (Cortex-M55, INT8) and the
+interactive grammar REPL is validated live on hardware. See
+[Performance](#performance--why-its-cpu-bound) for the key finding (this transformer is
+CPU-bound on the NPU) and [NPU-native path](#npu-native-architecture-path-light-speed) for the
+proven fast alternative.
+
+**Latest dev (NPU-native path, in progress):** `run-23` brings the Neural-ART NPU hardware path
+up under the FSBL-direct flow — everything *around* the engine is now verified byte-identical to
+the operational reference, but the ATON streaming engine does not yet complete the epoch. See
+[run-23 NPU-native bring-up](#run-23--npu-native-bring-up-latest-dev-in-progress) for the current
+state and [Roadmap](#roadmap--host-built-custom-edge-ai-models-on-the-npu) for where this thread
+continues.
 
 ---
 
@@ -265,3 +273,62 @@ near-zero unused-vocab channels), to be reported to ST / worked around with weig
 
 **Next step (opt-in):** train/distill the Conv1D model, export through the *same* flow → new
 `run-XX`, and adapt only the device wrapper I/O (`int8[1,256,32]` in → `int8[1,374,32]` out).
+
+---
+
+## run-23 — NPU-native bring-up (latest dev, in progress)
+
+`run-23` is the Studio-generated **vanilla NPU** project, promoted from the ignored working dir
+to a first-class sibling of `run-22` (`STM32N6/AI_TO_NPU_1/run-23`) so the build fixes and the
+in-FSBL NPU confirmation are preserved in git. It carries a minimal **in-FSBL one-shot NPU
+inference** (vanilla layout — weights in xSPI2 flash `@0x71000000` via a `PROVIDE` symbol,
+RISAF8 on) with LED + UART signalling (GREEN = epoch done, RED = init fail) that is immune to
+RISAF state.
+
+The bring-up matches the operational reference project (`N6_EDGEAI_1`) FSBL-direct NPU setup —
+**this disproves the earlier "load-and-run can't run the NPU" conclusion**: the reference runs
+the NPU under the same flow. `aiPreInitialize()` = `SystemInit_POST` + `NPU_Config` +
+`RISAF_Config`, where `SystemInit_POST` takes AXISRAM2–6 out of SRAM-shutdown
+(`RAMCFG_CR_SRAMSD`), powers `CACHEAXIRAM` (`RCC_MEMENR_CACHEAXIRAMEN`), and sets
+`MEMSYSCTL.DCACTIVE/ICACTIVE` (the boot leaves them 0).
+
+**Verified byte-identical / equivalent to the reference:**
+
+| Concern | State |
+|---|---|
+| `RISAF_Config` | byte-identical |
+| Weights (xSPI2 flash `@0x71000000`) | CPU-readable + correct |
+| NPU IRQ wiring | `NPU0_IRQHandler` = `ll_aton` handler, `CDNN0_IRQn` = `NPU0_IRQn` = 53 |
+| VTOR | `0x34180400` |
+| NPU clock | IC6 ← PLL2, IC11 ← PLL3 |
+| Epoch controller | ASYNC, both use it |
+| API | `stai` wrapper calls the same `LL_ATON_RT_*` funcs |
+
+**OPEN issue — the engine itself doesn't finish.** The Neural-ART streaming engine still does
+not complete the epoch: it stays in the `__ll_aton_stai_run_synchonously` WFE loop
+(`ll_aton_rt_ret = WFE`, `ICSR/ISPR = 0` → the streaming engine never raises completion).
+Everything *around* the NPU is correct; the engine is not raising its done IRQ.
+
+**Next debug:** baseline-diff against the reference's own FSBL running on the same board, or an
+ATON SE/EC register dump to see why completion is never signalled.
+
+---
+
+## Roadmap — host-built custom edge-AI models on the NPU
+
+This deployment exercise is paused here on purpose. The transformer (Qwen2) path is proven on
+the CPU but cannot use the Neural-ART; the `run-23` hardware path is wired correctly but the
+engine does not yet complete an epoch with the current model. **The blocker is the model
+architecture, not the silicon or the host export flow.**
+
+The exercise **will proceed further when a compatible custom model — one whose op set and
+purpose match the NPU's edge-AI design (CNN / Conv1D / GEMM, fully hardware-mappable) — is
+explored again.** The goal of that next thread is to close the loop on the original no-code
+intent: let this solution **build models on the host and run them on STM32 edge-AI devices**,
+end to end, with the NPU executing the body fully in hardware.
+
+The host export flow, tokenizer, grammar runner and REPL are already model-agnostic and stay
+unchanged — only the model *architecture* changes (the
+[Conv1D / TCN path](#npu-native-architecture-path-light-speed) is the proven candidate). That
+re-exploration is tracked on the **`reverse-engineering`** branch, which returns to the origins
+of the no-code concept on custom minimal models.

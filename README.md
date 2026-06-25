@@ -544,6 +544,13 @@ npu_export/
 > 481 KiB, fits internal SRAM) — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)
 > § *NPU-native architecture path*. The host export flow and the grammar runner are unchanged;
 > only the model architecture would change.
+>
+> **Latest dev:** `run-23` brings the NPU hardware path up under the FSBL-direct flow (verified
+> byte-identical to the operational reference); the open item is that the ATON streaming engine
+> does not yet complete an epoch. This exercise **continues when a compatible custom model — one
+> whose op set and purpose match the NPU's edge-AI design — is explored again**, so the solution
+> can build models on the host and run them on STM32 edge-AI devices end to end. That
+> re-exploration is tracked on the `reverse-engineering` branch.
 
 **End-to-end inference flow (host → device):**
 ```
