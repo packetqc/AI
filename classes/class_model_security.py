@@ -112,6 +112,75 @@ def sha256_file(path: str) -> str:
 # Static GGUF analysis
 # ---------------------------------------------------------------------------
 # ---------------------------------------------------------------------------
+# Generic threat scan — model-type aware, region-scoped, two layers:
+#   L1 DIRECT      literal executable/C2 content (region-scoped: metadata+template)
+#   L2 OBFUSCATION the alias/action-grammar pattern (commands hidden behind benign
+#                  tokens — evades L1; generalised from the grammar-model concept,
+#                  NOT coupled to any specific lexicon)
+# ---------------------------------------------------------------------------
+# generic imperative verbs (domain-agnostic) that mark an *action* alias
+_GENERIC_VERBS = {
+    "check", "scan", "detect", "sweep", "run", "exec", "get", "set", "list", "show",
+    "send", "connect", "start", "stop", "read", "write", "open", "close", "kill",
+    "spawn", "load", "fetch", "ping", "probe", "enum", "disc", "discover", "map",
+    "dump", "sniff", "inject", "download", "upload", "status", "info", "find",
+    "encrypt", "decrypt", "encode", "decode", "beacon", "exfil", "shell",
+}
+# L1 — structured literal signatures (syntax, not single English words)
+_DIRECT_SIGNATURES = {
+    "reverse_shell": r"/dev/tcp/|bash\s+-i\s*>&|nc\s+-e|ncat\s+-e|mkfifo\b.*\bnc\b",
+    "code_exec":     r"os\.system|subprocess\.|__import__\(|eval\(|exec\(|powershell\s+-enc|base64\.b64decode|/bin/sh\b|/bin/bash\b",
+    "c2_endpoint":   r"https?://[a-z0-9.\-]+\.[a-z]{2,}|\b[a-z2-7]{16,}\.onion\b",
+    "download_exec": r"\b(curl|wget|certutil|Invoke-WebRequest)\b\s+\S*https?://",
+}
+
+
+def classify_model_type(md):
+    """generative | encoder/embedding — gates which analysis applies."""
+    arch = (md.get("general.architecture") or "").lower()
+    causal = next((md[k] for k in md if k.endswith(".attention.causal")), None)
+    pooling = any("pooling_type" in k for k in md)
+    if pooling or causal is False or "bert" in arch:
+        return "encoder/embedding"
+    return "generative"
+
+
+def threat_scan(md, model_type, decoded_tokens, syms, template=None):
+    """Region-scoped, model-type-aware threat detection. Returns (findings, verdict).
+    L1 scans only metadata+template (NOT tensor bytes, NOT 30k vocab) → no FP on a
+    clean model. L2 runs only for generative small-vocab models → detects the hidden
+    alias/action-grammar (the obfuscation that defeats L1)."""
+    findings = []
+    region = " ".join(v for v in md.values() if isinstance(v, str))
+    if template:
+        region += " " + str(template)
+    for name, pat in _DIRECT_SIGNATURES.items():
+        m = re.search(pat, region, re.I)
+        if m:
+            findings.append(("L1-DIRECT", "CRITICAL", name, m.group(0)[:60]))
+
+    if model_type == "generative" and len(decoded_tokens) < 4000 and syms:
+        verbhits = [s for s in syms if any(v in s.lower() for v in _GENERIC_VERBS)]
+        opish = [s for s in syms if ("_" in s) or any(v in s.lower() for v in _GENERIC_VERBS)]
+        if len(verbhits) >= 3 and len(opish) / len(syms) >= 0.5:
+            findings.append(("L2-OBFUSCATION", "HIGH", "alias-action-grammar",
+                             f"{len(verbhits)}/{len(syms)} symbols are imperative action aliases "
+                             f"({verbhits[:6]}) — a command grammar hides executable actions behind "
+                             "benign tokens; literal commands resolve in the client (evades L1)"))
+    return findings
+
+
+def threat_verdict(findings):
+    sev = {f[1] for f in findings}
+    if "CRITICAL" in sev:
+        return "MALICIOUS-CONTENT — literal executable/C2 signatures present in the model"
+    if any(f[0] == "L2-OBFUSCATION" for f in findings):
+        return ("OBFUSCATED-EXEC — hidden alias/action-grammar drives command execution via a "
+                "client (no literal commands in the model — evades string scanning)")
+    return "CLEAN — no literal executable/C2 content and no hidden action-grammar"
+
+
+# ---------------------------------------------------------------------------
 # Binary forensics — strings + binwalk + YARA over the raw blob
 # ---------------------------------------------------------------------------
 _RECON_KW = ("nmap", "scan", "sweep", "detect", "port", "discovery", "arp",
