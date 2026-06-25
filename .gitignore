@@ -70,3 +70,6 @@ Knowledge/
 __pycache__/
 
 .cli_history
+
+# blackbox RE forensic evidence (per-engagement, not source)
+forensics/
