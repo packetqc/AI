@@ -210,118 +210,179 @@ _HIGH_SIGNATURES = [
     "/bin/sh", "/bin/bash", "powershell", "import os", "socket.", "/etc/passwd",
     "bash -c", "sh -c", "nc -e", "curl http", "wget http", "rm -rf", "chmod +x",
 ]
-# short tokens that are dangerous as *whole words* but commonly appear as BPE
-# sub-word fragments -> LOW confidence, must be confirmed by the DYNAMIC track
+# dangerous as whole words, but ALSO present in any code-trained vocab and common
+# as BPE sub-word fragments -> baseline noise, aggregated not per-token
 _LOW_WORDS = {"rm", "sh", "nc", "eval", "exec", "curl", "wget", "nmap", "bash",
               "ssh", "scp", "system", "popen", "import", "socket"}
+# pattern C — template/metadata that routes model output into client execution
+_TEMPLATE_EXEC = ["tool_call", "tool_calls", "tools", "function_call", "<tool",
+                  "function", "<|python_tag|>", "code_interpreter"]
+_STOPWORDS = {"the", "and", "for", "with", "that", "this", "from", "have", "can",
+              "always", "good", "bad", "color", "rules", "routes", "defines", "are"}
+
+
+def discover_symbols(decoded_tokens, min_len=3, top=24):
+    """MODEL-ONLY symbol discovery for grammar reconstruction.
+
+    Returns candidate nonterminal / keyword tokens derived PURELY from the
+    artifact's vocab (the BPE merges assemble them). NEVER seeded from host
+    grammar files, training data, or the oracle — a real analyst auditing an
+    unknown model has only the model, so reconstruction must bootstrap its own
+    symbols from what the model itself encodes."""
+    from collections import Counter
+    cand = Counter()
+    for d in decoded_tokens:
+        s = d.strip().lower()
+        if len(s) >= min_len and s.isalpha() and s not in _STOPWORDS:
+            cand[s] += len(s)          # longer = more merge-assembled = higher rank
+    return [w for w, _ in cand.most_common(top)]
 
 
 @dataclass
 class CapFinding:
-    pattern: str        # A | E
+    pattern: str        # A | C | E
     confidence: str     # HIGH | LOW
     token: str
     why: str
 
 
 class ExecCapabilityDetector:
-    """Decide, from the artifact alone, whether the model ENCODES content that a
-    client could run as commands/code. Findings are split HIGH (actionable) vs
-    LOW (likely BPE fragment / weak signal -> confirm with the dynamic track)."""
+    """Decide, from the artifact alone, whether the model ENCODES content a client
+    could run as commands/code. **Model-class aware:** on general (large-vocab)
+    models the vocab is always code-rich, so pattern-A words are baseline noise and
+    the real signal shifts to the template (pattern C) and behaviour (dynamic)."""
 
-    def scan_vocab(self, decoded_tokens: list[str]) -> list[CapFinding]:
-        findings: list[CapFinding] = []
+    @staticmethod
+    def model_class(vocab_size: int) -> str:
+        return "minimal" if vocab_size < 1024 else "general"
+
+    def scan_vocab(self, decoded_tokens):
+        """Return (high_findings, low_word_counts, encoded_findings)."""
+        from collections import Counter
+        high, low_counts, enc, seen = [], Counter(), [], set()
         for d in decoded_tokens:
             s = d.strip()
             if not s:
                 continue
             low = s.lower()
-            # Pattern A — command/code encoding
             hi = next((sig for sig in _HIGH_SIGNATURES if sig in low), None)
-            if hi:
-                findings.append(CapFinding("A", "HIGH", s, f"contains execution signature {hi!r}"))
+            if hi and s not in seen:
+                seen.add(s)
+                high.append(CapFinding("A", "HIGH", s, f"contains execution signature {hi!r}"))
             elif low in _LOW_WORDS:
-                findings.append(CapFinding("A", "LOW", s,
-                    "matches a dangerous word but is short — likely a BPE sub-word fragment; confirm dynamically"))
-            # Pattern E — obfuscated/encoded payload (hardened)
+                low_counts[low] += 1
             f = self._encoded_finding(s)
             if f:
-                findings.append(f)
-        return findings
+                enc.append(f)
+        return high, low_counts, enc
 
     @staticmethod
-    def _encoded_finding(s: str) -> Optional[CapFinding]:
-        # require length and a non-alpha character so dictionary words don't match
+    def scan_template(metadata, ollama_template=None):
+        """Pattern C — does the chat template / metadata direct a client to EXECUTE
+        model output (tool / function calling)? The meaningful exec signal on
+        general models."""
+        blob = " ".join(str(v) for v in metadata.values())
+        if ollama_template:
+            blob += " " + str(ollama_template)
+        low = blob.lower()
+        hits = sorted({sig for sig in _TEMPLATE_EXEC if sig in low})
+        if hits:
+            return CapFinding("C", "HIGH", "chat_template",
+                              f"template/metadata routes output to client execution: {hits}")
+        return None
+
+    @staticmethod
+    def _encoded_finding(s):
         if len(s) < 16:
             return None
         is_b64 = bool(re.fullmatch(r"[A-Za-z0-9+/=]{16,}", s))
         is_hex = bool(re.fullmatch(r"[0-9a-fA-F]{16,}", s))
         if not (is_b64 or is_hex):
             return None
-        # HARDENING: a real encoded blob has mixed classes; pure lowercase-alpha
-        # (e.g. "calculator") is a dictionary word, not base64.
-        if not re.search(r"[0-9]", s) and not re.search(r"[A-Z]", s) and not is_hex:
+        # HARDENING: real base64 of binary almost always carries digits or +/=.
+        # Pure-alpha strings — dictionary words ('calculator') and CamelCase code
+        # identifiers ('InitializeComponent') — are NOT encoded payloads.
+        if is_b64 and not re.search(r"[0-9+/=]", s):
             return None
         try:
             raw = bytes.fromhex(s) if is_hex else base64.b64decode(s + "===")
         except Exception:
             return None
         ent = shannon_entropy(raw)
-        if ent < 3.0:
+        if ent < 4.0:                  # genuine hidden payloads are high-entropy
             return None
         printable = sum(32 <= b < 127 for b in raw) / max(len(raw), 1)
         why = f"len={len(s)} entropy={ent:.1f} printable={printable:.0%}"
         conf = "HIGH" if printable > 0.7 else "LOW"
         return CapFinding("E", conf, s[:24] + ("…" if len(s) > 24 else ""), "encoded blob: " + why)
 
-    @staticmethod
-    def verdict(findings: list[CapFinding]) -> str:
-        highs = [f for f in findings if f.confidence == "HIGH"]
-        lows = [f for f in findings if f.confidence == "LOW"]
-        if highs:
-            return "EXECUTABLE-CAPABILITY (HIGH) — artifact encodes command/code signatures"
-        if lows:
-            return "INCONCLUSIVE — only weak/sub-word signals; confirm via dynamic track"
+    @classmethod
+    def verdict(cls, vocab_size, high, low_counts, template, encoded):
+        mc = cls.model_class(vocab_size)
+        if high or any(f.confidence == "HIGH" for f in encoded):
+            return f"EXECUTABLE-CAPABILITY (HIGH) — artifact encodes command/code signatures [{mc}]"
+        if template:
+            return ("EXECUTION-DIRECTED TEMPLATE — output is tool/function-call routed; a client "
+                    f"that auto-runs tool calls is an RCE surface [{mc}]")
+        if mc == "general":
+            return ("GENERAL-PURPOSE (code-capable by training) — vocab command words are baseline, "
+                    "no template tool-calling, no HIGH signature; risk gated on behaviour (dynamic)")
+        if low_counts:
+            return "INCONCLUSIVE — only weak/sub-word signals on a minimal model; confirm via dynamic track"
         return "INERT — no command/code/encoded-payload signatures in the artifact"
 
 
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
-def render_static_report(name, gguf_path, sha256, artifact, ana, findings) -> str:
+def render_static_report(name, gguf_path, sha256, artifact, ana) -> str:
     md = ana.metadata()
     tok = ana.tokenizer()
     tns = ana.tensors()
     issues = ana.triage()
+    det = ExecCapabilityDetector()
+    high, low_counts, enc = det.scan_vocab(tok["decoded"])
+    template = det.scan_template(md, artifact.template if artifact else None)
+    mc = det.model_class(tok["n"])
     L = []
     L.append(f"# Static analysis — `{name}`\n")
     L.append("**Track:** STATIC (artifact-only, model never loaded/executed)\n")
     L.append(f"- file: `{os.path.basename(gguf_path)}`  ({ana.size:,} bytes)")
     L.append(f"- sha256: `{sha256}`")
+    L.append(f"- arch: {md.get('general.architecture','?')}  ·  model-class: **{mc}** (vocab {tok['n']:,})")
     if artifact and artifact.template:
-        L.append(f"- ollama template: `{artifact.template}`")
+        L.append(f"- ollama template: `{str(artifact.template)[:80]}`")
     L.append("\n## Format-safety triage (CVE-2025-53630 / CVE-2026-27940 class)")
     for i in issues:
         L.append(f"- **[{i.severity}]** {i.code}: {i.detail}")
     L.append("\n## Metadata")
     for k in sorted(md):
-        L.append(f"- `{k}` = {md[k]}")
-    L.append(f"\n## Tokenizer — {tok['n']} tokens, {len(tok['merges'])} merges")
-    L.append(f"- special/control tokens: {tok['specials']}")
+        L.append(f"- `{k}` = {str(md[k])[:100]}")
+    L.append(f"\n## Tokenizer — {tok['n']:,} tokens, {len(tok['merges']):,} merges")
+    L.append(f"- special/control tokens: {tok['specials'][:8]}")
     digits = sorted({d.strip() for d in tok["decoded"] if d.strip() in list("0123456789")})
     ops = sorted({d.strip() for d in tok["decoded"] if d.strip() in ["+","-","*","/","(",")","=","."]})
     L.append(f"- digit terminals: {digits}")
     L.append(f"- operator terminals: {ops}")
+    L.append(f"- model-derived symbol candidates (reconstruction seeds): {discover_symbols(tok['decoded'], top=16)}")
     L.append(f"\n## Tensors — {len(tns)}")
     for t in tns[:6]:
         L.append(f"- `{t['name']}`  {t['shape']}  {t['dtype']}  {t['n_bytes']:,}B @ {t['data_offset']}")
     if len(tns) > 6:
         L.append(f"- … {len(tns)-6} more")
-    L.append("\n## Exec-capability sweep (patterns A,E)")
-    if findings:
-        for f in findings:
-            L.append(f"- **[{f.pattern}/{f.confidence}]** `{f.token}` — {f.why}")
-    else:
+    L.append("\n## Exec-capability sweep (patterns A,C,E — model-class aware)")
+    if template:
+        L.append(f"- **[C/HIGH]** {template.token} — {template.why}")
+    for f in high:
+        L.append(f"- **[A/HIGH]** `{f.token}` — {f.why}")
+    if low_counts:
+        total = sum(low_counts.values())
+        note = ("baseline for any code-trained vocab — uninformative on general models"
+                if mc == "general" else "sub-word fragments on a minimal model — confirm dynamically")
+        L.append(f"- **[A/LOW]** {total} command-word tokens {dict(low_counts)} — {note}")
+    for f in enc:
+        L.append(f"- **[E/{f.confidence}]** `{f.token}` — {f.why}")
+    if not (template or high or low_counts or enc):
         L.append("- no findings")
-    L.append(f"\n**VERDICT:** {ExecCapabilityDetector.verdict(findings)}")
+    L.append(f"\n**VERDICT:** {det.verdict(tok['n'], high, low_counts, template, enc)}")
     return "\n".join(L) + "\n"

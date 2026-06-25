@@ -20,8 +20,8 @@ import argparse, json, os, sys, urllib.request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "classes"))
 from class_model_security import (  # noqa: E402
-    OllamaArtifact, GgufStaticAnalyzer, ExecCapabilityDetector,
-    sha256_file, render_static_report,
+    OllamaArtifact, GgufStaticAnalyzer, sha256_file,
+    render_static_report, discover_symbols,
 )
 
 DEF_OUT = "evidence"
@@ -44,9 +44,7 @@ def cmd_static(args):
 
     digest = sha256_file(gguf)
     ana = GgufStaticAnalyzer(gguf)
-    det = ExecCapabilityDetector()
-    findings = det.scan_vocab(ana.tokenizer()["decoded"])
-    report = render_static_report(name, gguf, digest, artifact, ana, findings)
+    report = render_static_report(name, gguf, digest, artifact, ana)
 
     rpath = os.path.join(out, "static_report.md")
     with open(rpath, "w") as f:
@@ -64,18 +62,42 @@ def _ollama_generate(name, prompt, n=48):
         return json.load(r).get("response", "")
 
 
+def _score_against_oracle(recovered, oracle_path):
+    """SELF-TEST ONLY: score recovered symbols against a known grammar. Valid only
+    because WE built this model — a real engagement has no oracle. Never an input
+    to reconstruction."""
+    import re
+    truth = set(re.findall(r"<([A-Za-z_]\w*)>\s*::=", open(oracle_path).read()))
+    hit = sorted(truth & set(recovered))
+    print(f"\n[SELF-TEST vs {os.path.basename(oracle_path)} — validation only, NOT a method input]")
+    print(f"  oracle nonterminals : {sorted(truth)}")
+    print(f"  recovered & matched : {hit}  ({len(hit)}/{len(truth)})")
+
+
 def cmd_dynamic(args):
-    rules = args.rules
-    print(f"# Dynamic analysis — {args.ollama}  (live blackbox probing)\n")
+    # MODEL-ONLY symbol discovery: if the analyst supplies no seeds, derive them
+    # from the artifact's own vocab (BPE merges) — NEVER from host grammar files.
+    if args.rules:
+        rules, src = args.rules, "analyst-supplied"
+    else:
+        art = OllamaArtifact.resolve(args.ollama)
+        if not art.blob_path or not os.path.exists(art.blob_path):
+            sys.exit(f"cannot resolve blob for '{args.ollama}' to discover symbols")
+        decoded = GgufStaticAnalyzer(art.blob_path).tokenizer()["decoded"]
+        rules, src = discover_symbols(decoded, top=args.k), "model-derived (vocab merges)"
+    print(f"# Dynamic analysis — {args.ollama}  (live blackbox probing)")
+    print(f"# reconstruction seeds [{src}]: {rules}\n")
     recovered = {}
     # mixed prompt battery: BNF-form + prose (prose escapes the temp-0 attractor)
     for r in rules:
         for p in (f"<{r}> ::=", f"A {r} is", r):
             resp = _ollama_generate(args.ollama, p).strip().replace("\n", " ")
-            print(f'  {p!r:24} -> {resp[:90]}')
+            print(f'  {p!r:26} -> {resp[:84]}')
             recovered.setdefault(r, []).append(resp)
         print()
     print("Outputs are evidence only — nothing emitted by the model is executed.")
+    if args.oracle:
+        _score_against_oracle(recovered, args.oracle)
 
 
 def main():
@@ -89,10 +111,13 @@ def main():
     s.add_argument("--out", default=DEF_OUT, help="evidence output dir")
     s.set_defaults(func=cmd_static)
 
-    d = sub.add_parser("dynamic", help="live behavioral probing")
+    d = sub.add_parser("dynamic", help="live behavioral probing (model-only seeds)")
     d.add_argument("--ollama", required=True)
-    d.add_argument("--rules", nargs="+",
-                   default=["expr", "term", "factor", "number", "digit"])
+    d.add_argument("--rules", nargs="+", default=None,
+                   help="optional analyst seeds; default = discover from the model's vocab")
+    d.add_argument("--k", type=int, default=12, help="number of model-derived symbols to probe")
+    d.add_argument("--oracle", default=None,
+                   help="SELF-TEST ONLY: grammar file to score recall against (never a method input)")
     d.set_defaults(func=cmd_dynamic)
 
     args = ap.parse_args()

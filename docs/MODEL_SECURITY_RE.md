@@ -22,7 +22,13 @@ whether it **encodes a command/code-execution capability**. Two complementary tr
 
 **Blackbox trust boundary (hard rule).** Both tracks use **only** (a) the model artifact and
 (b) live query access. They never read the client/app source, the training files, or the HF source
-(those are later *whitebox* phases).
+(those are later *whitebox* phases). Grammar reconstruction **discovers its own symbols from the
+model** (vocab merges) — a real analyst auditing an unknown model has only the model.
+
+**Independent code.** The RE/security tooling is **new code written for analysis**, not a reuse of
+the host model-creation solution — its only dependencies are the external `gguf-py` parsing library
+and the Ollama API. It generalises across GGUF model types (**qwen2 / llama / mistral**), not just
+the NPU calculator model.
 
 Tooling: [`model_security_re.py`](../model_security_re.py) (CLI) +
 [`classes/class_model_security.py`](../classes/class_model_security.py) (analysis classes).
@@ -107,11 +113,15 @@ flowchart LR
 | Red-team probes *(named, Phase-1+)* | **garak** (NVIDIA) | external (pip) | jailbreak / prompt-injection / prompt-extraction probes |
 
 **Techniques:**
-- **Grammar reconstruction by prompt battery**: probe per candidate rule with a **mixed battery** —
-  BNF-form (`<factor> ::=`) **and** prose (`A factor is`). Prose escapes the temp-0 attractor that
-  collapses BNF prompts onto the dominant rule; the two together raise rule recall.
-- **Recall scoring** against an **offline oracle** (`grammars/playbook_model_calculator.txt`) — the
-  oracle is used to *score* reconstruction; it is never fed to the model.
+- **Model-only symbol discovery** (`discover_symbols`): seeds for reconstruction are derived from
+  the **artifact's own vocab** (the BPE merges assemble candidate symbols like `term`, `expr`,
+  `factor`). Never seeded from host grammar files — the analyst bootstraps from the model itself.
+- **Grammar reconstruction by prompt battery**: probe each discovered symbol with a **mixed
+  battery** — BNF-form (`<factor> ::=`) **and** prose (`A factor is`). Prose escapes the temp-0
+  attractor that collapses BNF prompts onto the dominant rule; together they raise rule recall.
+- **Recall scoring (self-test only)**: scoring against `grammars/playbook_model_calculator.txt` is
+  valid **only because we built this model**. It is never an input to reconstruction — a real
+  engagement against an unknown model has no oracle.
 - **Output-is-evidence rule**: nothing the model emits is ever executed — no client runner in the
   loop. We only read the text.
 
@@ -140,9 +150,21 @@ artifact (static) and confirmed by behavior (dynamic). Patterns:
   always the fragment of `te`+`rm`→**term**, not the shell command. Short dangerous words are
   LOW + *"confirm dynamically"*; only multi-char unambiguous signatures (`subprocess`,
   `os.system`, `/bin/sh`) are **HIGH**.
-- **Dictionary-word base64** — `calculator` matched a naive base64 check (alnum ≥ length). Hardened:
-  an encoded-blob candidate must contain a **digit or uppercase or be hex** (pure lowercase-alpha is
-  a word, not base64) **and** pass a **Shannon-entropy** floor after decode.
+- **Dictionary-word / identifier base64** — `calculator` and CamelCase identifiers like
+  `InitializeComponent` matched a naive base64 check. Hardened: a candidate must carry a **digit or
+  `+`/`/`/`=` (or be hex)** — pure-alpha is a word/identifier, not a payload — **and** decode to
+  **Shannon entropy ≥ 4.0**.
+- **Model-class awareness (from generalising to qwen2/llama/mistral)** — a general LLM's 150k-token
+  vocab *always* contains `import`, `system`, `exec`, `subprocess`, `curl`… because it was trained
+  on code. So on a **general** model (vocab ≥ 1024) pattern-A words are **baseline noise** (counted,
+  not per-token flagged); the meaningful exec signal is **pattern C** (the chat-template's
+  tool/function-calling) plus behaviour. On a **minimal/grammar** model a curated vocab makes
+  pattern A meaningful. The detector classifies the model and weights signals accordingly.
+
+**Worked contrast:** `model_calculator_test_npu` (vocab 374, minimal) → only `[A/LOW] rm` →
+**INCONCLUSIVE → confirm dynamic → INERT**. `qwen2.5:0.5b` (vocab 151,936, general) →
+`[C/HIGH]` tool-calling template + `[A/HIGH] subprocess/PowerShell` →
+**EXECUTABLE-CAPABILITY** (a true positive: a general model *is* code-capable).
 
 **Verdict ladder:** `HIGH present → EXECUTABLE-CAPABILITY` · `only LOW → INCONCLUSIVE (confirm via
 dynamic)` · `none → INERT`.
@@ -199,8 +221,23 @@ python3 model_security_re.py dynamic --ollama model_calculator_test_npu \
 
 ---
 
-## Phase 2 (later) — whitebox, conception-files-up
+## Roadmap
 
-Reverse further from the conception files (HF `safetensors` internals, training provenance), run
-the serialization scanners on any pickle, and resolve grammar alias-tokens to their real command
-strings. Out of the Phase-1 blackbox boundary; tracked here as the next step.
+**Phase 2 — advanced payload discovery (blackbox, harder signals).** Once confident on the basic
+patterns, evolve the detector toward:
+- **Crypted / obfuscated payloads** — beyond base64/hex: XOR/rot/gzip/zlib layers, split-and-
+  reassemble tokens, homoglyph/unicode-escape smuggling, weights-encoded payloads.
+- **Detection-evasion techniques** — recognise content shaped to slip naive scanners (low-entropy
+  encodings, benign-looking templates that compose into execution, staged/multi-turn payloads).
+- **C2 backchannel indicators** — detect a model whose content/behaviour encodes
+  command-and-control hints: hardcoded hosts/IPs/onion URLs, beacon-like output patterns,
+  exfiltration directives, or tool-call schemas pointed at attacker infrastructure.
+
+**Phase 3 — whitebox, conception-files-up.** Reverse from the conception files (HF `safetensors`
+internals, training provenance), run serialization scanners (**ModelScan / picklescan / fickling**)
+on any pickle, and resolve grammar alias-tokens to their real command strings. Out of the Phase-1
+blackbox boundary; the Stage-2 provenance hook stubs the entry point.
+
+These build on the **combined-technique** analysis: a compromised client/host that executes model
+output is the other half of the chain — modelled to train the detector, never required to flag the
+model-side capability.
