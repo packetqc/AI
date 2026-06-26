@@ -101,7 +101,9 @@ int main(void)
    *    Boot ROM parks AXISRAM3-6 and CACHEAXIRAM in shutdown (SRAMSD=1).
    *    Must run before HAL_Init, BSS zeroing, .data copy, or any code that
    *    dereferences pointers into 0x34200000-0x343FFFFF. */
+  g_boot_stage = 98;  /* main entered — CPU resumed from load_and_run */
   Enable_NPU_RAM_ForCore();
+  g_boot_stage = 99;  /* past Enable_NPU_RAM_ForCore */
   Enable_AXICACHE_RAM_ForCore();
 
   /* 2. Re-authorize SWD debug for this entire FSBL session.
@@ -117,6 +119,7 @@ int main(void)
   /* 3. GDB catch point — spin here so GDB can attach/observe, then write debugFlag=0
    *    via SWD to continue. Position is movable once the trace localizes the stall. */
   while (debugFlag) { __NOP(); }
+  g_boot_stage = 10;  /* past debugFlag spin */
 
   /* 4. Disable stale MPU regions left by Boot ROM.
    *    Boot ROM may mark parts of AXISRAM as XN; first branch into such a
@@ -136,6 +139,7 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
   HAL_Init();
+  g_boot_stage = 11;  /* past HAL_Init */
 
   /* USER CODE BEGIN Init */
 
@@ -143,6 +147,7 @@ int main(void)
 
   /* Configure the system clock */
   SystemClock_Config();
+  g_boot_stage = 12;  /* past SystemClock_Config */
 
   /* USER CODE BEGIN SysInit */
   /* USER CODE END SysInit */
@@ -159,6 +164,7 @@ int main(void)
   BSP_LED_Init(LED_RED);
   BSP_LED_Off(LED_GREEN);
   BSP_LED_Off(LED_RED);
+  g_boot_stage = 13;  /* past MX_GPIO_Init + BSP LED init */
   /* MX_XSPI1_Init() — skipped: PSRAM not used, hxspi1 never referenced */
   /* MX_XSPI2_Init() — skipped: load_and_run leaves XSPI2 mid-transaction (BUSY=1);
    * HAL_XSPIM_Config polls BUSY forever. BSP_XSPI_NOR_Init handles XSPI2 from
