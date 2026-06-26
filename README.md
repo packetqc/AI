@@ -72,6 +72,25 @@ docs/
 - [Ollama](https://ollama.com) installed and running (`ollama serve`)
 - NVIDIA GPU recommended (CPU inference works but is slow)
 
+### STM32N6 NPU device firmware (optional — runs the grammar model on-chip)
+
+Building the FSBL firmware that runs the TCN grammar model on the STM32N6570-DK
+Neural-ART NPU needs the ARM bare-metal toolchain **plus the C++ standard library
+for the target** (the device-side grammar runner uses `std::vector` / `std::map` /
+`std::string`):
+
+```bash
+sudo apt install gcc-arm-none-eabi binutils-arm-none-eabi \
+                 picolibc-arm-none-eabi libstdc++-arm-none-eabi
+```
+
+> **`libstdc++-arm-none-eabi` is required and easy to miss** — the base
+> `gcc-arm-none-eabi` package ships the C++ *compiler* but **not** libstdc++ for the
+> ARM target, so `#include <vector>` fails to compile until this package is installed.
+
+Also needs [ST Edge AI](https://www.st.com/en/development-tools/stedgeai-core.html)
+(`stedgeai`, to compile the model to device C) and the ST-LINK GDB server (flash/debug).
+
 ## GPU support
 
 The code auto-detects the best available compute device at startup (priority: CUDA → MPS → CPU) and trains on it automatically. No configuration required.
