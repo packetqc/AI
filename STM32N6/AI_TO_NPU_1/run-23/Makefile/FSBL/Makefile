@@ -90,7 +90,6 @@ C_SOURCES =  ../../FSBL/Core/Src/main.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/ll_aton/ecloader.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/Devices/STM32N6xx/npu_cache.c \
 /opt/DEV/ST/C/ST/STEdgeAI/4.0/Middlewares/ST/AI/Npu/Devices/STM32N6xx/mcu_cache.c \
-../../Appli/AI/App/network_atonbuf.xSPI2.c \
 ../../FSBL/Core/Src/llm_tokenizer.c \
 ../../FSBL/Core/Src/llm_fsbl.c \
 ../../FSBL/Core/Src/llm_test_fsbl.c
