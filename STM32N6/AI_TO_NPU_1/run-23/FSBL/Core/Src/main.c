@@ -27,6 +27,8 @@
 // #include "stm32n6570_discovery_errno.h"
 #include "stm32n6570_discovery.h"    /* BSP: COM1 VCP UART + LEDs (board-canonical) */
 #include "network.h"                 /* STAI API + the TCN NPU model (Loop 3b) */
+#include "network_tokens.h"          /* device tokenizer support (rule prompts + decode) */
+#include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
 // #include "llm_fsbl.h"
@@ -292,31 +294,18 @@ int main(void)
       Error_Handler();
     }
 
-    /* Test input: int8 embeddings all set to the zero-point (== numeric 0.0). */
-    memset(in_buf, (int)(int8_t)STAI_NETWORK_IN_1_ZERO_POINT, STAI_NETWORK_IN_1_SIZE_BYTES);
-
-    /* One synchronous inference on the NPU. */
-    uint32_t t0 = HAL_GetTick();
-    stai_return_code rc = stai_network_run(g_network, STAI_MODE_SYNC);
-    uint32_t t1 = HAL_GetTick();
-    if (rc != STAI_SUCCESS)
-    {
-      printf("NPU inference FAILED (stai rc=%d) - boot_stage=%lu\r\n",
-             (int)rc, (unsigned long)g_boot_stage);
-      Error_Handler();
-    }
-
-    /* Proof: argmax over the 374-way vocab logits at sequence position 0. */
-    const int8_t *logits = (const int8_t *)out_buf;
-    int best = 0; int8_t bestv = logits[0];
-    for (int c = 1; c < STAI_NETWORK_OUT_1_CHANNEL; c++)
-    {
-      int8_t v = logits[c * STAI_NETWORK_OUT_1_HEIGHT];
-      if (v > bestv) { bestv = v; best = c; }
-    }
     g_boot_stage = 10;
-    printf("NPU inference OK (%lu ms, argmax tok=%d val=%d)\r\n",
-           (unsigned long)(t1 - t0), best, (int)bestv);
+    /* Query the NPU grammar oracle for each calculator rule — reproduces the host
+     * recall on-device: rule name -> rule body, decoded + displayed. */
+    {
+      char body[160];
+      for (int r = 0; r < TOK_NUM_RULES; r++)
+      {
+        NPU_QueryRule(g_network, (int8_t *)in_buf, (const int8_t *)out_buf,
+                      r, body, (int)sizeof(body));
+        printf("NPU oracle: %-7s -> %s\r\n", g_rule_names[r], body);
+      }
+    }
   }
 
   /* LLM TESTS */

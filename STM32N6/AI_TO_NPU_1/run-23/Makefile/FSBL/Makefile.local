@@ -42,7 +42,10 @@ AI_SOURCES = \
   $(ATON_RT)/ll_aton_rt_main.c \
   $(ATON_RT)/ll_aton_runtime.c \
   $(ATON_RT)/ll_aton_util.c \
-  ../../FSBL/AI/npu_cache.c
+  ../../FSBL/AI/npu_cache.c \
+  ../../FSBL/AI/network_embed.c \
+  ../../FSBL/AI/network_tokens.c \
+  ../../FSBL/AI/npu_query.c
 
 C_INCLUDES += -I../../FSBL/AI -I$(AI_BASE)/Inc -I$(ATON_RT) -I$(AI_BASE)/Npu/Devices/STM32N6xx
 C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC -DLL_ATON_SW_FALLBACK
