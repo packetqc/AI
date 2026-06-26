@@ -55,7 +55,7 @@ XSPI_HandleTypeDef hxspi2;
 
 /* USER CODE BEGIN PV */
 UART_HandleTypeDef huart1;
-volatile int debugFlag = 0;  /* 0 = run free (Programmer/flash boot). Set 1 to spin for GDB attach. */
+volatile int debugFlag = 1;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 /* USER CODE END PV */
 
@@ -97,115 +97,77 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  /* 1. Power up NPU RAMs and CACHEAXIRAM before anything can touch them.
-   *    Boot ROM parks AXISRAM3-6 and CACHEAXIRAM in shutdown (SRAMSD=1).
-   *    Must run before HAL_Init, BSS zeroing, .data copy, or any code that
-   *    dereferences pointers into 0x34200000-0x343FFFFF. */
-  g_boot_stage = 98;  /* main entered — CPU resumed from load_and_run */
+  /* RAM-bank power-on for the M55 core — BEFORE any code touches AXISRAM3-6 / CACHEAXIRAM
+   * (boot ROM parks them; first access faults). Ref project N6_EDGEAI_1 main(). */
   Enable_NPU_RAM_ForCore();
-  g_boot_stage = 99;  /* past Enable_NPU_RAM_ForCore */
   Enable_AXICACHE_RAM_ForCore();
 
-  /* 2. Re-authorize SWD debug for this entire FSBL session.
-   *    Runtime BSEC register writes only — no OTP/fuse programming.
-   *    NOTE: This resets the current debug AP session. The GDB server will
-   *    get a broken pipe — this is EXPECTED. Restart GDB server and reconnect;
-   *    the CPU will be spinning at while(debugFlag) below with full Secure auth. */
-  /* OpenDebug();  — DISABLED for load-and-run debug. Under load_and_run the ST-Link
-   * already controls the CPU and SWD is authorized, so OpenDebug's BSEC AP-reset just
-   * reboots the device back to ROM (the SRAM image is lost → LEDs/UART never come up).
-   * Re-enable only for the flash-boot-then-attach flow. */
+  /* Re-authorize Secure SWD core debug (runtime BSEC, no OTP) so the MCP GDB session can
+   * attach to the running FSBL. Ref N6_EDGEAI_1. REMOVE for production. */
+  OpenDebug();
 
-  /* 3. GDB catch point — spin here so GDB can attach/observe, then write debugFlag=0
-   *    via SWD to continue. Position is movable once the trace localizes the stall. */
+  /* GDB catch loop (debugFlag technique — methodology-debug-fsbl-direct + ref N6_EDGEAI_1):
+   * CPU spins here after OpenDebug. MCP flow: gdb_server_start(attach) -> connect -> CPU is
+   * in this loop -> release via write M[&debugFlag]=0 + DCIMVAC + resume -> step. */
   while (debugFlag) { __NOP(); }
-  g_boot_stage = 10;  /* past debugFlag spin */
 
-  /* 4. Disable stale MPU regions left by Boot ROM.
-   *    Boot ROM may mark parts of AXISRAM as XN; first branch into such a
-   *    region fires IACCVIOL → HardFault before UART is up. */
+  /* Force-disable MPU first: BootROM/leftover FSBL state may leave XN regions that fault
+   * instruction fetch in our load range. Ref N6_EDGEAI_1. */
   HAL_MPU_Disable();
 
-  /* 5. Clear stack-pointer limits and FPCA (see original comments). */
-  __set_MSPLIM(0U);
-  __set_PSPLIM(0U);
-#if defined(__ARM_FEATURE_CMSE) && (__ARM_FEATURE_CMSE == 3U)
-  __TZ_set_MSPLIM_NS(0U);
-  __TZ_set_PSPLIM_NS(0U);
-#endif
-  __set_CONTROL(__get_CONTROL() & ~CONTROL_FPCA_Msk);
-  __ISB();
+  /* Suppress the BootROM "unsigned-boot" RED LED (LD2 = PG10, active-low): under SWD
+   * load_and_run the ROM drives PG10 LOW (LED ON) as a debug signal; a BSRR set-bit flips
+   * it HIGH (OFF). Ref N6_EDGEAI_1. */
+  __HAL_RCC_GPIOG_CLK_ENABLE();
+  GPIOG->BSRR = (1U << 10);
+
+  /* Clear stale pending IRQs the boot ROM / prior boot leave — they re-fire right after
+   * load_and_run and fault into uninitialised HAL state. Ref N6_EDGEAI_1. */
+  HAL_NVIC_DisableIRQ(TIM2_IRQn);
+  HAL_NVIC_ClearPendingIRQ(TIM2_IRQn);
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
   HAL_Init();
-  g_boot_stage = 11;  /* past HAL_Init */
-
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
+  g_boot_stage = 1;
 
   /* Configure the system clock */
   SystemClock_Config();
-  g_boot_stage = 12;  /* past SystemClock_Config */
+  g_boot_stage = 2;
 
   /* USER CODE BEGIN SysInit */
-  /* USER CODE END SysInit */
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-
-  /* BSP LEDs early (right after GPIO) to signal init-phase errors, forced to a known OFF
-   * state first — the N6570-DK LEDs are active-inverse, so the post-init/default level
-   * can read as ON; BSP_LED_Off normalizes it. RED is lit by Error_Handler (an init
-   * failed); GREEN (below) = reached the REPL. (HW breakpoints don't catch under
-   * load-and-run, so the LEDs + g_boot_stage are our init trace.) */
-  BSP_LED_Init(LED_GREEN);
-  BSP_LED_Init(LED_RED);
-  BSP_LED_Off(LED_GREEN);
-  BSP_LED_Off(LED_RED);
-  g_boot_stage = 13;  /* past MX_GPIO_Init + BSP LED init */
-  /* MX_XSPI1_Init() — skipped: PSRAM not used, hxspi1 never referenced */
-  /* MX_XSPI2_Init() — skipped: load_and_run leaves XSPI2 mid-transaction (BUSY=1);
-   * HAL_XSPIM_Config polls BUSY forever. BSP_XSPI_NOR_Init handles XSPI2 from
-   * scratch and works correctly without the HAL mux pre-config. */
-
-  /* MX_EXTMEM_MANAGER_Init() — skip: BOOT_Application() path not used */
-  /* USER CODE BEGIN 2 */
-
-  /* UART up FIRST in USER CODE 2 — direct-register USART1 (uart_puts polls ISR.TXFNF, no
-   * HAL_UART: per reference N6_EDGEAI_1, HAL_UART_* fails silently in the FSBL boot context
-   * because HAL_GetTick doesn't advance). Brought up early so each init step is traced. */
-  MX_USART1_UART_Init();
-  uart_puts("\r\n[run-23] FSBL alive — boot trace:\r\n");
-
-  /* NOR flash memory-mapped init FIRST — BEFORE NPU_Config / CACHEAXI enable (CACHEAXI on
-   * the AXI path would intercept XSPI2 command transactions during NOR init). */
-  BSP_XSPI_NOR_Init_t xspiInit;
-  xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
-  xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
-  g_boot_stage = 1;  uart_puts("[boot] 1 XSPI NOR\r\n");
-  BSP_XSPI_NOR_Init(0, &xspiInit);
-  BSP_XSPI_NOR_EnableMemoryMappedMode(0);
-  MODIFY_REG(XSPI2->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
-
-  /* NPU + security init — AFTER NOR flash is mapped (reference project order) */
-  g_boot_stage = 2;  uart_puts("[boot] 2 SystemInit_POST + cache\r\n");
+  /* NPU RAMs were powered in USER CODE 1; enable the M55 caches. */
   SystemInit_POST();
   SCB_EnableICache();
   SCB_EnableDCache();
+  g_boot_stage = 3;
+  /* USER CODE END SysInit */
 
-  g_boot_stage = 3;  uart_puts("[boot] 3 NPU_Config\r\n");
+  /* USER CODE BEGIN 2 */
   NPU_Config();
-  g_boot_stage = 4;  uart_puts("[boot] 4 RISAF_Config\r\n");
-  RISAF_Config();
+  g_boot_stage = 4;
 
-  /* nocode grammar REPL over USART1 — the host solution on the N6 (CM55 CPU; the embedded
-   * grammar playbook is the oracle; the NPU model dialog is opt-in via '/model on'). */
-  g_boot_stage = 6;  uart_puts("[boot] 6 REPL\r\n");
-  BSP_LED_On(LED_GREEN);             /* proof of life: reached the REPL, all init done */
-  LLM_Repl_Run();
-  while (1) {}  /* prevent BOOT_Application() — remove to restore normal boot */
+  /* NPU weights are memory-mapped from XSPI2 NOR @0x71000000 */
+  BSP_XSPI_NOR_Init_t xspiInit;
+  xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
+  xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
+  BSP_XSPI_NOR_Init(0, &xspiInit);
+  BSP_XSPI_NOR_EnableMemoryMappedMode(0);
+  g_boot_stage = 5;
+
+  RISAF_Config();
+  g_boot_stage = 6;
+
+  /* UART deferred (commented) — focus on the NPU code logic + MCP trace (step / read_memory).
+   * MX_USART1_UART_Init();   // BSP COM1 / USART1 PE5/PE6 — re-enable once init is proven. */
+
+  /* App logic: bring up the NPU calculator model + run one inference. Traced via MCP
+   * (g_boot_stage + step). The REPL (UART I/O) is deferred per focus. */
+  /* LLM_FSBL_Init();  ...one inference... */
+  g_boot_stage = 7;
+  /* USER CODE END 2 */
+
+  while (1) { __NOP(); }
 
   /* USER CODE END 2 */
 
