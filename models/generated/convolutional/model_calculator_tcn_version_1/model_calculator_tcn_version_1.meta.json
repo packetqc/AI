@@ -1,0 +1,9 @@
+{
+  "name": "model_calculator_tcn_version_1",
+  "arch": "tcn",
+  "embed_dim": 256,
+  "seq_len": 32,
+  "kernel": 3,
+  "vocab": 374,
+  "recall": "5/5"
+}

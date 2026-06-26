@@ -65,7 +65,7 @@ model_create = "model_discoverit_version_" + version
 
 # Each model is self-contained in its own folder under models/: HF weights +
 # <name>.gguf + <name>.state.json + Modelfile all live inside models/<name>/.
-model_path = os.path.join("models", "generated", model_create)   # the model's own folder
+model_path = os.path.join("models", "generated", "transformer", model_create)   # transformer family
 os.makedirs(model_path, exist_ok=True)                   # create empty folder if missing
 gguf_path = os.path.join(model_path, model_create + ".gguf")
 

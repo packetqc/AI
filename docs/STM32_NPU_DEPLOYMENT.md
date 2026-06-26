@@ -266,13 +266,42 @@ SRAM (481 KiB), which also dissolves the flash-weights bottleneck.
 | **Conv1D / TCN** | ✅ 100% HW | conv is the NPU's core op; ~tens of µs |
 | MLP / fully-connected | ✅ HW | GEMM maps to the Convolution Accelerators |
 
-**Caveat:** the *trained* int8 TCN currently segfaults the `atonn` compiler at ~85%
-(`signo=11`) while the same architecture with random weights compiles cleanly — an ST
-tool-robustness bug on the specific weight pattern (likely the 374-channel 1×1 head with many
-near-zero unused-vocab channels), to be reported to ST / worked around with weight regularization.
+**Earlier caveat (now not reproduced):** an older trained int8 TCN segfaulted the `atonn`
+compiler at ~85% (`signo=11`) on a specific weight pattern. The **causal** Conv1D TCN below
+compiles **clean** end-to-end (analyze + generate), so the caveat is currently a non-issue;
+keep weight-regularization / head-pruning in mind if it resurfaces on larger vocabs.
 
-**Next step (opt-in):** train/distill the Conv1D model, export through the *same* flow → new
-`run-XX`, and adapt only the device wrapper I/O (`int8[1,256,32]` in → `int8[1,374,32]` out).
+### ✅ IMPLEMENTED — create an NPU-native TCN from the host
+
+[`scripts/model_generation/model_create_npu_tcn.py`](../scripts/model_generation/model_create_npu_tcn.py)
+creates a **causal Conv1D / TCN** grammar model on the host and exports it ready for the device —
+reusing the existing tokenizer + grammar, no transformer.
+
+```bash
+python3 scripts/model_generation/model_create_npu_tcn.py    # calculator grammar (default)
+```
+
+Pipeline: reuse 374-vocab tokenizer + parse the BNF grammar → build the TCN
+(`Embedding(374→256)` + 2× causal `Conv1d(256,256,k=3)` + `Conv1d(256,374,1)` head) → train to
+**grammar recall** → export the **NPU body** ONNX `embeddings[1,256,32] → logits[1,374,32]`
+(static shapes; CPU does the int8 embedding Gather, NPU runs the conv body) → INT8 static-quant →
+`stedgeai analyze` → `stedgeai generate`.
+
+**Result (calculator, validated on this host):**
+
+| | Value |
+|---|---|
+| `stedgeai analyze` | **NPU-NATIVE — 100% pure hardware** (no SW-fallback, no `NOT IMPLEMENTED`) |
+| weights (INT8) | 480.96 KiB (−74.9% vs float) |
+| activations | 23.38 KiB — fits internal AXISRAM |
+| MACC | 15.66 M |
+| grammar recall | **5/5** rules (`expr/term/factor/number/digit` reproduced) |
+| device C code | `network.c` / `network_data.c` generated under `models/npu_export/<name>/generated/` |
+
+**Outputs:** `models/generated/convolutional/<name>/` (torch `.pt` + tokenizer + fp32/int8 ONNX) and
+`models/npu_export/<name>/` (analyze report + ST Edge AI C code). The contrast holds: the **Qwen2**
+calculator model → SW-fallback; the **Conv1D/TCN** → 100% NPU hardware. Remaining step (hardware):
+compile the generated C into the FSBL firmware and flash to an STM32N6 board.
 
 ---
 

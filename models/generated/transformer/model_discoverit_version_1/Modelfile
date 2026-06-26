@@ -1,4 +1,4 @@
-FROM /opt/DEV/AI/models/generated/model_discoverit_version_1/model_discoverit_version_1.gguf
+FROM /opt/DEV/AI/models/generated/transformer/model_discoverit_version_1/model_discoverit_version_1.gguf
 
 TEMPLATE """<|endoftext|>{{ .Prompt }}"""
 

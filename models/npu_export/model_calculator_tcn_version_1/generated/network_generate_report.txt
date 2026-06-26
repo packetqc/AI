@@ -1,0 +1,184 @@
+ST Edge AI Core v4.0.0-20500 359356bb0
+Created date          : 2026-06-25 23:07:04
+Parameters            : generate --model models/generated/convolutional/model_calculator_tcn_version_1/model_npu_int8.onnx --target stm32n6 --name network --c-api st-ai --output models/npu_export/model_calculator_tcn_version_1/generated
+
+Exec/report summary (generate)
+-----------------------------------------------------------------------------------------------------------------------------------
+model file         :   /opt/DEV/AI/models/generated/convolutional/model_calculator_tcn_version_1/model_npu_int8.onnx               
+type               :   onnx                                                                                                        
+c_name             :   network                                                                                                     
+compression        :   lossless                                                                                                    
+options            :   allocate-inputs, allocate-outputs, use-lite-runtime, use-st-ai                                              
+optimization       :   balanced                                                                                                    
+target/series      :   stm32n6                                                                                                     
+workspace dir      :   /opt/DEV/AI/st_ai_ws                                                                                        
+output dir         :   /opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated                                      
+model_fmt          :   sa/sa per tensor                                                                                            
+model_name         :   model_npu_int8                                                                                              
+model_hash         :   0xe3db1723d9713e7e4c6d9cd91e3d66db                                                                          
+params #           :   489,846 items (1.87 MiB)                                                                                    
+-----------------------------------------------------------------------------------------------------------------------------------
+input 1/1          :   'embeddings', int8(1x256x32), 8.00 KBytes, QLinear(0.029472800,-4,int8), activations                        
+output 1/1         :   'logits_QuantizeLin..ranspose_0', int8(1x374x32), 11.69 KBytes, QLinear(0.550632954,-1,int8), activations   
+macc               :   15,657,686                                                                                                  
+weights (ro)       :   492,504 B (480.96 KiB) (1 segment) / -1,466,880(-74.9%) vs float model                                      
+activations (rw)   :   23,936 B (23.38 KiB) (1 segment) *                                                                          
+ram (total)        :   23,936 B (23.38 KiB) = 23,936 + 0 + 0                                                                       
+-----------------------------------------------------------------------------------------------------------------------------------
+(*) 'input'/'output' buffers are allocated in the activations buffer
+
+Model name - model_npu_int8
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+m_id   layer (type,original)                                           oshape             param/size               macc                     connected to   | c_size             c_macc             c_type       
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+0      embeddings (Input, )                                            [b:1,h:32,c:256]                                                                    |                                       
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+23     embeddings_Quantiz..ear_Output (Conversion, QuantizeLinear)     [b:1,h:32,c:256]                          16,384                       embeddings   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+30     embeddings_Dequant..ear_Output (Conversion, DequantizeLinear)   [b:1,h:32,c:256]                          16,384   embeddings_Quantiz..ear_Output   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+45     _pad1_Pad_output_0 (Pad, Pad)                                   [b:1,h:34,c:256]                                   embeddings_Dequant..ear_Output   |                                       Pad_[1]      
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+46     _pad1_Pad_output_0..ear_Output (Conversion, QuantizeLinear)     [b:1,h:34,c:256]                          17,408               _pad1_Pad_output_0   |                    -17,408(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+47     _pad1_Pad_output_0..ear_Output (Conversion, DequantizeLinear)   [b:1,h:34,c:256]                          17,408   _pad1_Pad_output_0..ear_Output   |                    -17,408(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+48     _act_Relu_output_0 (Conv2D, Conv)                               [b:1,h:32,c:256]   196,864/787,456     6,291,712   _pad1_Pad_output_0..ear_Output   | -589,824(-74.9%)                      Conv2D_[2]   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+49     _act_Relu_output_0..ear_Output (Conversion, QuantizeLinear)     [b:1,h:32,c:256]                          16,384               _act_Relu_output_0   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+50     _act_Relu_output_0..ear_Output (Conversion, DequantizeLinear)   [b:1,h:32,c:256]                          16,384   _act_Relu_output_0..ear_Output   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+51     _pad2_Pad_output_0 (Pad, Pad)                                   [b:1,h:34,c:256]                                   _act_Relu_output_0..ear_Output   |                                       Pad_[3]      
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+52     _pad2_Pad_output_0..ear_Output (Conversion, QuantizeLinear)     [b:1,h:34,c:256]                          17,408               _pad2_Pad_output_0   |                    -17,408(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+53     _pad2_Pad_output_0..ear_Output (Conversion, DequantizeLinear)   [b:1,h:34,c:256]                          17,408   _pad2_Pad_output_0..ear_Output   |                    -17,408(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+54     _act_1_Relu_output_0 (Conv2D, Conv)                             [b:1,h:32,c:256]   196,864/787,456     6,291,712   _pad2_Pad_output_0..ear_Output   | -589,824(-74.9%)                      Conv2D_[4]   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+55     _act_1_Relu_output..ear_Output (Conversion, QuantizeLinear)     [b:1,h:32,c:256]                          16,384             _act_1_Relu_output_0   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+56     _act_1_Relu_output..ear_Output (Conversion, DequantizeLinear)   [b:1,h:32,c:256]                          16,384   _act_1_Relu_output..ear_Output   |                    -16,384(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+57     logits_QuantizeLinear_Input (Conv2D, Conv)                      [b:1,h:32,c:374]   96,118/384,472      3,064,182   _act_1_Relu_output..ear_Output   | -287,232(-74.7%)                      Conv2D_[5]   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+58     logits_QuantizeLinear_Output (Conversion, QuantizeLinear)       [b:1,h:32,c:374]                          23,936      logits_QuantizeLinear_Input   |                    -23,936(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+59     logits (Conversion, DequantizeLinear)                           [b:1,h:32,c:374]                          23,936     logits_QuantizeLinear_Output   |                    -23,936(-100.0%)   
+------ --------------------------------------------------------------- ------------------ ----------------- ----------- -------------------------------- --- ------------------ ------------------ ------------ 
+model/c-model: macc=15,863,414/15,657,686 -205,728(-1.3%) weights=1,959,384/492,504 -1,466,880(-74.9%) activations=--/23,936 io=--/0
+
+
+
+Generated C-graph summary
+------------------------------------------------------------------------------------------------------------------------
+model name            : model_npu_int8
+c-name                : network
+c-node #              : 7
+c-array #             : 17
+activations size      : 23936 (1 segment)
+weights size          : 492504 (1 segment)
+macc                  : 15657686
+inputs                : ['embeddings_output']
+outputs               : ['logits_QuantizeLinear_Input_Transpose_0_output']
+
+C-Arrays (17)
+------ ------------------------------------------------ --------------- ------------------------- ----------- --------- 
+c_id   name (*_array)                                   item/size       domain/mem-pool           c-type      comment   
+------ ------------------------------------------------ --------------- ------------------------- ----------- --------- 
+0      _act_1_Relu_output_0_bias                        256/1024        weights/weights           const s32             
+1      _act_1_Relu_output_0_output                      8192/8192       activations/**default**   s8                    
+2      _act_1_Relu_output_0_scratch0                    5120/5120       activations/**default**   s8                    
+3      _act_1_Relu_output_0_weights                     196608/196608   weights/weights           const s8              
+4      _act_Relu_output_0_bias                          256/1024        weights/weights           const s32             
+5      _act_Relu_output_0_output                        8192/8192       activations/**default**   s8                    
+6      _act_Relu_output_0_scratch0                      5120/5120       activations/**default**   s8                    
+7      _act_Relu_output_0_weights                       196608/196608   weights/weights           const s8              
+8      _pad1_Pad_output_0_output                        8704/8704       activations/**default**   s8                    
+9      _pad2_Pad_output_0_output                        8704/8704       activations/**default**   s8                    
+10     embeddings_Transpose_output                      8192/8192       activations/**default**   s8                    
+11     embeddings_output                                8192/8192       activations/**default**   s8          /input    
+12     logits_QuantizeLinear_Input_Transpose_0_output   11968/11968     activations/**default**   s8          /output   
+13     logits_QuantizeLinear_Input_bias                 374/1496        weights/weights           const s32             
+14     logits_QuantizeLinear_Input_output               11968/11968     activations/**default**   s8                    
+15     logits_QuantizeLinear_Input_scratch0             4016/4016       activations/**default**   s8                    
+16     logits_QuantizeLinear_Input_weights              95744/95744     weights/weights           const s8              
+------ ------------------------------------------------ --------------- ------------------------- ----------- --------- 
+
+C-Layers (7)
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+c_id   name (*_layer)                            id   layer_type   macc      rom      tensors                                             shape (array id)         
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+0      embeddings_Transpose                      2    Transpose    4096      0        I: embeddings_output                                int8(1x256x32) (11)      
+                                                                                      O: embeddings_Transpose_output                      int8(1x32x256) (10)      
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+1      _pad1_Pad_output_0                        45   Pad          0         0        I: embeddings_Transpose_output                      int8(1x32x256) (10)      
+                                                                                      O: _pad1_Pad_output_0_output                        int8(1x34x256) (8)       
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+2      _act_Relu_output_0                        48   Conv2D       6291712   197632   I: _pad1_Pad_output_0_output                        int8(1x34x256) (8)       
+                                                                                      S: _act_Relu_output_0_scratch0                                               
+                                                                                      W: _act_Relu_output_0_weights                       int8(256x3x1x256) (7)    
+                                                                                      W: _act_Relu_output_0_bias                          int32(256) (4)           
+                                                                                      O: _act_Relu_output_0_output                        int8(1x32x256) (5)       
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+3      _pad2_Pad_output_0                        51   Pad          0         0        I: _act_Relu_output_0_output                        int8(1x32x256) (5)       
+                                                                                      O: _pad2_Pad_output_0_output                        int8(1x34x256) (9)       
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+4      _act_1_Relu_output_0                      54   Conv2D       6291712   197632   I: _pad2_Pad_output_0_output                        int8(1x34x256) (9)       
+                                                                                      S: _act_1_Relu_output_0_scratch0                                             
+                                                                                      W: _act_1_Relu_output_0_weights                     int8(256x3x1x256) (3)    
+                                                                                      W: _act_1_Relu_output_0_bias                        int32(256) (0)           
+                                                                                      O: _act_1_Relu_output_0_output                      int8(1x32x256) (1)       
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+5      logits_QuantizeLinear_Input               57   Conv2D       3064182   97240    I: _act_1_Relu_output_0_output                      int8(1x32x256) (1)       
+                                                                                      S: logits_QuantizeLinear_Input_scratch0                                      
+                                                                                      W: logits_QuantizeLinear_Input_weights              int8(374x1x1x256) (16)   
+                                                                                      W: logits_QuantizeLinear_Input_bias                 int32(374) (13)          
+                                                                                      O: logits_QuantizeLinear_Input_output               int8(1x32x374) (14)      
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+6      logits_QuantizeLinear_Input_Transpose_0   1    Transpose    5984      0        I: logits_QuantizeLinear_Input_output               int8(1x32x374) (14)      
+                                                                                      O: logits_QuantizeLinear_Input_Transpose_0_output   int8(1x374x32) (12)      
+------ ----------------------------------------- ---- ------------ --------- -------- --------------------------------------------------- ------------------------ 
+
+
+
+Number of operations per c-layer
+------- ------ --------------------------------------------- ------------ ------------ 
+c_id    m_id   name (type)                                            #op         type 
+------- ------ --------------------------------------------- ------------ ------------ 
+0       2      embeddings_Transpose (Transpose)                     4,096   smul_s8_s8 
+1       45     _pad1_Pad_output_0 (Pad)                                 0   smul_s8_s8 
+2       48     _act_Relu_output_0 (Conv2D)                      6,291,712   smul_s8_s8 
+3       51     _pad2_Pad_output_0 (Pad)                                 0   smul_s8_s8 
+4       54     _act_1_Relu_output_0 (Conv2D)                    6,291,712   smul_s8_s8 
+5       57     logits_QuantizeLinear_Input (Conv2D)             3,064,182   smul_s8_s8 
+6       1      logits_QuantizeLin..ranspose_0 (Transpose)           5,984   smul_s8_s8 
+------- ------ --------------------------------------------- ------------ ------------ 
+total                                                          15,657,686 
+
+Number of operation types
+---------------- ------------ ----------- 
+operation type              #           % 
+---------------- ------------ ----------- 
+smul_s8_s8         15,657,686      100.0% 
+
+Complexity report (model)
+------ ----------------------------- ------------------------- ------------------------- ------ 
+m_id   name                          c_macc                    c_rom                     c_id   
+------ ----------------------------- ------------------------- ------------------------- ------ 
+45     _pad1_Pad_output_0            |                  0.0%   |                  0.0%   [1]    
+48     _act_Relu_output_0            ||||||||||||||||  40.2%   ||||||||||||||||  40.1%   [2]    
+51     _pad2_Pad_output_0            |                  0.0%   |                  0.0%   [3]    
+54     _act_1_Relu_output_0          ||||||||||||||||  40.2%   ||||||||||||||||  40.1%   [4]    
+57     logits_QuantizeLinear_Input   ||||||||          19.6%   ||||||||          19.7%   [5]    
+------ ----------------------------- ------------------------- ------------------------- ------ 
+macc=15,657,686 weights=492,504 act=23,936 ram_io=0
+
+Generated files (5)
+------------------------------------------------------------------------------------------ 
+/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated/network_data.h      
+/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated/network_data.c      
+/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated/network.h           
+/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated/network.c           
+/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated/network_details.h   

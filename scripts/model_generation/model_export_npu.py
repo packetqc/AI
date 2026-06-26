@@ -57,7 +57,7 @@ def _discover_model():
     import glob
     # models now live in models/<name>/ (gguf + state.json inside the folder); keep the
     # legacy cwd scan as a fallback for older layouts.
-    candidates = sorted(glob.glob("models/generated/*/*.state.json") + glob.glob("*.state.json"),
+    candidates = sorted(glob.glob("models/generated/*/*/*.state.json") + glob.glob("*.state.json"),
                         key=os.path.getmtime, reverse=True)
     for sf in candidates:
         mp = os.path.dirname(sf) or sf[: -len(".state.json")]
