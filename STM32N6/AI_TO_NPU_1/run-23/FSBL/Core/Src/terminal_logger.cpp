@@ -46,7 +46,9 @@ const char* severity_color(Severity s)
 
 void TerminalLogger::emit(const char* s) const
 {
-    if (sink_ && s) sink_(s, (int)strlen(s));
+    if (!s) return;
+    if (sink_) sink_(s, (int)strlen(s));   /* injected sink (host tests / custom TX) */
+    else       fputs(s, stdout);           /* native printf path: device __io_putchar -> COM1 */
 }
 
 /* Device timestamp: uptime "HH:MM:SS.mmm" (no RTC at FSBL stage).
@@ -66,7 +68,6 @@ void TerminalLogger::format_time(char* buf, int n) const
 
 void TerminalLogger::log(Severity sev, const char* category, const char* message) const
 {
-    if (!sink_) return;
     char time_str[16];
     format_time(time_str, sizeof(time_str));
 
@@ -95,3 +96,17 @@ void TerminalLogger::logf(Severity sev, const char* category, const char* fmt, .
 }
 
 } /* namespace llm */
+
+/* ── C -> C++ transition smoke test (called from the C FSBL main via extern "C") ──
+ * Builds a printf-native TerminalLogger (no sink -> fputs(stdout) -> COM1) and emits
+ * a couple of colored, time-stamped lines. Proves g++ compile, C/C++ link, extern "C"
+ * interop, and the native-printf logger path all work inside the C FSBL. */
+extern "C" uint32_t HAL_GetTick(void);
+
+extern "C" void TerminalLogger_SmokeTest(void)
+{
+    llm::TerminalLogger log(HAL_GetTick, /*color=*/true);
+    log.log (llm::Severity::Ok,     "C++TEST", "TerminalLogger live (printf-native)");
+    log.log (llm::Severity::Info,   "C++TEST", "C -> C++ transition OK");
+    log.logf(llm::Severity::Notice, "C++TEST", "tick=%lu ms", (unsigned long)HAL_GetTick());
+}

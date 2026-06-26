@@ -86,6 +86,7 @@ static void SystemIsolation_Config(void);
 static void Enable_NPU_RAM_ForCore(void);
 static void Enable_AXICACHE_RAM_ForCore(void);
 static void OpenDebug(void);
+extern void TerminalLogger_SmokeTest(void);  /* C++ TerminalLogger (terminal_logger.cpp), extern "C" */
 // void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
 /* USER CODE END PFP */
 
@@ -242,7 +243,8 @@ int main(void)
 
   /* LLM TESTS */
   {
-
+    /* C -> C++ transition test: the C++ TerminalLogger logging via the native printf. */
+    TerminalLogger_SmokeTest();
   }
 
   while (1) /* STAY IN FSBL */

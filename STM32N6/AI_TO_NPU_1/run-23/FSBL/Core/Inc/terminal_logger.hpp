@@ -44,6 +44,11 @@ public:
     TerminalLogger(LogSink sink, TickMs tick, bool color = true)
         : sink_(sink), tick_(tick), color_(color) {}
 
+    /* printf-native ctor: no sink -> emit() uses fputs(stdout). On device that is
+     * retargeted to COM1 via __io_putchar; on host it is stdout. Host-testable + board-free. */
+    explicit TerminalLogger(TickMs tick = nullptr, bool color = true)
+        : sink_(nullptr), tick_(tick), color_(color) {}
+
     /* Core: format and emit one aligned, colored log line (CRLF-terminated). */
     void log(Severity sev, const char* category, const char* message) const;
 
