@@ -59,19 +59,6 @@ $(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
 endef
 $(foreach src,$(AI_SOURCES),$(eval $(call AI_BUILD_RULE,$(src))))
 
-# --- C++ transition: TerminalLogger compiled with g++ (embedded subset: no exceptions/RTTI/heap) ---
-# The object uses only libc (snprintf/fputs/strlen), so the gcc link resolves it without libstdc++.
-CXX      = $(PREFIX)g++
-CXXFLAGS = $(MCU) $(C_DEFS) $(C_INCLUDES) $(OPT) -Wall -fdata-sections -ffunction-sections \
-           -std=c++17 -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-use-cxa-atexit -mcmse
-ifeq ($(DEBUG),1)
-CXXFLAGS += -g -gdwarf-2
-endif
-OBJECTS += $(BUILD_DIR)/terminal_logger.o
-$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/terminal_logger.o
-$(BUILD_DIR)/terminal_logger.o: ../../FSBL/Core/Src/terminal_logger.cpp Makefile | $(BUILD_DIR)
-	$(CXX) -c $(CXXFLAGS) $< -o $@
-
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 
