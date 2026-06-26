@@ -9,10 +9,10 @@ interactive grammar REPL is validated live on hardware. See
 CPU-bound on the NPU) and [NPU-native path](#npu-native-architecture-path-light-speed) for the
 proven fast alternative.
 
-**Latest dev (NPU-native path, in progress):** `run-23` brings the Neural-ART NPU hardware path
-up under the FSBL-direct flow — everything *around* the engine is now verified byte-identical to
-the operational reference, but the ATON streaming engine does not yet complete the epoch. See
-[run-23 NPU-native bring-up](#run-23--npu-native-bring-up-latest-dev-in-progress) for the current
+**Latest dev (NPU-native path, operational build):** `run-23` now carries the **Conv1D/TCN** model
+(proven 100% NPU-hardware by `stedgeai analyze`) plus run-22's full on-chip REPL stack and build
+technique — the FSBL builds clean; the on-hardware epoch + REPL confirmation is the remaining step. See
+[run-23 NPU-native operational build](#run-23--npu-native-operational-build-latest-dev) for the current
 state and [Roadmap](#roadmap--host-built-custom-edge-ai-models-on-the-npu) for where this thread
 continues.
 
@@ -305,59 +305,60 @@ compile the generated C into the FSBL firmware and flash to an STM32N6 board.
 
 ---
 
-## run-23 — NPU-native bring-up (latest dev, in progress)
+## run-23 — NPU-native, operational build (latest dev)
 
-`run-23` is the Studio-generated **vanilla NPU** project, promoted from the ignored working dir
-to a first-class sibling of `run-22` (`STM32N6/AI_TO_NPU_1/run-23`) so the build fixes and the
-in-FSBL NPU confirmation are preserved in git. It carries a minimal **in-FSBL one-shot NPU
-inference** (vanilla layout — weights in xSPI2 flash `@0x71000000` via a `PROVIDE` symbol,
-RISAF8 on) with LED + UART signalling (GREEN = epoch done, RED = init fail) that is immune to
-RISAF state.
+`run-23` is now the **operational NPU-native project**: the Studio-generated vanilla NPU project,
+promoted to a first-class sibling of `run-22`, then completed by (a) swapping in the **Conv1D/TCN
+calculator model** — the architecture `stedgeai analyze` proves maps **100% to NPU hardware** — and
+(b) transposing run-22's full REPL stack + build technique so it builds and runs the on-chip text
+REPL. `run-23_FSBL.elf/.hex/.bin` build clean.
 
-The bring-up matches the operational reference project (`N6_EDGEAI_1`) FSBL-direct NPU setup —
-**this disproves the earlier "load-and-run can't run the NPU" conclusion**: the reference runs
-the NPU under the same flow. `aiPreInitialize()` = `SystemInit_POST` + `NPU_Config` +
-`RISAF_Config`, where `SystemInit_POST` takes AXISRAM2–6 out of SRAM-shutdown
-(`RAMCFG_CR_SRAMSD`), powers `CACHEAXIRAM` (`RCC_MEMENR_CACHEAXIRAMEN`), and sets
-`MEMSYSCTL.DCACTIVE/ICACTIVE` (the boot leaves them 0).
+### What was transposed from run-22 (kept as the reference)
 
-**Verified byte-identical / equivalent to the reference:**
+`run-22` is retained as the proven reference. run-23 lacked two things; both were transposed in:
 
-| Concern | State |
+- **The Python→C/C++ host port** — `llm_tokenizer.c`, `grammar_runner.cpp`, `llm_repl.cpp`,
+  `llm_fsbl.c` (the NPU-Conv1D inference wrapper), `terminal_logger.cpp` + headers. `main.c` drives
+  `LLM_Repl_Run()` over USART1 instead of the bare one-shot self-test.
+- **The build technique** — C++ rules (`CXX=g++`, embedded subset `-fno-exceptions -fno-rtti
+  -std=gnu++17`), link via **`g++ -nostdlib++`** (not `-specs=nano.specs`, which the host toolchain
+  lacks), and the linker `NPU_WEIGHTS` region `@0x34000000` (AXISRAM1) whose `.npu_weights` section
+  keeps the **489 KB weights blob out of the 460 K ROM** (load-and-run stages them to fast SRAM).
+  Without it the FSBL overflowed ROM by ~199 KB.
+
+### Model coherence — the CPU embedding table
+
+The CPU does the int8 embedding lookup before feeding the NPU, so `llm_embed.h` must come from
+**this** model. `scripts/model_generation/emit_npu_embed_header.py` regenerates it from the TCN's
+`embed.weight`, quantized to the TCN's NPU input scale/zp (`0.029473 / -4`, read from the int8 ONNX
+`QuantizeLinear`) — replacing run-22's stale `model_cnn_calc` table (`0.02167 / -12`) that would
+otherwise feed the NPU an embedding space its conv weights don't match.
+
+### Status
+
+| Item | State |
 |---|---|
-| `RISAF_Config` | byte-identical |
-| Weights (xSPI2 flash `@0x71000000`) | CPU-readable + correct |
-| NPU IRQ wiring | `NPU0_IRQHandler` = `ll_aton` handler, `CDNN0_IRQn` = `NPU0_IRQn` = 53 |
-| VTOR | `0x34180400` |
-| NPU clock | IC6 ← PLL2, IC11 ← PLL3 |
-| Epoch controller | ASYNC, both use it |
-| API | `stai` wrapper calls the same `LL_ATON_RT_*` funcs |
+| FSBL build | ✅ clean — `g++ -nostdlib++`, weights in AXISRAM1, activations AXISRAM3 (text ~674 KB) |
+| Model | Conv1D/TCN, `stedgeai analyze` 100% pure hardware, clean `atonn` (no segfault) |
+| CPU embed table | ✅ coherent with the TCN (`emit_npu_embed_header.py`) |
+| On-device epoch + REPL | ⏳ pending — flash + live NPU debug (needs a connected board) |
 
-**OPEN issue — the engine itself doesn't finish.** The Neural-ART streaming engine still does
-not complete the epoch: it stays in the `__ll_aton_stai_run_synchonously` WFE loop
-(`ll_aton_rt_ret = WFE`, `ICSR/ISPR = 0` → the streaming engine never raises completion).
-Everything *around* the NPU is correct; the engine is not raising its done IRQ.
-
-**Next debug:** baseline-diff against the reference's own FSBL running on the same board, or an
-ATON SE/EC register dump to see why completion is never signalled.
+**On the earlier WFE stall:** it was observed with the old `model_cnn_calc` network (the engine
+stayed in `__ll_aton_stai_run_synchonously` WFE, never raising completion). The TCN compiles to
+100% pure hardware, so it is the model expected to close that gap — **to be confirmed on hardware.**
 
 ---
 
 ## Roadmap — host-built custom edge-AI models on the NPU
 
-This deployment exercise is paused here on purpose. The transformer (Qwen2) path is proven on
-the CPU but cannot use the Neural-ART; the `run-23` hardware path is wired correctly but the
-engine does not yet complete an epoch with the current model. **The blocker is the model
-architecture, not the silicon or the host export flow.**
+The original no-code intent — **build a model on the host and run it on an STM32 edge-AI device** —
+is now code-complete end to end. The transformer (Qwen2) path stays for CPU/Ollama serving (the
+Neural-ART cannot execute it); the **Conv1D/TCN path is the NPU-native one**, and it is built,
+proven 100% pure-hardware by `stedgeai analyze`, integrated into `run-23` with the full on-chip REPL,
+and coherent end to end (CPU embed table ↔ NPU conv weights).
 
-The exercise **will proceed further when a compatible custom model — one whose op set and
-purpose match the NPU's edge-AI design (CNN / Conv1D / GEMM, fully hardware-mappable) — is
-explored again.** The goal of that next thread is to close the loop on the original no-code
-intent: let this solution **build models on the host and run them on STM32 edge-AI devices**,
-end to end, with the NPU executing the body fully in hardware.
-
-The host export flow, tokenizer, grammar runner and REPL are already model-agnostic and stay
-unchanged — only the model *architecture* changes (the
-[Conv1D / TCN path](#npu-native-architecture-path-light-speed) is the proven candidate). That
-re-exploration is tracked on the **`reverse-engineering`** branch, which returns to the origins
-of the no-code concept on custom minimal models.
+**Remaining:** the on-hardware confirmation — flash `run-23`, watch the TCN epoch complete on the
+Neural-ART (vs the old `model_cnn_calc` WFE stall) and the REPL answer `3 + 4` over UART. The host
+export flow, tokenizer, grammar runner and REPL are model-agnostic and unchanged — only the model
+*architecture* changed. Re-exploration of further custom models is tracked on the
+**`reverse-engineering`** branch.
