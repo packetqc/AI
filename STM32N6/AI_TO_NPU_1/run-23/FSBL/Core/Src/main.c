@@ -56,6 +56,7 @@ XSPI_HandleTypeDef hxspi2;
 /* USER CODE BEGIN PV */
 UART_HandleTypeDef huart1;
 volatile int debugFlag = 1;  /* 1 = spin at while(debugFlag) after OpenDebug(); set 0 via GDB to continue */
+volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -73,9 +74,17 @@ void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/* Direct-register USART1 TX — HAL_UART_Transmit fails silently in the FSBL boot context
+ * (HAL_GetTick may not advance), per reference N6_EDGEAI_1. Poll ISR.TXFNF (bit 7), write TDR. */
+static void uart1_putc(char c)
+{
+    while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }
+    USART1->TDR = (uint32_t)(uint8_t)c;
+}
 static void uart_puts(const char *s)
 {
-    HAL_UART_Transmit(&huart1, (const uint8_t *)s, (uint16_t)strlen(s), 1000);
+    if (USART1->CR1 == 0U) return;   /* UART not initialised yet */
+    for (; *s; ++s) uart1_putc(*s);
 }
 
 /* USER CODE END 0 */
@@ -100,10 +109,13 @@ int main(void)
    *    NOTE: This resets the current debug AP session. The GDB server will
    *    get a broken pipe — this is EXPECTED. Restart GDB server and reconnect;
    *    the CPU will be spinning at while(debugFlag) below with full Secure auth. */
-  OpenDebug();
+  /* OpenDebug();  — DISABLED for load-and-run debug. Under load_and_run the ST-Link
+   * already controls the CPU and SWD is authorized, so OpenDebug's BSEC AP-reset just
+   * reboots the device back to ROM (the SRAM image is lost → LEDs/UART never come up).
+   * Re-enable only for the flash-boot-then-attach flow. */
 
-  /* 3. GDB catch point — spin here after OpenDebug authorizes Secure SWD.
-   *    Restart GDB server, reconnect, then write debugFlag=0 via SWD to continue. */
+  /* 3. GDB catch point — spin here so GDB can attach/observe, then write debugFlag=0
+   *    via SWD to continue. Position is movable once the trace localizes the stall. */
   while (debugFlag) { __NOP(); }
 
   /* 4. Disable stale MPU regions left by Boot ROM.
@@ -137,6 +149,16 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+
+  /* BSP LEDs early (right after GPIO) to signal init-phase errors, forced to a known OFF
+   * state first — the N6570-DK LEDs are active-inverse, so the post-init/default level
+   * can read as ON; BSP_LED_Off normalizes it. RED is lit by Error_Handler (an init
+   * failed); GREEN (below) = reached the REPL. (HW breakpoints don't catch under
+   * load-and-run, so the LEDs + g_boot_stage are our init trace.) */
+  BSP_LED_Init(LED_GREEN);
+  BSP_LED_Init(LED_RED);
+  BSP_LED_Off(LED_GREEN);
+  BSP_LED_Off(LED_RED);
   /* MX_XSPI1_Init() — skipped: PSRAM not used, hxspi1 never referenced */
   /* MX_XSPI2_Init() — skipped: load_and_run leaves XSPI2 mid-transaction (BUSY=1);
    * HAL_XSPIM_Config polls BUSY forever. BSP_XSPI_NOR_Init handles XSPI2 from
@@ -145,40 +167,37 @@ int main(void)
   /* MX_EXTMEM_MANAGER_Init() — skip: BOOT_Application() path not used */
   /* USER CODE BEGIN 2 */
 
-  /* BSP init (LEDs + VCP UART) FIRST in USER CODE 2 — before our NPU/REPL logic — so
-   * the board reports life over UART + LED even if a later init (XSPI/NPU) hangs.
-   * RED = booting / init in progress; GREEN (below) = reached the REPL. */
-  BSP_LED_Init(LED_GREEN);
-  BSP_LED_Init(LED_RED);
-  BSP_LED_On(LED_RED);
-  MX_USART1_UART_Init();                 /* BSP_COM1 = USART1 @115200 on PE5/PE6 (VCP) */
-  uart_puts("\r\n[run-23] FSBL alive — NPU grammar REPL\r\n");
+  /* UART up FIRST in USER CODE 2 — direct-register USART1 (uart_puts polls ISR.TXFNF, no
+   * HAL_UART: per reference N6_EDGEAI_1, HAL_UART_* fails silently in the FSBL boot context
+   * because HAL_GetTick doesn't advance). Brought up early so each init step is traced. */
+  MX_USART1_UART_Init();
+  uart_puts("\r\n[run-23] FSBL alive — boot trace:\r\n");
 
-  /* NOR flash memory-mapped init FIRST — BEFORE NPU_Config / CACHEAXI enable.
-   * CACHEAXI sits on the AXI path between NPU and XSPI2. Enabling CACHEAXI
-   * (inside NPU_Config) before BSP_XSPI_NOR_Init causes CACHEAXI to intercept
-   * XSPI2 command transactions during NOR init → Boot ROM XSPI2 poll hangs. */
+  /* NOR flash memory-mapped init FIRST — BEFORE NPU_Config / CACHEAXI enable (CACHEAXI on
+   * the AXI path would intercept XSPI2 command transactions during NOR init). */
   BSP_XSPI_NOR_Init_t xspiInit;
   xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
   xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
+  g_boot_stage = 1;  uart_puts("[boot] 1 XSPI NOR\r\n");
   BSP_XSPI_NOR_Init(0, &xspiInit);
   BSP_XSPI_NOR_EnableMemoryMappedMode(0);
   MODIFY_REG(XSPI2->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
 
   /* NPU + security init — AFTER NOR flash is mapped (reference project order) */
+  g_boot_stage = 2;  uart_puts("[boot] 2 SystemInit_POST + cache\r\n");
   SystemInit_POST();
   SCB_EnableICache();
   SCB_EnableDCache();
 
+  g_boot_stage = 3;  uart_puts("[boot] 3 NPU_Config\r\n");
   NPU_Config();
+  g_boot_stage = 4;  uart_puts("[boot] 4 RISAF_Config\r\n");
   RISAF_Config();
 
-  /* nocode grammar REPL over USART1 — the host solution on the N6.
-   * Runs on the CM55 CPU: the embedded grammar (playbook) is the authoritative
-   * oracle, so parse + evaluate are instant. The NPU model dialog is opt-in and
-   * lazily initialised inside the REPL via '/model on'. */
-  BSP_LED_Off(LED_RED);
-  BSP_LED_On(LED_GREEN);   /* proof of life: CPU reached the REPL, all init complete */
+  /* nocode grammar REPL over USART1 — the host solution on the N6 (CM55 CPU; the embedded
+   * grammar playbook is the oracle; the NPU model dialog is opt-in via '/model on'). */
+  g_boot_stage = 6;  uart_puts("[boot] 6 REPL\r\n");
+  BSP_LED_On(LED_GREEN);             /* proof of life: reached the REPL, all init done */
   LLM_Repl_Run();
   while (1) {}  /* prevent BOOT_Application() — remove to restore normal boot */
 
@@ -682,14 +701,26 @@ void MX_USART1_UART_Init(void)
    * init: BSP_COM_Init configures the GPIO pins + the USART together (the documented
    * way), avoiding any pin/MSP ordering pitfalls. The REPL and uart_puts use the global
    * huart1, so mirror the BSP-initialised handle (hcom_uart[COM1]) into it. */
-  COM_InitTypeDef com = {0};
-  com.BaudRate   = 115200;
-  com.WordLength = COM_WORDLENGTH_8B;
-  com.StopBits   = COM_STOPBITS_1;
-  com.Parity     = COM_PARITY_NONE;
-  com.HwFlowCtl  = COM_HWCONTROL_NONE;
-  if (BSP_COM_Init(COM1, &com) != BSP_ERROR_NONE) { Error_Handler(); }
-  huart1 = hcom_uart[COM1];
+  /* Direct-register USART1 init — no HAL_UART_Init (its TEACK/REACK poll uses HAL_GetTick,
+   * which may not advance in the FSBL boot context). PE5=TX, PE6=RX, AF7; 115200 8N1, over16. */
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+  __HAL_RCC_USART1_CLK_ENABLE();
+
+  GPIO_InitTypeDef gpio = {0};
+  gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_6;
+  gpio.Mode      = GPIO_MODE_AF_PP;
+  gpio.Pull      = GPIO_NOPULL;
+  gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
+  gpio.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOE, &gpio);
+
+  uint32_t uart_clk = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_USART1);
+  if (uart_clk == 0U) uart_clk = 64000000U;            /* fallback: HSI/default */
+  USART1->CR1 = 0U;                                    /* disable while configuring */
+  USART1->BRR = (uart_clk + (115200U / 2U)) / 115200U; /* oversampling by 16 */
+  USART1->CR2 = 0U;
+  USART1->CR3 = 0U;
+  USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
 }
 
 /* USER CODE END 4 */

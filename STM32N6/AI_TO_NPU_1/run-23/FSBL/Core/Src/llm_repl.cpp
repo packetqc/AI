@@ -42,9 +42,16 @@ const int kCalcRules = (int)(sizeof(kCalcPlaybook) / sizeof(kCalcPlaybook[0]));
 
 /* ── board I/O glue ─────────────────────────────────────────────────────── */
 
+/* Direct-register USART1 I/O — HAL_UART_* fails silently in the FSBL boot context
+ * (HAL_GetTick may not advance), per reference N6_EDGEAI_1. TX polls ISR.TXFNF (bit 7),
+ * RX polls ISR.RXFNE (bit 5). */
 void uart_sink(const char* s, int n)
 {
-    HAL_UART_Transmit(&huart1, (const uint8_t*)s, (uint16_t)n, 2000);
+    if (USART1->CR1 == 0U) return;
+    for (int i = 0; i < n; ++i) {
+        while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }
+        USART1->TDR = (uint32_t)(uint8_t)s[i];
+    }
 }
 uint32_t tick_ms(void) { return HAL_GetTick(); }
 void uart_puts(const char* s) { uart_sink(s, (int)strlen(s)); }
@@ -54,13 +61,13 @@ int uart_readline(char* buf, int max)
 {
     int n = 0;
     for (;;) {
-        uint8_t c;
-        if (HAL_UART_Receive(&huart1, &c, 1, HAL_MAX_DELAY) != HAL_OK) continue;
+        while ((USART1->ISR & (1u << 5)) == 0) { __NOP(); }   /* RXFNE: wait for a char */
+        uint8_t c = (uint8_t)(USART1->RDR & 0xFFu);
         if (c == '\r' || c == '\n') { uart_puts("\r\n"); break; }
         if ((c == 0x7f || c == 0x08) && n > 0) { n--; uart_puts("\b \b"); continue; }
         if (c >= 0x20 && c < 0x7f && n < max - 1) {
             buf[n++] = (char)c;
-            HAL_UART_Transmit(&huart1, &c, 1, 100);     /* echo */
+            uart_sink((const char*)&c, 1);              /* echo */
         }
     }
     buf[n] = '\0';
