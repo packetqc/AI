@@ -116,8 +116,8 @@ int main(void)
   /* USER CODE BEGIN 1 */
   /* RAM-bank power-on for the M55 core — BEFORE any code touches AXISRAM3-6 / CACHEAXIRAM
    * (boot ROM parks them; first access faults). Ref project N6_EDGEAI_1 main(). */
-  // Enable_NPU_RAM_ForCore();
-  // Enable_AXICACHE_RAM_ForCore();
+  Enable_NPU_RAM_ForCore();
+  Enable_AXICACHE_RAM_ForCore();
 
   /* Re-authorize Secure SWD core debug (runtime BSEC, no OTP) so the MCP GDB session can
    * attach to the running FSBL. Ref N6_EDGEAI_1. REMOVE for production. */
@@ -222,7 +222,22 @@ int main(void)
 
   /* NPU */
   {
-
+    /* NPU peripheral bring-up: clock + reset. Banks were powered in USER CODE 1;
+     * RIF master/slave granted in SystemIsolation_Config; CACHEAXI by MX_CACHEAXI_Init.
+     * No NPU register access in code yet (smoke-read via MCP). Ref N6_EDGEAI_1. */
+    __HAL_RCC_NPU_CLK_ENABLE();
+    __HAL_RCC_NPU_FORCE_RESET();
+    __HAL_RCC_NPU_RELEASE_RESET();
+    /* The RCC/RIF macros are void (no status). Verify the result instead: if the NPU
+     * clock did not engage, printf the detail + trigger the error, per the rule. */
+    if (__HAL_RCC_NPU_IS_CLK_ENABLED() == 0U)
+    {
+      printf("NPU clock enable FAILED (RCC AHB5ENR) - boot_stage=%lu\r\n",
+             (unsigned long)g_boot_stage);
+      Error_Handler();
+    }
+    g_boot_stage = 8;
+    printf("NPU clocked + reset OK (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
   }
 
   /* LLM TESTS */
@@ -602,6 +617,12 @@ static void MX_RAMCFG_Init(void)
    * mark it secure-accessible. NPRIV (privileged FSBL access still allowed), consistent
    * with its PE5/PE6 pins (SEC|NPRIV). Gentle — does not restrict the working access. */
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_USART1, RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_NPRIV);
+  /* NPU master — grant the NPU's AXI master secure+privileged access so its weight/
+   * activation transactions are not RIF-blocked (the NPU slave RISC is granted by MX
+   * above). Ref N6_EDGEAI_1. RIMC_master is in scope (from the generated config). */
+  RIMC_master.MasterCID = RIF_CID_1;
+  RIMC_master.SecPriv   = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV;
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_NPU, &RIMC_master);
   /* USER CODE END RIF_Init 1 */
   /* USER CODE BEGIN RIF_Init 2 */
 
@@ -1025,6 +1046,11 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
+  /* Signal presence + detail on the VCP before halting. g_boot_stage tells how far the
+   * boot got, so we know which init step failed. The RED LED also fast-blinks below.
+   * (If the UART is not up yet, the printf is a no-op; the LED still signals.) */
+  printf("\r\n!!! Error_Handler reached - boot_stage=%lu - halting !!!\r\n",
+         (unsigned long)g_boot_stage);
   // __disable_irq();
   while (1)
   {
