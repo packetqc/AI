@@ -1,7 +1,7 @@
 #ifndef GRAMMAR_RUNNER_H
 #define GRAMMAR_RUNNER_H
 
-#include "network.h"   /* stai_network */
+#include "stai_network.h"   /* stai_network */
 #include <stdint.h>
 
 #ifdef __cplusplus

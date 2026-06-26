@@ -15,11 +15,11 @@
 void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                    int rule_idx, char *out, int out_max)
 {
-    const int L = STAI_NETWORK_IN_1_HEIGHT;    /* sequence length = 32 */
-    const int C = STAI_NETWORK_IN_1_CHANNEL;   /* embedding channels = 256 */
-    const int V = STAI_NETWORK_OUT_1_CHANNEL;  /* vocab = 374 */
+    const int L = 32;    /* sequence length  (model fixed; HW header relabels the dims) */
+    const int C = 256;   /* embedding channels */
+    const int V = 374;   /* vocab */
 
-    int16_t cur[STAI_NETWORK_IN_1_HEIGHT];
+    int16_t cur[32];
     int plen = g_rule_prompt_len[rule_idx];
     for (int i = 0; i < L; i++)
         cur[i] = (i < plen) ? g_rule_prompt[rule_idx][i] : (int16_t)TOK_EOS_ID;

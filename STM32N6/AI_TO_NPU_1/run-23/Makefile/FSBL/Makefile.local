@@ -32,7 +32,9 @@ ATON_RT = $(AI_BASE)/Npu/ll_aton
 
 AI_SOURCES = \
   ../../FSBL/AI/network.c \
-  ../../FSBL/AI/network_data.c \
+  ../../FSBL/AI/stai_network.c \
+  $(ATON_RT)/ll_aton_stai_internal.c \
+  $(AI_BASE)/Npu/Devices/STM32N6xx/mcu_cache.c \
   $(ATON_RT)/ll_aton.c \
   $(ATON_RT)/ll_aton_cipher.c \
   $(ATON_RT)/ll_aton_dbgtrc.c \
@@ -48,7 +50,7 @@ AI_SOURCES = \
   ../../FSBL/AI/npu_query.c
 
 C_INCLUDES += -I../../FSBL/AI -I$(AI_BASE)/Inc -I$(ATON_RT) -I$(AI_BASE)/Npu/Devices/STM32N6xx
-C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC -DLL_ATON_SW_FALLBACK
+C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_POLLING -DLL_ATON_SW_FALLBACK
 LIBS       += -L$(AI_BASE)/Lib/GCC/ARMCortexM55 -l:NetworkRuntime1200_CM55_GCC.a
 
 AI_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(AI_SOURCES:.c=.o)))
@@ -61,6 +63,12 @@ $(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
 	$$(CC) -c $$(CFLAGS) $$< -o $$@
 endef
 $(foreach src,$(AI_SOURCES),$(eval $(call AI_BUILD_RULE,$(src))))
+
+# atonn HW weights blob (assembly .incbin -> .ai_weights section @ WEIGHTS_RAM 0x34064000)
+OBJECTS += $(BUILD_DIR)/network_weights.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/network_weights.o
+$(BUILD_DIR)/network_weights.o: ../../FSBL/AI/network_weights.S ../../FSBL/AI/network_weights.bin Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
 
 # --- C++ (g++, embedded subset): TerminalLogger display + grammar runner (STL) ---
 CXX      = $(PREFIX)g++

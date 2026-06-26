@@ -40,7 +40,7 @@ MEMORY
 {
   ROM          (xrw) : ORIGIN = 0x34180400, LENGTH = 460K  /* AXISRAM2: FSBL code+rodata (expanded for NPU runtime) */
   RAM          (xrw) : ORIGIN = 0x341F3400, LENGTH = 50K   /* AXISRAM2: FSBL data+bss+stack (460K+50K fits within 1MB AXISRAM2) */
-  WEIGHTS_RAM  (xrw) : ORIGIN = 0x34100000, LENGTH = 512K  /* AXISRAM2 lower: free, boot-ROM-active (GDB-loadable), NPU-readable (AXI fabric) — AI weights */
+  WEIGHTS_RAM  (xrw) : ORIGIN = 0x34064000, LENGTH = 624K  /* AXISRAM1 (cpuRAM1): boot-ROM-active (GDB-loadable) — atonn HW weights blob baked @0x34064000 */
   AI_RAM       (xrw) : ORIGIN = 0x34200000, LENGTH = 512K  /* AXISRAM3: AI activations */
   NOR_FLASH    (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* XSPI2 NOR: AI weights (memory-mapped) */
   WEIGHTS_SRAM (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* alias: atonn-generated section name */

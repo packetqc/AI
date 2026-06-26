@@ -26,7 +26,7 @@
 // #include "stm32n6570_discovery_xspi.h"
 // #include "stm32n6570_discovery_errno.h"
 #include "stm32n6570_discovery.h"    /* BSP: COM1 VCP UART + LEDs (board-canonical) */
-#include "network.h"                 /* STAI API + the TCN NPU model (Loop 3b) */
+#include "stai_network.h"            /* STAI API + the TCN NPU model (Neural-ART HW) */
 #include "network_tokens.h"          /* device tokenizer support (rule prompts + decode) */
 #include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
 #include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
@@ -78,11 +78,8 @@ volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
 static uint8_t s_network_ctx[STAI_NETWORK_CONTEXT_SIZE];
 static stai_network *g_network = NULL;
-
-/* NPU activation arena (~24 KB) — AXISRAM3 (AI_RAM), the NPU-optimized RAM. stai_network_init
- * leaves activations NULL (app-owned); set_activations points the model here. */
-__attribute__((aligned(32), section(".AI_RAM")))
-static uint8_t s_activations[STAI_NETWORK_ACTIVATIONS_SIZE_BYTES];
+/* The Neural-ART HW network bakes its activations in its memory pool (ACTIVATIONS_NUM=0) —
+ * no app-provided activation buffer needed. */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -265,7 +262,29 @@ int main(void)
     __HAL_RCC_CACHEAXI_CLK_SLEEP_ENABLE();        __HAL_RCC_NPU_CLK_SLEEP_ENABLE();
     { extern void npu_cache_enable(void); npu_cache_enable(); }  /* HAL_CACHEAXI_Enable */
 
-    printf("NPU clocked + reset OK + AXI cache on (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
+    /* Grant all CIDs RISAF R/W on the NPU memory (AXISRAM weights @0x34064000 +
+     * activations) + the NPU masters + NPU cache — without this the NPU epoch stalls
+     * reading the weights. Mirrors NPU_Validation set_risaf_default. */
+    {
+      RISAF_TypeDef *const npu_risafs[] = { RISAF2_S, RISAF4_S, RISAF5_S, RISAF6_S, RISAF8_S };
+      RISAF_BaseRegionConfig_t rc;
+      memset(&rc, 0, sizeof(rc));
+      rc.StartAddress   = 0x0;
+      rc.EndAddress     = 0x0FFFFFFF;
+      rc.Filtering      = RISAF_FILTER_ENABLE;
+      rc.PrivWhitelist  = RIF_CID_NONE;
+      rc.ReadWhitelist  = RIF_CID_MASK;
+      rc.WriteWhitelist = RIF_CID_MASK;
+      for (unsigned i = 0; i < sizeof(npu_risafs) / sizeof(npu_risafs[0]); i++)
+      {
+        rc.Secure = RIF_ATTRIBUTE_SEC;
+        HAL_RIF_RISAF_ConfigBaseRegion(npu_risafs[i], RISAF_REGION_1, &rc);
+        rc.Secure = RIF_ATTRIBUTE_NSEC;
+        HAL_RIF_RISAF_ConfigBaseRegion(npu_risafs[i], RISAF_REGION_2, &rc);
+      }
+    }
+
+    printf("NPU clocked + reset OK + AXI cache + RISAF mem (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
   }
 
   /* NPU MODEL */
@@ -281,22 +300,13 @@ int main(void)
       Error_Handler();
     }
     g_boot_stage = 9;
-    printf("NPU model init OK (nodes=%d, MACC=%lu, ctx=%u B)\r\n",
-           STAI_NETWORK_NODES_NUM, (unsigned long)STAI_NETWORK_MACC_NUM,
+    printf("NPU HW model init OK (ctx=%u B, weights @0x34064000)\r\n",
            (unsigned)STAI_NETWORK_CONTEXT_SIZE);
   }
 
   /* NPU INFERENCE (Loop 3c: one compute proof on the Neural-ART) */
   {
-    /* Provide the app-owned activation buffer (init left it NULL). */
-    stai_ptr act = (stai_ptr)s_activations;
-    if (stai_network_set_activations(g_network, &act, STAI_NETWORK_ACTIVATIONS_NUM) != STAI_SUCCESS)
-    {
-      printf("NPU set_activations FAILED\r\n");
-      Error_Handler();
-    }
-
-    /* Preallocated input/output buffers (live in the activation arena). */
+    /* Preallocated input/output buffers (the HW network bakes its own activations). */
     stai_ptr in_buf = NULL, out_buf = NULL;
     stai_size n_in = 0, n_out = 0;
     stai_network_get_inputs(g_network, &in_buf, &n_in);

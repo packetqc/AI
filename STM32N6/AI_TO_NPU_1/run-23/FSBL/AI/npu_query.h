@@ -1,7 +1,7 @@
 #ifndef NPU_QUERY_H
 #define NPU_QUERY_H
 
-#include "network.h"   /* stai_network, STAI_* dims */
+#include "stai_network.h"   /* stai_network, STAI_* dims (Neural-ART HW network) */
 #include <stdint.h>
 
 #ifdef __cplusplus
