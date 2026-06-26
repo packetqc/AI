@@ -6,6 +6,10 @@ It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar
 
 ## What it does
 
+The same grammar-and-training conceptualization drives two runtimes — a host model served via Ollama, and an NPU-native model running on the STM32N6 edge device.
+
+### On the host — tiny Qwen2 served via Ollama
+
 - **Builds a small Qwen2 model** from scratch using a custom BPE tokenizer trained over your own knowledge files and grammar rules.
 - **Augments the model with BNF/EBNF grammars** — grammar rules become trained (prompt → answer) pairs so the model "knows" the grammar structure at inference time.
 - **Runs grammar-driven interactions** via `GrammarRunner`: the model is queried once per unique grammar rule (cached), and the results drive either expression parsing or command execution.
@@ -16,7 +20,15 @@ It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
 - **External model mode** (`--model`) — attach any existing Ollama model or import a local `.gguf` file, skipping training entirely while keeping all grammar and vocabulary features.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
-- **Exports to ONNX for NPU** — `/npu` or `scripts/model_generation/model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
+
+### On the STM32N6 — Conv1D/TCN native on the Neural-ART NPU
+
+- **Creates an NPU-native model from the same grammar** (`scripts/model_generation/model_create_npu_tcn.py`) — a tiny causal **Conv1D / TCN** trained on the *same* BNF grammar + (prompt → answer) pairs and reusing the *same* tokenizer, so the grammar conceptualization is identical; only the architecture changes (no transformer ops the NPU can't run).
+- **Proves it runs 100% on NPU hardware** — `stedgeai analyze` confirms a pure-hardware mapping (no CPU software-fallback), unlike the Qwen2 transformer which the Neural-ART cannot execute.
+- **Generates the device C** — `stedgeai generate` emits `network.c` / `network_data.c` that the STM32N6570-DK FSBL firmware consumes.
+- **Generates the CPU embedding table** (`scripts/model_generation/emit_npu_embed_header.py`) — the int8 `llm_embed.h` lookup the CPU feeds to the NPU, quantized to that model's NPU input scale so the CPU embedding space matches the NPU conv weights.
+- **Runs on-chip as a text REPL** — the FSBL tokenizes/embeds/detokenizes on the Cortex-M55 and runs the convolution body on the NPU, so you type `3 + 4` over UART and the trained grammar answers from the edge device.
+- **Exports the host model to ONNX** — `/npu` or `scripts/model_generation/model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio.
 
 ## Architecture
 
