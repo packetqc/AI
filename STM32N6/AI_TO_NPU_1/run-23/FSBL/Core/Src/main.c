@@ -253,7 +253,19 @@ int main(void)
       Error_Handler();
     }
     g_boot_stage = 8;
-    printf("NPU clocked + reset OK (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
+
+    /* NPU performance: keep the RAM/NPU/cache clocks alive in low-power/sleep (the NPU
+     * runs async to the M55) + enable the AXI cache so the NPU's weight/activation
+     * accesses are cached — without this the NPU runs at software-fallback speed.
+     * Mirrors NPU_Validation set_clk_sleep_mode() + npu_cache_enable(). */
+    __HAL_RCC_AXISRAM1_MEM_CLK_SLEEP_ENABLE();   __HAL_RCC_AXISRAM2_MEM_CLK_SLEEP_ENABLE();
+    __HAL_RCC_AXISRAM3_MEM_CLK_SLEEP_ENABLE();   __HAL_RCC_AXISRAM4_MEM_CLK_SLEEP_ENABLE();
+    __HAL_RCC_AXISRAM5_MEM_CLK_SLEEP_ENABLE();   __HAL_RCC_AXISRAM6_MEM_CLK_SLEEP_ENABLE();
+    __HAL_RCC_CACHEAXIRAM_MEM_CLK_SLEEP_ENABLE();
+    __HAL_RCC_CACHEAXI_CLK_SLEEP_ENABLE();        __HAL_RCC_NPU_CLK_SLEEP_ENABLE();
+    { extern void npu_cache_enable(void); npu_cache_enable(); }  /* HAL_CACHEAXI_Enable */
+
+    printf("NPU clocked + reset OK + AXI cache on (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
   }
 
   /* NPU MODEL */
