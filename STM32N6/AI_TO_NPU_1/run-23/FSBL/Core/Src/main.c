@@ -75,6 +75,11 @@ volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
 static uint8_t s_network_ctx[STAI_NETWORK_CONTEXT_SIZE];
 static stai_network *g_network = NULL;
+
+/* NPU activation arena (~24 KB) — AXISRAM3 (AI_RAM), the NPU-optimized RAM. stai_network_init
+ * leaves activations NULL (app-owned); set_activations points the model here. */
+__attribute__((aligned(32), section(".AI_RAM")))
+static uint8_t s_activations[STAI_NETWORK_ACTIVATIONS_SIZE_BYTES];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -263,6 +268,54 @@ int main(void)
     printf("NPU model init OK (nodes=%d, MACC=%lu, ctx=%u B)\r\n",
            STAI_NETWORK_NODES_NUM, (unsigned long)STAI_NETWORK_MACC_NUM,
            (unsigned)STAI_NETWORK_CONTEXT_SIZE);
+  }
+
+  /* NPU INFERENCE (Loop 3c: one compute proof on the Neural-ART) */
+  {
+    /* Provide the app-owned activation buffer (init left it NULL). */
+    stai_ptr act = (stai_ptr)s_activations;
+    if (stai_network_set_activations(g_network, &act, STAI_NETWORK_ACTIVATIONS_NUM) != STAI_SUCCESS)
+    {
+      printf("NPU set_activations FAILED\r\n");
+      Error_Handler();
+    }
+
+    /* Preallocated input/output buffers (live in the activation arena). */
+    stai_ptr in_buf = NULL, out_buf = NULL;
+    stai_size n_in = 0, n_out = 0;
+    stai_network_get_inputs(g_network, &in_buf, &n_in);
+    stai_network_get_outputs(g_network, &out_buf, &n_out);
+    if (in_buf == NULL || out_buf == NULL)
+    {
+      printf("NPU get in/out FAILED\r\n");
+      Error_Handler();
+    }
+
+    /* Test input: int8 embeddings all set to the zero-point (== numeric 0.0). */
+    memset(in_buf, (int)(int8_t)STAI_NETWORK_IN_1_ZERO_POINT, STAI_NETWORK_IN_1_SIZE_BYTES);
+
+    /* One synchronous inference on the NPU. */
+    uint32_t t0 = HAL_GetTick();
+    stai_return_code rc = stai_network_run(g_network, STAI_MODE_SYNC);
+    uint32_t t1 = HAL_GetTick();
+    if (rc != STAI_SUCCESS)
+    {
+      printf("NPU inference FAILED (stai rc=%d) - boot_stage=%lu\r\n",
+             (int)rc, (unsigned long)g_boot_stage);
+      Error_Handler();
+    }
+
+    /* Proof: argmax over the 374-way vocab logits at sequence position 0. */
+    const int8_t *logits = (const int8_t *)out_buf;
+    int best = 0; int8_t bestv = logits[0];
+    for (int c = 1; c < STAI_NETWORK_OUT_1_CHANNEL; c++)
+    {
+      int8_t v = logits[c * STAI_NETWORK_OUT_1_HEIGHT];
+      if (v > bestv) { bestv = v; best = c; }
+    }
+    g_boot_stage = 10;
+    printf("NPU inference OK (%lu ms, argmax tok=%d val=%d)\r\n",
+           (unsigned long)(t1 - t0), best, (int)bestv);
   }
 
   /* LLM TESTS */
