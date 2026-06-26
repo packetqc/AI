@@ -20,7 +20,7 @@ Outputs:
 Text I/O is a CPU wrapper around the NPU body: text -> tokenize -> embed -> [NPU conv
 body -> logits] -> argmax -> detokenize -> text (looped). The NPU only does the math.
 """
-import os, re, sys, json, glob, subprocess, shutil
+import os, re, sys, json, glob, subprocess, shutil, argparse
 
 # scripts/ on sys.path so `from classes...` would resolve if needed (kept consistent)
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -121,6 +121,16 @@ def build_windows(tokenizer, pairs, L):
 
 
 def main():
+    ap = argparse.ArgumentParser(
+        description="Create (train) or re-export an NPU-native Conv1D/TCN grammar model. "
+                    "This script OWNS the NPU export — it is the only path that yields a model "
+                    "the Neural-ART runs in hardware (the transformer path in model_create_hf_cl.py "
+                    "/ model_export_npu.py exports CPU-only ONNX).")
+    ap.add_argument("--export-only", action="store_true",
+                    help="export when ready: skip training, load the already-trained <name>.pt and "
+                         "re-run export (ONNX + INT8) -> stedgeai analyze -> generate.")
+    args = ap.parse_args()
+
     os.makedirs(OUT_DIR, exist_ok=True)
     os.makedirs(NPU_DIR, exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
@@ -134,17 +144,25 @@ def main():
     log("TCN", f"vocab={vocab}  pairs={len(pairs)}  windows={tuple(X.shape)}  C={EMBED_DIM} L={SEQ_LEN}")
 
     model = GrammarTCN(vocab, EMBED_DIM).to(dev)
-    opt = torch.optim.Adam(model.parameters(), lr=LR)
-    ce = nn.CrossEntropyLoss(reduction="none")
-    model.train()
-    for ep in range(EPOCHS):
-        opt.zero_grad()
-        logits = model(X)                                # [B, V, L]
-        loss = ce(logits, Y) * Mask                      # [B, L]
-        loss = loss.sum() / Mask.sum().clamp(min=1)
-        loss.backward(); opt.step()
-        if (ep + 1) % 150 == 0 or ep == 0:
-            log("TRAIN", f"epoch {ep+1}/{EPOCHS}  loss={loss.item():.4f}")
+    pt_path = os.path.join(OUT_DIR, NAME + ".pt")
+    if args.export_only:
+        if not os.path.exists(pt_path):
+            log("TCN", f"--export-only but {pt_path} not found — train first (run without --export-only)")
+            return
+        model.load_state_dict(torch.load(pt_path, map_location=dev))
+        log("TCN", f"export-only: loaded trained weights {pt_path} (training skipped)")
+    else:
+        opt = torch.optim.Adam(model.parameters(), lr=LR)
+        ce = nn.CrossEntropyLoss(reduction="none")
+        model.train()
+        for ep in range(EPOCHS):
+            opt.zero_grad()
+            logits = model(X)                                # [B, V, L]
+            loss = ce(logits, Y) * Mask                      # [B, L]
+            loss = loss.sum() / Mask.sum().clamp(min=1)
+            loss.backward(); opt.step()
+            if (ep + 1) % 150 == 0 or ep == 0:
+                log("TRAIN", f"epoch {ep+1}/{EPOCHS}  loss={loss.item():.4f}")
 
     # ── recall check (greedy, host) ──
     model.eval()

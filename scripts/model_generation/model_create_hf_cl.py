@@ -849,7 +849,7 @@ while True:
             print( "  /read <file>            Train a markdown / .json (prose or playbook) file on the fly")
             print( "  /grammar <file>         Load a BNF/EBNF grammar file and augment the model")
             print( "  /run [grammar] <expr>   Parse and evaluate an expression via the loaded grammar")
-            print( "  /npu [dir]              Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU")
+            print( "  /npu [dir]              Export to ONNX for STM32Cube.AI (Cortex-M55/CPU, NOT NPU; NPU-native: model_create_npu_tcn.py)")
             print( "  /context                Show loaded files, vocabularies, exec modes, knowledge stats")
             print( "  /tokens [grammar]       Show grammar rules and token commands (all or per grammar)")
             print( "  /bye                    Exit the interactive client session")
@@ -933,12 +933,15 @@ while True:
                     logger.log("error", "SYSTEM", "Could not learn '" + doc_path + "' (see errors above).")
             continue
 
-        # 3d. NPU EXPORT: "/npu [output_dir]" exports the model to ONNX for STM32Cube.AI.
+        # 3d. ONNX EXPORT: "/npu [output_dir]" exports the transformer to ONNX for STM32Cube.AI.
+        #     NOTE: transformer -> CPU (Cortex-M55) on the N6, NOT the Neural-ART NPU. The
+        #     NPU-native path is model_create_npu_tcn.py (Conv1D/TCN).
         if user_input.split()[0].lower() == "/npu":
             readline.add_history(user_input)
             parts = user_input.split(maxsplit=1)
             npu_out = parts[1].strip() if len(parts) > 1 else "models/npu_export"
-            logger.log("info", "NPU", "Exporting model to '" + npu_out + "' for STM32Cube.AI...")
+            logger.log("info", "ONNX", "Exporting transformer to '" + npu_out + "' for STM32Cube.AI "
+                       "(Cortex-M55/CPU path; NPU-native model: model_create_npu_tcn.py)...")
             try:
                 import model_export_npu as _npu_mod
                 if _EXTERNAL_MODEL:

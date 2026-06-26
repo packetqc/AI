@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """
-model_export_npu.py — Export the trained model to ONNX for STM32Cube.AI / STM32N6570-DK NPU.
+model_export_npu.py — Export the trained TRANSFORMER to ONNX for STM32Cube.AI (CPU path).
+
+NOTE: this exports a Qwen2 transformer. On the STM32N6 it runs on the Cortex-M55 (CPU), NOT the
+Neural-ART NPU — RoPE/GQA/RMSNorm are not NPU ops (Studio's NPU compiler fails at op 94/103).
+Kept for diagnostic/Studio-inspection value. For an NPU-NATIVE model that runs 100% on the
+Neural-ART, use scripts/model_generation/model_create_npu_tcn.py (Conv1D/TCN).
 
 Standalone usage:
     python model_export_npu.py [output_dir]          # default: npu_export/
