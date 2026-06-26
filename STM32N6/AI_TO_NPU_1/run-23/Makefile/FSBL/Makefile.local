@@ -86,6 +86,9 @@ LIBS += -lstdc++
 
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
+# the generated link rule doesn't list the linker script as a prereq, so .ld edits
+# (stack/heap size, memory map) didn't trigger a relink — make it an explicit prereq:
+$(BUILD_DIR)/$(TARGET).elf: STM32N657XX_fsbl_custom.ld
 
 # --- toolchain: arm-none-eabi-gcc 15.2 ships no newlib-nano spec (LAST: captures updated LIBS/LDSCRIPT) ---
 LDFLAGS := $(filter-out -specs=nano.specs,$(LDFLAGS))
