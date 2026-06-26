@@ -10,18 +10,18 @@ A framework for training tiny Qwen2 language models on custom knowledge, augment
 - **Executes shell or Python code per token** — command vocabulary tokens can run shell commands (`_exec: shell`, default) or pure Python source (`_exec: python`) via `exec()`.
 - **Auto-detects grammar input** at three depths: grammar name → sub-rule name → bare command token, including multi-word paths built by Tab completion.
 - **Deep Tab completion** — pressing Tab walks deeper into the grammar tree on each press; falls back to a live model query when the playbook has no match.
-- **Generates grammar files from external sources** (`model_tools_grammar.py`) — convert Mermaid diagrams, Markdown runbooks, plain-text SOP documents, PDFs, and web pages into ready-to-load grammar + vocabulary files. AI-assisted extraction available via any Ollama model.
+- **Generates grammar files from external sources** (`scripts/model_generation/model_tools_grammar.py`) — convert Mermaid diagrams, Markdown runbooks, plain-text SOP documents, PDFs, and web pages into ready-to-load grammar + vocabulary files. AI-assisted extraction available via any Ollama model.
 - **Accepts startup arguments** — inject extra training files or grammars at launch via `--train` / `--grammar`, or pass a list file with `@`.
 - **External model mode** (`--model`) — attach any existing Ollama model or import a local `.gguf` file, skipping training entirely while keeping all grammar and vocabulary features.
 - **Exports to GGUF** and serves via Ollama so any Ollama-compatible client can query the model.
-- **Exports to ONNX for NPU** — `/npu` or `model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
+- **Exports to ONNX for NPU** — `/npu` or `scripts/model_generation/model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio (STM32N6570-DK Neural-ART NPU).
 
 ## Architecture
 
 ```
-model_create_hf_cl.py           # Entry point: trains, exports, serves, interactive CLI
-model_export_npu.py             # Standalone NPU/ONNX export script
-model_tools_grammar.py          # Grammar tool: converts external sources → grammar files
+scripts/model_generation/model_create_hf_cl.py           # Entry point: trains, exports, serves, interactive CLI
+scripts/model_generation/model_export_npu.py             # Standalone NPU/ONNX export script
+scripts/model_generation/model_tools_grammar.py          # Grammar tool: converts external sources → grammar files
 
 classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
@@ -49,7 +49,7 @@ examples/
   test_grammar_tools.py         # Self-test for all grammar converters
 
 docs/
-  GRAMMAR_TOOLS.md              # Full reference for model_tools_grammar.py
+  GRAMMAR_TOOLS.md              # Full reference for scripts/model_generation/model_tools_grammar.py
 ```
 
 ## Prerequisites
@@ -95,7 +95,7 @@ ollama serve &
 
 ```bash
 source venv/bin/activate
-python model_create_hf_cl.py
+python scripts/model_generation/model_create_hf_cl.py
 ```
 
 On the **first run** the script:
@@ -117,16 +117,16 @@ Extra training files and grammars can be injected at launch without editing `INI
 
 ```bash
 # Load one or more training/knowledge files before the built-in defaults
-python model_create_hf_cl.py --train training/notes.md training/extra.json
+python scripts/model_generation/model_create_hf_cl.py --train training/notes.md training/extra.json
 
 # Load additional grammar files
-python model_create_hf_cl.py --grammar grammars/mygrammar.bnf
+python scripts/model_generation/model_create_hf_cl.py --grammar grammars/mygrammar.bnf
 
 # Combine both
-python model_create_hf_cl.py --train training/notes.md --grammar grammars/mygrammar.bnf
+python scripts/model_generation/model_create_hf_cl.py --train training/notes.md --grammar grammars/mygrammar.bnf
 
 # Pass a list file (one argument per line, prefix with @)
-python model_create_hf_cl.py @startup_args.txt
+python scripts/model_generation/model_create_hf_cl.py @startup_args.txt
 ```
 
 **Load order:** `--train` files → `--grammar` files → built-in `INIT_KNOWLEDGE_FILES` defaults.
@@ -150,16 +150,16 @@ Use any Ollama model — or a local `.gguf` file — without training:
 
 ```bash
 # Use a model already registered in Ollama
-python model_create_hf_cl.py --model qwen2:7b
-python model_create_hf_cl.py -m llama3
+python scripts/model_generation/model_create_hf_cl.py --model qwen2:7b
+python scripts/model_generation/model_create_hf_cl.py -m llama3
 
 # Import a local GGUF file into Ollama, then use it
-python model_create_hf_cl.py --model ./path/to/model.gguf
+python scripts/model_generation/model_create_hf_cl.py --model ./path/to/model.gguf
 
 # Combine with grammar/vocabulary files
-python model_create_hf_cl.py --model qwen2:7b \
-    --train training/train_python_healthcheck_commands.json \
-    --grammar grammars/playbook_pyhealthcheck.txt
+python scripts/model_generation/model_create_hf_cl.py --model qwen2:7b \
+    --train models/training/train_python_healthcheck_commands.json \
+    --grammar models/grammars/playbook_pyhealthcheck.txt
 ```
 
 If the name is not found in Ollama and is not a `.gguf` file, the script lists available models and exits.
@@ -188,7 +188,7 @@ If the name is not found in Ollama and is not a `.gguf` file, the script lists a
 | `/grammar <file>` | Load a BNF/EBNF grammar file and augment the model in-flight |
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
 | `/run [grammar] <expr>` | Parse and evaluate an expression, or execute a procedure grammar |
-| `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default: `npu_export/`) |
+| `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default: `models/npu_export/`) |
 | `/context` | Show all loaded files, command vocabularies, exec modes, and knowledge document count |
 | `/tokens [grammar]` | Show grammar rules and token commands (all grammars, or filter by name) |
 | `/bye` | Exit |
@@ -272,8 +272,8 @@ Shows all runtime state — what's loaded, in what mode, how many tokens:
 === Context ===
 
 Startup files (INIT_KNOWLEDGE_FILES):
-  training/train_python_healthcheck_commands.json
-  grammars/playbook_pyhealthcheck.txt
+  models/training/train_python_healthcheck_commands.json
+  models/grammars/playbook_pyhealthcheck.txt
 
 Command vocabularies:
   pyhealthcheck  [exec=python]  8 token(s)
@@ -345,14 +345,14 @@ Token values are pure Python source. Use `\n` in JSON for newlines. Full stdlib 
 
 | File | Role |
 |---|---|
-| `training/train_python_healthcheck_commands.json` | 8 Python tokens (`_exec: python`) |
-| `grammars/playbook_pyhealthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
+| `models/training/train_python_healthcheck_commands.json` | 8 Python tokens (`_exec: python`) |
+| `models/grammars/playbook_pyhealthcheck.txt` | BNF tree: pyhealthcheck → system / resource / network |
 
 Trigger: type `pyhealthcheck` at the prompt.
 
 ## Grammar Tools
 
-`model_tools_grammar.py` generates the vocabulary JSON and BNF grammar file
+`scripts/model_generation/model_tools_grammar.py` generates the vocabulary JSON and BNF grammar file
 from external source documents so you do not have to write them by hand.
 
 **Full documentation:** [docs/GRAMMAR_TOOLS.md](docs/GRAMMAR_TOOLS.md)
@@ -372,16 +372,16 @@ from external source documents so you do not have to write them by hand.
 
 ```bash
 # 1. Convert a source document (format auto-detected)
-python model_tools_grammar.py examples/grammar_sources/kali_discovery.md --summary
+python scripts/model_generation/model_tools_grammar.py examples/grammar_sources/kali_discovery.md --summary
 
 # 2. Check the generated files
-cat training/train_kali_discovery_commands.json
-cat grammars/playbook_kali_discovery.txt
+cat models/training/train_kali_discovery_commands.json
+cat models/grammars/playbook_kali_discovery.txt
 
 # 3. Load into the model at startup
-python model_create_hf_cl.py \
-    --train   training/train_kali_discovery_commands.json \
-    --grammar grammars/playbook_kali_discovery.txt
+python scripts/model_generation/model_create_hf_cl.py \
+    --train   models/training/train_kali_discovery_commands.json \
+    --grammar models/grammars/playbook_kali_discovery.txt
 
 # 4. Use at the CLI prompt
 >>> kali_discovery
@@ -395,9 +395,9 @@ model with `--ai-model`. The model interprets the document intent rather than
 relying on formatting patterns:
 
 ```bash
-python model_tools_grammar.py  security_assessment.pdf  --ai-model qwen2:7b
-python model_tools_grammar.py  https://wiki.corp/runbook --ai-model llama3
-python model_tools_grammar.py  procedure_manual.txt      --ai-model mistral --summary
+python scripts/model_generation/model_tools_grammar.py  security_assessment.pdf  --ai-model qwen2:7b
+python scripts/model_generation/model_tools_grammar.py  https://wiki.corp/runbook --ai-model llama3
+python scripts/model_generation/model_tools_grammar.py  procedure_manual.txt      --ai-model mistral --summary
 ```
 
 ### Same procedure, three formats
@@ -406,9 +406,9 @@ The `kali_discovery` example ships in Mermaid, Markdown, and plain text — all
 three produce identical output (10 rules, 21 tokens):
 
 ```bash
-python model_tools_grammar.py examples/grammar_sources/kali_discovery.mmd   --dry-run
-python model_tools_grammar.py examples/grammar_sources/kali_discovery.md    --dry-run
-python model_tools_grammar.py examples/grammar_sources/kali_discovery_spec.txt --dry-run
+python scripts/model_generation/model_tools_grammar.py examples/grammar_sources/kali_discovery.mmd   --dry-run
+python scripts/model_generation/model_tools_grammar.py examples/grammar_sources/kali_discovery.md    --dry-run
+python scripts/model_generation/model_tools_grammar.py examples/grammar_sources/kali_discovery_spec.txt --dry-run
 ```
 
 ### Self-test
@@ -454,7 +454,7 @@ Then query: `/run my_grammar some input`.
 }
 ```
 
-Write the BNF grammar (`grammars/playbook_mycheck.txt`):
+Write the BNF grammar (`models/grammars/playbook_mycheck.txt`):
 ```
 <mycheck>  ::= <step_one> <step_two>
 <step_one> ::= "step_one"
@@ -466,13 +466,13 @@ Write the BNF grammar (`grammars/playbook_mycheck.txt`):
 
 Load both at launch (command vocabulary JSON **before** grammar BNF):
 ```bash
-python model_create_hf_cl.py --train training/mycheck_commands.json --grammar grammars/playbook_mycheck.txt
+python scripts/model_generation/model_create_hf_cl.py --train training/mycheck_commands.json --grammar models/grammars/playbook_mycheck.txt
 ```
 
 Or in-flight:
 ```
 /read training/mycheck_commands.json
-/grammar grammars/playbook_mycheck.txt
+/grammar models/grammars/playbook_mycheck.txt
 ```
 
 Then type `mycheck` to run it automatically, or use Tab to navigate:
@@ -481,7 +481,7 @@ Then type `mycheck` to run it automatically, or use Tab to navigate:
 >>> mycheck step_one    → runs step_one directly
 ```
 
-To make them the permanent default, set both in `INIT_KNOWLEDGE_FILES` inside `model_create_hf_cl.py`.
+To make them the permanent default, set both in `INIT_KNOWLEDGE_FILES` inside `scripts/model_generation/model_create_hf_cl.py`.
 
 ## How GrammarRunner works
 
@@ -507,20 +507,20 @@ The playbook is always authoritative: even if the tiny model mis-answers a rule 
 
 ## NPU export for STM32N6570-DK
 
-The `/npu` command (or standalone `model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK (Cortex-M55 CPU, INT8 weights).
+The `/npu` command (or standalone `scripts/model_generation/model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK (Cortex-M55 CPU, INT8 weights).
 
 ```bash
 # From the interactive session (requires locally trained model, not --model mode)
->>> /npu npu_export/
+>>> /npu models/npu_export/
 
-# Or standalone (requires model_create_hf_cl.py to have run at least once)
-python model_export_npu.py [output_dir]
+# Or standalone (requires scripts/model_generation/model_create_hf_cl.py to have run at least once)
+python scripts/model_generation/model_export_npu.py [output_dir]
 ```
 
 **Output files:**
 
 ```
-npu_export/
+models/npu_export/
   model_npu.onnx           FP32 ONNX (opset 17)
   model_npu_qdq.onnx       INT8 QDQ — use this in STM32Cube.AI Studio
   model_npu_int8.onnx      INT8 dynamic-quantized (alternative)
@@ -531,9 +531,9 @@ npu_export/
 ```
 
 **Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for the full end-to-end flow (host → ST Edge AI → on-device FSBL + interactive REPL). Quick summary:
-1. Import `npu_export/model_npu_qdq.onnx`
+1. Import `models/npu_export/model_npu_qdq.onnx`
 2. **Disable** the Neural ART NPU toggle (use Cortex-M55 CPU path)
-3. Set validation dataset to `npu_export/validation_data/validation.npz`
+3. Set validation dataset to `models/npu_export/validation_data/validation.npz`
 4. Click Generate Project
 
 > **Note — architecture matters more than the chip.** The Neural-ART NPU is a CNN/conv+GEMM

@@ -20,6 +20,8 @@ from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, pr
 #################################################################################################
 # MP CLASS AND CODE
 #################################################################################################
+# scripts/ on sys.path so `from classes...` resolves (classes at scripts/classes/)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from classes.class_terminal_logs import TerminalLogger
 logger = TerminalLogger()
 

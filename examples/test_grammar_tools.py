@@ -14,9 +14,9 @@ Usage:
 
 import sys, os, argparse, json, tempfile, traceback
 
-# Resolve project root so imports work regardless of cwd
+# Resolve project root so imports work regardless of cwd (classes live in scripts/classes/)
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from classes.class_tools_grammar import (
     MermaidGrammarConverter,

@@ -40,7 +40,7 @@ import numpy as np
 import torch
 from transformers import Qwen2Config, Qwen2ForCausalLM, Qwen2TokenizerFast
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # scripts/
 from classes.class_terminal_logs import TerminalLogger
 from classes.class_model_assets import ModelAssets
 

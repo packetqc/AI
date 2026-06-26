@@ -40,7 +40,7 @@ ran and why.
 ## The analyst workflow
 
 ```
-1. acquire   model_security_re.py analyze --ollama <name> [--dynamic] --registry approved_models.json
+1. acquire   model_security_re.py analyze --ollama <name> [--dynamic] --registry models/approved_models.json
 2. STATIC always runs: parse + triage + classify model-type → mode gate decides dynamic
 3. Section 1  reconstitution (decoded grammar)
 4. Section 2  integrity vs approved business models (INTEGRAL / TAMPERED / ROGUE)
@@ -56,13 +56,13 @@ an incident fires. Case folders are evidence — gitignored, regenerable.
 
 ```bash
 # full 3-section report
-python3 model_security_re.py analyze     --ollama <name> [--dynamic] --registry approved_models.json
+python3 scripts/model_security_re.py analyze     --ollama <name> [--dynamic] --registry models/approved_models.json
 # a single section
-python3 model_security_re.py reconstruct --ollama <name> [--dynamic]
-python3 model_security_re.py integrity   --ollama <name> [--dynamic] --registry approved_models.json
-python3 model_security_re.py threat      --ollama <name>
+python3 scripts/model_security_re.py reconstruct --ollama <name> [--dynamic]
+python3 scripts/model_security_re.py integrity   --ollama <name> [--dynamic] --registry models/approved_models.json
+python3 scripts/model_security_re.py threat      --ollama <name>
 # direct file (static only)
-python3 model_security_re.py threat      --gguf path/to/model.gguf
+python3 scripts/model_security_re.py threat      --gguf path/to/model.gguf
 ```
 
 ## How to fill each section

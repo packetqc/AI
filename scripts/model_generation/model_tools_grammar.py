@@ -23,7 +23,7 @@ Load into the local AI model:
 
 import argparse, sys, os
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # scripts/
 
 from classes.class_tools_grammar import (
     MermaidGrammarConverter,
@@ -90,9 +90,10 @@ def _resolve_output_dirs(output_arg):
     if output_arg and output_arg != ".":
         return output_arg, output_arg
     # If we are inside the AI project directory, use its conventional layout
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    json_dir   = os.path.join(script_dir, "models", "training")
-    bnf_dir    = os.path.join(script_dir, "models", "grammars")
+    # repo root = two levels up from scripts/model_generation/
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    json_dir  = os.path.join(repo_root, "models", "training")
+    bnf_dir   = os.path.join(repo_root, "models", "grammars")
     return json_dir, bnf_dir
 
 
