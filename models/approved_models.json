@@ -3,19 +3,19 @@
   "approved_models": [
     {
       "name": "kali_discovery",
-      "grammar": "grammars/playbook_kali_discovery.txt",
-      "training": "training/train_kali_discovery_commands.json",
+      "grammar": "models/grammars/playbook_kali_discovery.txt",
+      "training": "models/training/train_kali_discovery_commands.json",
       "gguf_sha256": null
     },
     {
       "name": "pyhealthcheck",
-      "grammar": "grammars/playbook_pyhealthcheck.txt",
-      "training": "training/train_python_healthcheck_commands.json",
+      "grammar": "models/grammars/playbook_pyhealthcheck.txt",
+      "training": "models/training/train_python_healthcheck_commands.json",
       "gguf_sha256": null
     },
     {
       "name": "calculator",
-      "grammar": "grammars/playbook_model_calculator.txt",
+      "grammar": "models/grammars/playbook_model_calculator.txt",
       "training": null,
       "gguf_sha256": null
     }

@@ -14,8 +14,8 @@ Each converter populates:
     self._tokens  {token_name: command_string}      terminal command tokens
 
 Output (via .generate()):
-    training/train_<grammar>_commands.json   — command vocabulary JSON
-    grammars/playbook_<grammar>.txt          — BNF grammar file
+    models/training/train_<grammar>_commands.json   — command vocabulary JSON
+    models/grammars/playbook_<grammar>.txt          — BNF grammar file
 """
 
 import os, re, json

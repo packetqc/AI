@@ -44,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from classes.class_terminal_logs import TerminalLogger
 from classes.class_model_assets import ModelAssets
 
-_DEFAULT_OUT = "npu_export"
+_DEFAULT_OUT = "models/npu_export"
 
 
 def _discover_model():
@@ -55,8 +55,12 @@ def _discover_model():
     of what the model was named.
     """
     import glob
-    for sf in sorted(glob.glob("*.state.json"), key=os.path.getmtime, reverse=True):
-        mp = sf[: -len(".state.json")]
+    # models now live in models/<name>/ (gguf + state.json inside the folder); keep the
+    # legacy cwd scan as a fallback for older layouts.
+    candidates = sorted(glob.glob("models/generated/*/*.state.json") + glob.glob("*.state.json"),
+                        key=os.path.getmtime, reverse=True)
+    for sf in candidates:
+        mp = os.path.dirname(sf) or sf[: -len(".state.json")]
         if os.path.isfile(os.path.join(mp, "config.json")) and any(
             os.path.isfile(os.path.join(mp, w))
             for w in ("model.safetensors", "pytorch_model.bin")

@@ -11,11 +11,12 @@ import os, re, math, hashlib, subprocess, sys
 from dataclasses import dataclass
 from typing import Optional
 
-# vendored gguf-py (top-level `gguf` is not pip-installed); package dir is repo-root/model_security
+# GGUF parser: prefer the pip-installed `gguf` (requirements.txt) and fall back to the
+# vendored llama.cpp/gguf-py ONLY if it is still present — so llama.cpp can be archived.
 _GGUF_PY = os.path.join(os.path.dirname(__file__), "..", "llama.cpp", "gguf-py")
 if os.path.isdir(_GGUF_PY) and os.path.abspath(_GGUF_PY) not in sys.path:
     sys.path.insert(0, os.path.abspath(_GGUF_PY))
-from gguf import GGUFReader  # noqa: E402
+from gguf import GGUFReader  # noqa: E402  (pip `gguf` or the vendored fallback)
 
 
 # ---------------------------------------------------------------------------

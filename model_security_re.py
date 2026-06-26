@@ -10,7 +10,7 @@ Analysis MODE is managed & gated: default STATIC (artifact-only, never loads the
 unsafe artifacts are refused, with the reason recorded).
 
 Usage:
-  model_security_re.py analyze     --ollama <name> [--dynamic] [--registry approved_models.json | --assets .]
+  model_security_re.py analyze     --ollama <name> [--dynamic] [--registry models/approved_models.json | --assets .]
   model_security_re.py reconstruct --ollama <name> [--dynamic]
   model_security_re.py threat      --ollama <name>          (or --gguf <path>)
   model_security_re.py integrity   --ollama <name> [--dynamic] (--registry ... | --assets .)
@@ -20,7 +20,7 @@ import argparse, datetime, json, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
 from model_security import acquire, reconstruct, integrity, threat, report  # noqa: E402
 
-DEF_OUT = "forensics"
+DEF_OUT = "models/forensics"
 DEF_YAR = os.path.join(os.path.dirname(__file__), "model_security_rules", "recon_c2.yar")
 
 
@@ -150,7 +150,7 @@ def cmd_threat(args):
 def cmd_integrity(args):
     ctx = _acquire(args)
     if not args.registry and not args.assets:
-        sys.exit("integrity needs --registry approved_models.json or --assets <dir>")
+        sys.exit("integrity needs --registry models/approved_models.json or --assets <dir>")
     _, recon_syms, _ = _section1(ctx)
     s2, inc, _ = _section2(ctx, recon_syms, args.registry, args.assets)
     open(os.path.join(ctx["case"], "section2_integrity.md"), "w").write(s2)

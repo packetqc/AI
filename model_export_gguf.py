@@ -6,8 +6,9 @@ from gguf import GGUFWriter
 #
 #################################################################################################
 version = "1"
-model_path = "./model_version_" + version
-output_path = "./model_version_" + version + ".gguf"
+# model is self-contained in models/<name>/; the gguf is written inside that folder
+model_path = "./models/generated/model_version_" + version
+output_path = model_path + "/model_version_" + version + ".gguf"
 
 #################################################################################################
 #

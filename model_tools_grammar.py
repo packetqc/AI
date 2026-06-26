@@ -12,13 +12,13 @@ Model-assisted mode (--ai-model):
     Recommended for dense technical manuals or inconsistently structured pages.
 
 Output files (written to --output dir, default = current directory):
-    training/train_<grammar>_commands.json   command vocabulary for model_create_hf_cl.py
-    grammars/playbook_<grammar>.txt          BNF grammar file
+    models/training/train_<grammar>_commands.json   command vocabulary for model_create_hf_cl.py
+    models/grammars/playbook_<grammar>.txt          BNF grammar file
 
 Load into the local AI model:
     python model_create_hf_cl.py \\
-        --train training/train_<grammar>_commands.json \\
-        --grammar grammars/playbook_<grammar>.txt
+        --train models/training/train_<grammar>_commands.json \\
+        --grammar models/grammars/playbook_<grammar>.txt
 """
 
 import argparse, sys, os
@@ -86,13 +86,13 @@ def _list_ollama_models(host):
 # ── output directory defaults ──────────────────────────────────────────────────
 
 def _resolve_output_dirs(output_arg):
-    """Return (json_dir, bnf_dir): put JSON in training/, BNF in grammars/."""
+    """Return (json_dir, bnf_dir): put JSON in models/training/, BNF in models/grammars/."""
     if output_arg and output_arg != ".":
         return output_arg, output_arg
     # If we are inside the AI project directory, use its conventional layout
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    json_dir   = os.path.join(script_dir, "training")
-    bnf_dir    = os.path.join(script_dir, "grammars")
+    json_dir   = os.path.join(script_dir, "models", "training")
+    bnf_dir    = os.path.join(script_dir, "models", "grammars")
     return json_dir, bnf_dir
 
 

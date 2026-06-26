@@ -61,11 +61,13 @@ _CLI_FILES = list(_args.train) + list(_args.grammar)
 version = "1"
 model_create = "model_discoverit_version_" + version
 
-# model_path = "./"+model_create
-model_path = model_create
-gguf_path = model_path+".gguf"
+# Each model is self-contained in its own folder under models/: HF weights +
+# <name>.gguf + <name>.state.json + Modelfile all live inside models/<name>/.
+model_path = os.path.join("models", "generated", model_create)   # the model's own folder
+os.makedirs(model_path, exist_ok=True)                   # create empty folder if missing
+gguf_path = os.path.join(model_path, model_create + ".gguf")
 
-modelfile_path = "./Modelfile"
+modelfile_path = os.path.join(model_path, "Modelfile")
 
 NAME = "model_to_discover"
 OLLAMA_MODEL_NAME = NAME
@@ -74,20 +76,20 @@ OLLAMA_MODEL_NAME = NAME
 # JSON; empty list to skip). Each is routed by extension exactly like the in-flight "/read".
 # NOTE: only used on a fresh run — once a state file exists it is restored instead (see below).
 # INIT_KNOWLEDGE_FILES = [
-#     "training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
-#     "grammars/playbook_kali_discovery.txt",
+#     "models/training/train_kali_discovery_commands.json",  # command vocabulary loaded BEFORE grammar
+#     "models/grammars/playbook_kali_discovery.txt",
 # ]
 # INIT_KNOWLEDGE_FILES = [
-#     "grammars/playbook_model_calculator.txt",
+#     "models/grammars/playbook_model_calculator.txt",
 # ]
 INIT_KNOWLEDGE_FILES = [
-    "training/train_python_healthcheck_commands.json",
-    "grammars/playbook_pyhealthcheck.txt",
+    "models/training/train_python_healthcheck_commands.json",
+    "models/grammars/playbook_pyhealthcheck.txt",
 ]
 
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
-STATE_PATH = model_path + ".state.json"
+STATE_PATH = os.path.join(model_path, model_create + ".state.json")
 
 # Ollama serving parameters (shared by the first build and every /read rebuild).
 # NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
@@ -933,7 +935,7 @@ while True:
         if user_input.split()[0].lower() == "/npu":
             readline.add_history(user_input)
             parts = user_input.split(maxsplit=1)
-            npu_out = parts[1].strip() if len(parts) > 1 else "npu_export"
+            npu_out = parts[1].strip() if len(parts) > 1 else "models/npu_export"
             logger.log("info", "NPU", "Exporting model to '" + npu_out + "' for STM32Cube.AI...")
             try:
                 import model_export_npu as _npu_mod
