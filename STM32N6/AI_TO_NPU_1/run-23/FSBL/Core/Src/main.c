@@ -22,9 +22,14 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
 #include "stm32n6570_discovery_xspi.h"
 #include "stm32n6570_discovery_errno.h"
-
+#include "stm32n6xx_hal_bsec.h"
+#include "stm32n6xx_hal_ramcfg.h"
+#include "llm_fsbl.h"
+#include "llm_test_fsbl.h"
+#include "npu_init.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -48,7 +53,8 @@ XSPI_HandleTypeDef hxspi1;
 XSPI_HandleTypeDef hxspi2;
 
 /* USER CODE BEGIN PV */
-
+UART_HandleTypeDef huart1;
+volatile int debugFlag = 1;  /* 1 = spin at while(debugFlag) after OpenDebug(); set 0 via GDB to continue */
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -57,11 +63,19 @@ static void MX_GPIO_Init(void);
 static void MX_XSPI1_Init(void);
 static void MX_XSPI2_Init(void);
 /* USER CODE BEGIN PFP */
-
+void MX_USART1_UART_Init(void);
+static void Enable_NPU_RAM_ForCore(void);
+static void Enable_AXICACHE_RAM_ForCore(void);
+static void OpenDebug(void);
+void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void uart_puts(const char *s)
+{
+    HAL_UART_Transmit(&huart1, (const uint8_t *)s, (uint16_t)strlen(s), 1000);
+}
 
 /* USER CODE END 0 */
 
@@ -73,7 +87,38 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  /* 1. Power up NPU RAMs and CACHEAXIRAM before anything can touch them.
+   *    Boot ROM parks AXISRAM3-6 and CACHEAXIRAM in shutdown (SRAMSD=1).
+   *    Must run before HAL_Init, BSS zeroing, .data copy, or any code that
+   *    dereferences pointers into 0x34200000-0x343FFFFF. */
+  Enable_NPU_RAM_ForCore();
+  Enable_AXICACHE_RAM_ForCore();
 
+  /* 2. Re-authorize SWD debug for this entire FSBL session.
+   *    Runtime BSEC register writes only — no OTP/fuse programming.
+   *    NOTE: This resets the current debug AP session. The GDB server will
+   *    get a broken pipe — this is EXPECTED. Restart GDB server and reconnect;
+   *    the CPU will be spinning at while(debugFlag) below with full Secure auth. */
+  OpenDebug();
+
+  /* 3. GDB catch point — spin here after OpenDebug authorizes Secure SWD.
+   *    Restart GDB server, reconnect, then write debugFlag=0 via SWD to continue. */
+  while (debugFlag) { __NOP(); }
+
+  /* 4. Disable stale MPU regions left by Boot ROM.
+   *    Boot ROM may mark parts of AXISRAM as XN; first branch into such a
+   *    region fires IACCVIOL → HardFault before UART is up. */
+  HAL_MPU_Disable();
+
+  /* 5. Clear stack-pointer limits and FPCA (see original comments). */
+  __set_MSPLIM(0U);
+  __set_PSPLIM(0U);
+#if defined(__ARM_FEATURE_CMSE) && (__ARM_FEATURE_CMSE == 3U)
+  __TZ_set_MSPLIM_NS(0U);
+  __TZ_set_PSPLIM_NS(0U);
+#endif
+  __set_CONTROL(__get_CONTROL() & ~CONTROL_FPCA_Msk);
+  __ISB();
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -87,50 +132,46 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-
   /* USER CODE END SysInit */
+
+  /* UART enabled — USART1 @115200 on PE5/PE6 → ST-Link VCP for calc test output */
+  MX_USART1_UART_Init();
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_XSPI1_Init();
-  MX_XSPI2_Init();
-  MX_EXTMEM_MANAGER_Init();
+  /* MX_XSPI1_Init() — skipped: PSRAM not used, hxspi1 never referenced */
+  /* MX_XSPI2_Init() — skipped: load_and_run leaves XSPI2 mid-transaction (BUSY=1);
+   * HAL_XSPIM_Config polls BUSY forever. BSP_XSPI_NOR_Init handles XSPI2 from
+   * scratch and works correctly without the HAL mux pre-config. */
+
+  /* MX_EXTMEM_MANAGER_Init() — skip: BOOT_Application() path not used */
   /* USER CODE BEGIN 2 */
-__HAL_RCC_AXISRAM2_MEM_CLK_ENABLE();
-                __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
-                __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();
-                __HAL_RCC_AXISRAM5_MEM_CLK_ENABLE();
-                __HAL_RCC_AXISRAM6_MEM_CLK_ENABLE();
-BSP_XSPI_NOR_Init_t xspiInit;
-                    xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
-                    xspiInit.TransferRate = MX66UW1G45G_DTR_TRANSFER;
-                    BSP_XSPI_NOR_Init(0,&xspiInit);
-                    BSP_XSPI_NOR_EnableMemoryMappedMode(0);
-                    MODIFY_REG(XSPI2->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
 
-                    BSP_XSPI_RAM_Init(0);
-                    BSP_XSPI_RAM_EnableMemoryMappedMode(0);
-                    MODIFY_REG(XSPI1->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
+  /* NOR flash memory-mapped init FIRST — BEFORE NPU_Config / CACHEAXI enable.
+   * CACHEAXI sits on the AXI path between NPU and XSPI2. Enabling CACHEAXI
+   * (inside NPU_Config) before BSP_XSPI_NOR_Init causes CACHEAXI to intercept
+   * XSPI2 command transactions during NOR init → Boot ROM XSPI2 poll hangs. */
+  BSP_XSPI_NOR_Init_t xspiInit;
+  xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
+  xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
+  BSP_XSPI_NOR_Init(0, &xspiInit);
+  BSP_XSPI_NOR_EnableMemoryMappedMode(0);
+  MODIFY_REG(XSPI2->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
 
-  /* ── Minimal in-FSBL NPU confirmation (vanilla run-23) ───────────────────────
-   * NOR flash is now memory-mapped (weights live at 0x71000000). Bring up the
-   * Neural-ART, run ONE inference, and stay put. Read g_npu_done / g_npu_run_rc /
-   * g_npu_run_ms over GDB to confirm the epoch completes. Do NOT jump to the Appli. */
-  extern void aiPreInitialize(void);   /* SystemInit_POST + NPU_Config + RISAF_Config */
-  extern void NPU_SelfTest(void);
-  extern void NPU_UART_Init(void);
-  extern void NPU_LED_Init(void);
-  NPU_UART_Init();          /* USART1 VCP — set up BEFORE RISAF, used for the readout */
-  NPU_LED_Init();           /* user LEDs — set up BEFORE RISAF; GREEN=done, RED=init fail */
-  /* Full ST Edge AI pre-init (ref N6_EDGEAI_1). SystemInit_POST takes AXISRAM2-6
-   * out of SRAM-shutdown (RAMCFG_CR_SRAMSD), powers CACHEAXIRAM, and sets
-   * MEMSYSCTL.DCACTIVE/ICACTIVE (the boot leaves them 0) — without it the NPU
-   * streaming engine reads shut-down RAM and the epoch never completes. */
-  aiPreInitialize();
+  /* NPU + security init — AFTER NOR flash is mapped (reference project order) */
+  SystemInit_POST();
   SCB_EnableICache();
   SCB_EnableDCache();
-  NPU_SelfTest();
-  while (1) { __NOP(); }   /* park here after the test — do not BOOT_Application() */
+
+  NPU_Config();
+  RISAF_Config();
+
+  /* nocode grammar REPL over USART1 — the host solution on the N6.
+   * Runs on the CM55 CPU: the embedded grammar (playbook) is the authoritative
+   * oracle, so parse + evaluate are instant. The NPU model dialog is opt-in and
+   * lazily initialised inside the REPL via '/model on'. */
+  LLM_Repl_Run();
+  while (1) {}  /* prevent BOOT_Application() — remove to restore normal boot */
 
   /* USER CODE END 2 */
 
@@ -575,6 +616,80 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/* Power on AXISRAM3-6 (NPU activations, 4×448 KB) for the M55 core.
+ * Boot ROM parks these banks (SRAMSD=1); first access faults silently.
+ * Must run BEFORE HAL_Init, BSS zeroing, or .data copy touches these ranges. */
+static void Enable_NPU_RAM_ForCore(void)
+{
+    RAMCFG_HandleTypeDef hramcfg = {0};
+
+    /* AXISRAM1 (0x34000000) — holds the NPU weights (.npu_weights section,
+     * loaded via load-and-run). Boot ROM parks it; power it before use. */
+    __HAL_RCC_AXISRAM1_MEM_CLK_ENABLE();
+    hramcfg.Instance = RAMCFG_SRAM1_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
+
+    __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM5_MEM_CLK_ENABLE();
+    __HAL_RCC_AXISRAM6_MEM_CLK_ENABLE();
+
+    hramcfg.Instance = RAMCFG_SRAM3_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
+    hramcfg.Instance = RAMCFG_SRAM4_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
+    hramcfg.Instance = RAMCFG_SRAM5_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
+    hramcfg.Instance = RAMCFG_SRAM6_AXI; HAL_RAMCFG_EnableAXISRAM(&hramcfg);
+}
+
+/* Power on CACHEAXIRAM (0x343C0000-0x343FFFFF) and enable CACHEAXI peripheral clock.
+ * Required before any NPU AXI transaction that might route through CACHEAXI. */
+static void Enable_AXICACHE_RAM_ForCore(void)
+{
+    __HAL_RCC_CACHEAXIRAM_MEM_CLK_ENABLE();
+    __HAL_RCC_CACHEAXI_CLK_ENABLE();
+}
+
+/* Re-authorize SWD core debug + secure debug via HAL_BSEC — matches reference
+ * project N6_EDGEAI_1 exactly. Runtime BSEC registers only, no OTP writes. */
+static void OpenDebug(void)
+{
+    BSEC_HandleTypeDef hbsec;
+    hbsec.Instance = BSEC;
+    BSEC_DebugCfgTypeDef config_debug;
+    config_debug.HDPL_Open_Dbg   = HAL_BSEC_OPEN_DBG_LEVEL_0;
+    config_debug.NonSec_Dbg_Auth = HAL_BSEC_NONSEC_DBG_AUTH;
+    config_debug.Sec_Dbg_Auth    = HAL_BSEC_SEC_DBG_AUTH;
+    if (HAL_BSEC_ConfigDebug(&hbsec, &config_debug) != HAL_OK)
+        Error_Handler();
+    if (HAL_BSEC_UnlockDebug(&hbsec) != HAL_OK)
+        Error_Handler();
+}
+
+/**
+ * @brief USART1 initialization — TX=PE5, RX=PE6, AF7 (BSP COM1 on STM32N6570-DK VCP).
+ */
+void MX_USART1_UART_Init(void)
+{
+  __HAL_RCC_USART1_CLK_ENABLE();
+  __HAL_RCC_GPIOE_CLK_ENABLE();
+
+  GPIO_InitTypeDef gpio = {0};
+  gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_6;
+  gpio.Mode      = GPIO_MODE_AF_PP;
+  gpio.Pull      = GPIO_NOPULL;
+  gpio.Speed     = GPIO_SPEED_FREQ_LOW;
+  gpio.Alternate = GPIO_AF7_USART1;
+  HAL_GPIO_Init(GPIOE, &gpio);
+
+  huart1.Instance          = USART1;
+  huart1.Init.BaudRate     = 115200;
+  huart1.Init.WordLength   = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits     = UART_STOPBITS_1;
+  huart1.Init.Parity       = UART_PARITY_NONE;
+  huart1.Init.Mode         = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  HAL_UART_Init(&huart1);
+}
 
 /* USER CODE END 4 */
 

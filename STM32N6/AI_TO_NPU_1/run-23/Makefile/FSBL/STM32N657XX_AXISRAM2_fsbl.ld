@@ -43,6 +43,7 @@ MEMORY
   AI_RAM       (xrw) : ORIGIN = 0x34200000, LENGTH = 512K  /* AXISRAM3: AI activations */
   NOR_FLASH    (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* XSPI2 NOR: AI weights (memory-mapped) */
   WEIGHTS_SRAM (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* alias: atonn-generated section name */
+  NPU_WEIGHTS  (xrw) : ORIGIN = 0x34000000, LENGTH = 1408K /* AXISRAM1: NPU weights staged in fast SRAM (loaded via load-and-run) */
 }
 /* Highest address of the user mode stack */
 _estack = ORIGIN(RAM) + LENGTH(RAM); /* end of "RAM" Ram type memory */
@@ -82,8 +83,14 @@ SECTIONS
     _etext = .;        /* define a global symbols at end of code */
   } >ROM
 
-  /* vanilla run-23: weights stay in flash @ 0x71000000 (already flashed); reference by symbol */
-  PROVIDE(_mem_pool_xSPI2_network = 0x71000000);
+  /* NPU weights (~478 KiB) → fast internal AXISRAM1. Loaded into SRAM by the
+   * load-and-run GDB load; the NPU reads them by symbol (_mem_pool_xSPI2_network). */
+  .npu_weights :
+  {
+    . = ALIGN(64);
+    *network_atonbuf.xSPI2.o(.rodata .rodata*)
+    . = ALIGN(4);
+  } >NPU_WEIGHTS
 
   /* Constant data into "RAM" Ram type memory */
   .rodata :

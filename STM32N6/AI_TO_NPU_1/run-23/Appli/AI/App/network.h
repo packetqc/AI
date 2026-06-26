@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    network.h
   * @author  STEdgeAI
-  * @date    2026-06-23 20:13:04
+  * @date    2026-06-25 23:13:18
   * @brief   Minimal description of the generated c-implemention of the network
   ******************************************************************************
   * @attention
@@ -20,7 +20,7 @@
 
 /******************************************************************************/
 #define LL_ATON_NETWORK_C_MODEL_NAME        "network"
-#define LL_ATON_NETWORK_ORIGIN_MODEL_NAME   "model_cnn_calc"
+#define LL_ATON_NETWORK_ORIGIN_MODEL_NAME   "model_npu_int8"
 
 /************************** USER ALLOCATED IOs ********************************/
 // No user allocated inputs
