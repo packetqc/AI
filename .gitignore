@@ -73,3 +73,10 @@ __pycache__/
 
 # blackbox RE forensic evidence (per-engagement, not source)
 models/forensics/
+
+# build scratch / test artifacts (archived to OLD)
+st_ai_ws/
+st_ai_output/
+st_ai_*/
+test.onnx
+test.onnx.data
