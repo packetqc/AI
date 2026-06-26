@@ -25,6 +25,7 @@
 #include <string.h>
 #include "stm32n6570_discovery_xspi.h"
 #include "stm32n6570_discovery_errno.h"
+#include "stm32n6570_discovery.h"    /* BSP: COM1 VCP UART + LEDs (board-canonical) */
 #include "stm32n6xx_hal_bsec.h"
 #include "stm32n6xx_hal_ramcfg.h"
 #include "llm_fsbl.h"
@@ -134,9 +135,6 @@ int main(void)
   /* USER CODE BEGIN SysInit */
   /* USER CODE END SysInit */
 
-  /* UART enabled — USART1 @115200 on PE5/PE6 → ST-Link VCP for calc test output */
-  MX_USART1_UART_Init();
-
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* MX_XSPI1_Init() — skipped: PSRAM not used, hxspi1 never referenced */
@@ -146,6 +144,15 @@ int main(void)
 
   /* MX_EXTMEM_MANAGER_Init() — skip: BOOT_Application() path not used */
   /* USER CODE BEGIN 2 */
+
+  /* BSP init (LEDs + VCP UART) FIRST in USER CODE 2 — before our NPU/REPL logic — so
+   * the board reports life over UART + LED even if a later init (XSPI/NPU) hangs.
+   * RED = booting / init in progress; GREEN (below) = reached the REPL. */
+  BSP_LED_Init(LED_GREEN);
+  BSP_LED_Init(LED_RED);
+  BSP_LED_On(LED_RED);
+  MX_USART1_UART_Init();                 /* BSP_COM1 = USART1 @115200 on PE5/PE6 (VCP) */
+  uart_puts("\r\n[run-23] FSBL alive — NPU grammar REPL\r\n");
 
   /* NOR flash memory-mapped init FIRST — BEFORE NPU_Config / CACHEAXI enable.
    * CACHEAXI sits on the AXI path between NPU and XSPI2. Enabling CACHEAXI
@@ -170,6 +177,8 @@ int main(void)
    * Runs on the CM55 CPU: the embedded grammar (playbook) is the authoritative
    * oracle, so parse + evaluate are instant. The NPU model dialog is opt-in and
    * lazily initialised inside the REPL via '/model on'. */
+  BSP_LED_Off(LED_RED);
+  BSP_LED_On(LED_GREEN);   /* proof of life: CPU reached the REPL, all init complete */
   LLM_Repl_Run();
   while (1) {}  /* prevent BOOT_Application() — remove to restore normal boot */
 
@@ -669,26 +678,18 @@ static void OpenDebug(void)
  */
 void MX_USART1_UART_Init(void)
 {
-  __HAL_RCC_USART1_CLK_ENABLE();
-  __HAL_RCC_GPIOE_CLK_ENABLE();
-
-  GPIO_InitTypeDef gpio = {0};
-  gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_6;
-  gpio.Mode      = GPIO_MODE_AF_PP;
-  gpio.Pull      = GPIO_NOPULL;
-  gpio.Speed     = GPIO_SPEED_FREQ_LOW;
-  gpio.Alternate = GPIO_AF7_USART1;
-  HAL_GPIO_Init(GPIOE, &gpio);
-
-  huart1.Instance          = USART1;
-  huart1.Init.BaudRate     = 115200;
-  huart1.Init.WordLength   = UART_WORDLENGTH_8B;
-  huart1.Init.StopBits     = UART_STOPBITS_1;
-  huart1.Init.Parity       = UART_PARITY_NONE;
-  huart1.Init.Mode         = UART_MODE_TX_RX;
-  huart1.Init.HwFlowCtl    = UART_HWCONTROL_NONE;
-  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
-  HAL_UART_Init(&huart1);
+  /* BSP COM1 = USART1 on PE5/PE6 AF7 (STM32N6570-DK ST-Link VCP) — board-canonical
+   * init: BSP_COM_Init configures the GPIO pins + the USART together (the documented
+   * way), avoiding any pin/MSP ordering pitfalls. The REPL and uart_puts use the global
+   * huart1, so mirror the BSP-initialised handle (hcom_uart[COM1]) into it. */
+  COM_InitTypeDef com = {0};
+  com.BaudRate   = 115200;
+  com.WordLength = COM_WORDLENGTH_8B;
+  com.StopBits   = COM_STOPBITS_1;
+  com.Parity     = COM_PARITY_NONE;
+  com.HwFlowCtl  = COM_HWCONTROL_NONE;
+  if (BSP_COM_Init(COM1, &com) != BSP_ERROR_NONE) { Error_Handler(); }
+  huart1 = hcom_uart[COM1];
 }
 
 /* USER CODE END 4 */
