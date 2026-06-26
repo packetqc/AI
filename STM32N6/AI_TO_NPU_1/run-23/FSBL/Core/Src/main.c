@@ -50,6 +50,8 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+CACHEAXI_HandleTypeDef hcacheaxi;
+
 RAMCFG_HandleTypeDef hramcfg_SRAM1;
 RAMCFG_HandleTypeDef hramcfg_SRAM2;
 RAMCFG_HandleTypeDef hramcfg_SRAM3;
@@ -77,6 +79,8 @@ static void MX_XSPI2_Init(void);
 static void MX_BSEC_Init(void);
 static void MX_USART1_UART_Init(void);
 static void MX_RAMCFG_Init(void);
+static void MX_ICACHE_Init(void);
+static void MX_CACHEAXI_Init(void);
 static void SystemIsolation_Config(void);
 /* USER CODE BEGIN PFP */
 static void Enable_NPU_RAM_ForCore(void);
@@ -153,8 +157,6 @@ int main(void)
   /* USER CODE BEGIN SysInit */
   /* NPU RAMs were powered in USER CODE 1; enable the M55 caches. */
   // SystemInit_POST();
-  // SCB_EnableICache();
-  // SCB_EnableDCache();
   g_boot_stage = 3;
   /* USER CODE END SysInit */
 
@@ -165,8 +167,10 @@ int main(void)
   MX_BSEC_Init();
   MX_USART1_UART_Init();
   MX_RAMCFG_Init();
+  MX_ICACHE_Init();
+  MX_CACHEAXI_Init();
   SystemIsolation_Config();
-  // MX_EXTMEM_MANAGER_Init();
+  MX_EXTMEM_MANAGER_Init();
   /* USER CODE BEGIN 2 */
   // NPU_Config();
   g_boot_stage = 4;
@@ -187,7 +191,8 @@ int main(void)
   /* LLM_FSBL_Init();  ...one inference... */
   g_boot_stage = 7;
 
-   {
+  /* LEDS */
+  {
     (void)BSP_LED_Init(0U);   /* LED_GREEN = LED1 */
     BSP_LED_Off(0U);
     BSP_LED_On (0U);
@@ -197,6 +202,7 @@ int main(void)
     BSP_LED_On (1U);
   }
 
+  /* COM TERMINAL */
   {
     /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
     BspCOMInit.BaudRate   = 115200;
@@ -212,6 +218,16 @@ int main(void)
     printf( "\x1B[2J" );
     printf("%c[0;0H", 0x1b);
     printf("MAIN APP ON\n");
+  }
+
+  /* NPU */
+  {
+
+  }
+
+  /* LLM TESTS */
+  {
+
   }
 
   while (1) /* STAY IN FSBL */
@@ -371,6 +387,53 @@ static void MX_BSEC_Init(void)
   /* USER CODE BEGIN BSEC_Init 2 */
 
   /* USER CODE END BSEC_Init 2 */
+
+}
+
+/**
+  * @brief CACHEAXI Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CACHEAXI_Init(void)
+{
+
+  /* USER CODE BEGIN CACHEAXI_Init 0 */
+
+  /* USER CODE END CACHEAXI_Init 0 */
+
+  /* USER CODE BEGIN CACHEAXI_Init 1 */
+
+  /* USER CODE END CACHEAXI_Init 1 */
+  hcacheaxi.Instance = CACHEAXI;
+  if (HAL_CACHEAXI_Init(&hcacheaxi) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CACHEAXI_Init 2 */
+
+  /* USER CODE END CACHEAXI_Init 2 */
+
+}
+
+/**
+  * @brief ICACHE Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ICACHE_Init(void)
+{
+
+  /* USER CODE BEGIN ICACHE_Init 0 */
+
+  /* USER CODE END ICACHE_Init 0 */
+
+  /* USER CODE BEGIN ICACHE_Init 1 */
+
+  /* USER CODE END ICACHE_Init 1 */
+  /* USER CODE BEGIN ICACHE_Init 2 */
+
+  /* USER CODE END ICACHE_Init 2 */
 
 }
 

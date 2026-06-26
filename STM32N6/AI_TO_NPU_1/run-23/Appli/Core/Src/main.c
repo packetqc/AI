@@ -40,6 +40,7 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+CACHEAXI_HandleTypeDef hcacheaxi;
 
 UART_HandleTypeDef huart1;
 
@@ -50,6 +51,7 @@ UART_HandleTypeDef huart1;
 /* Private function prototypes -----------------------------------------------*/
 static void MX_GPIO_Init(void);
 static void MX_USART1_UART_Init(void);
+static void MX_CACHEAXI_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -92,6 +94,7 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_USART1_UART_Init();
+  MX_CACHEAXI_Init();
   /* USER CODE BEGIN 2 */
 
   /* USER CODE END 2 */
@@ -106,6 +109,32 @@ STM32CubeAI_Studio_AI_Process();
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
+}
+
+/**
+  * @brief CACHEAXI Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_CACHEAXI_Init(void)
+{
+
+  /* USER CODE BEGIN CACHEAXI_Init 0 */
+
+  /* USER CODE END CACHEAXI_Init 0 */
+
+  /* USER CODE BEGIN CACHEAXI_Init 1 */
+
+  /* USER CODE END CACHEAXI_Init 1 */
+  hcacheaxi.Instance = CACHEAXI;
+  if (HAL_CACHEAXI_Init(&hcacheaxi) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN CACHEAXI_Init 2 */
+
+  /* USER CODE END CACHEAXI_Init 2 */
+
 }
 
 /**

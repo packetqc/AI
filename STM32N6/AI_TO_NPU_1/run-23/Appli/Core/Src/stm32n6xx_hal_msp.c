@@ -86,6 +86,51 @@ void HAL_MspInit(void)
 }
 
 /**
+  * @brief CACHEAXI MSP Initialization
+  * This function configures the hardware resources used in this example
+  * @param hcacheaxi: CACHEAXI handle pointer
+  * @retval None
+  */
+void HAL_CACHEAXI_MspInit(CACHEAXI_HandleTypeDef* hcacheaxi)
+{
+  if(hcacheaxi->Instance==CACHEAXI)
+  {
+    /* USER CODE BEGIN CACHEAXI_MspInit 0 */
+
+    /* USER CODE END CACHEAXI_MspInit 0 */
+    /* Peripheral clock enable */
+    __HAL_RCC_CACHEAXI_CLK_ENABLE();
+    /* USER CODE BEGIN CACHEAXI_MspInit 1 */
+
+    /* USER CODE END CACHEAXI_MspInit 1 */
+
+  }
+
+}
+
+/**
+  * @brief CACHEAXI MSP De-Initialization
+  * This function freeze the hardware resources used in this example
+  * @param hcacheaxi: CACHEAXI handle pointer
+  * @retval None
+  */
+void HAL_CACHEAXI_MspDeInit(CACHEAXI_HandleTypeDef* hcacheaxi)
+{
+  if(hcacheaxi->Instance==CACHEAXI)
+  {
+    /* USER CODE BEGIN CACHEAXI_MspDeInit 0 */
+
+    /* USER CODE END CACHEAXI_MspDeInit 0 */
+    /* Peripheral clock disable */
+    __HAL_RCC_CACHEAXI_CLK_DISABLE();
+    /* USER CODE BEGIN CACHEAXI_MspDeInit 1 */
+
+    /* USER CODE END CACHEAXI_MspDeInit 1 */
+  }
+
+}
+
+/**
   * @brief UART MSP Initialization
   * This function configures the hardware resources used in this example
   * @param huart: UART handle pointer

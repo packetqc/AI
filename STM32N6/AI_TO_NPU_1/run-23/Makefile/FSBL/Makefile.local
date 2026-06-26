@@ -1,0 +1,33 @@
+# Makefile.local — durable build wrapper for the run-23 FSBL.
+#
+# WHY: CubeMX regenerates ./Makefile (wiping the BSP source + its include and
+# restoring -specs=nano.specs) and ./STM32N657XX_AXISRAM2_fsbl.ld on every
+# project regeneration. This wrapper is NEVER touched by CubeMX, so the build
+# stays reproducible across regenerations.
+#
+# USE:  make -f Makefile.local            (build)
+#       make -f Makefile.local clean all  (full rebuild)
+#
+# It includes the generated (vanilla) Makefile, then re-applies the durable
+# additions. The generated link rule's prerequisites ($(OBJECTS)) were already
+# expanded at parse time (before our OBJECTS +=), so we ALSO add the BSP object
+# as an explicit prerequisite of the .elf, otherwise make lists it in the link
+# command but never builds it.
+
+include Makefile
+
+# --- durable BSP library (CubeMX won't list it: BSP_LED/BSP_COM are USER CODE, not .ioc peripherals) ---
+C_INCLUDES += -I../../Drivers/BSP/STM32N6570-DK
+OBJECTS    += $(BUILD_DIR)/stm32n6570_discovery.o
+
+# put the BSP object in the .elf prerequisites so make builds it before linking
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/stm32n6570_discovery.o
+
+$(BUILD_DIR)/stm32n6570_discovery.o: ../../Drivers/BSP/STM32N6570-DK/stm32n6570_discovery.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/stm32n6570_discovery.lst $< -o $@
+
+# --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
+LDSCRIPT := STM32N657XX_fsbl_custom.ld
+
+# --- toolchain: arm-none-eabi-gcc 15.2 ships no newlib-nano spec ---
+LDFLAGS := $(filter-out -specs=nano.specs,$(LDFLAGS))
