@@ -33,8 +33,8 @@
 
 /* Entry Point */
 ENTRY(Reset_Handler)
-_Min_Heap_Size = 2048;      /* required amount of heap  */
-_Min_Stack_Size = 8192; /* required amount of stack */
+_Min_Heap_Size = 0x800;      /* required amount of heap  */
+_Min_Stack_Size = 0x2000; /* required amount of stack */
 
 
 /* Memories definition */

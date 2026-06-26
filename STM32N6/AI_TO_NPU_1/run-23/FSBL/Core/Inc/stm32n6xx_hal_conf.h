@@ -34,7 +34,6 @@ extern "C" {
   * @brief This is the list of modules to be used in the HAL driver
   */
 #define HAL_MODULE_ENABLED
-#define HAL_XSPI_MODULE_ENABLED
 /*#define HAL_ADC_MODULE_ENABLED   */
 #define HAL_BSEC_MODULE_ENABLED
 /*#define HAL_CRC_MODULE_ENABLED   */
@@ -85,7 +84,7 @@ extern "C" {
 /*#define HAL_USART_MODULE_ENABLED   */
 /*#define HAL_WWDG_MODULE_ENABLED   */
 #define HAL_XSPI_MODULE_ENABLED
-#define HAL_CACHEAXI_MODULE_ENABLED
+/*#define HAL_CACHEAXI_MODULE_ENABLED   */
 /*#define HAL_MDIOS_MODULE_ENABLED   */
 /*#define HAL_GPU2D_MODULE_ENABLED   */
 #define HAL_GPIO_MODULE_ENABLED

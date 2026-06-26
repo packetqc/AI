@@ -23,14 +23,14 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <string.h>
-#include "stm32n6570_discovery_xspi.h"
-#include "stm32n6570_discovery_errno.h"
+// #include "stm32n6570_discovery_xspi.h"
+// #include "stm32n6570_discovery_errno.h"
 #include "stm32n6570_discovery.h"    /* BSP: COM1 VCP UART + LEDs (board-canonical) */
-#include "stm32n6xx_hal_bsec.h"
-#include "stm32n6xx_hal_ramcfg.h"
-#include "llm_fsbl.h"
-#include "llm_test_fsbl.h"
-#include "npu_init.h"
+// #include "stm32n6xx_hal_bsec.h"
+// #include "stm32n6xx_hal_ramcfg.h"
+// #include "llm_fsbl.h"
+// #include "llm_test_fsbl.h"
+// #include "npu_init.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,12 +50,22 @@
 
 /* Private variables ---------------------------------------------------------*/
 
+RAMCFG_HandleTypeDef hramcfg_SRAM1;
+RAMCFG_HandleTypeDef hramcfg_SRAM2;
+RAMCFG_HandleTypeDef hramcfg_SRAM3;
+RAMCFG_HandleTypeDef hramcfg_SRAM4;
+RAMCFG_HandleTypeDef hramcfg_SRAM5;
+RAMCFG_HandleTypeDef hramcfg_SRAM6;
+
+UART_HandleTypeDef huart1;
+
 XSPI_HandleTypeDef hxspi1;
 XSPI_HandleTypeDef hxspi2;
 
 /* USER CODE BEGIN PV */
-UART_HandleTypeDef huart1;
-volatile int debugFlag = 1;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
+COM_InitTypeDef BspCOMInit;
+
+volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 /* USER CODE END PV */
 
@@ -64,28 +74,31 @@ void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_XSPI1_Init(void);
 static void MX_XSPI2_Init(void);
+static void MX_BSEC_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_RAMCFG_Init(void);
+static void SystemIsolation_Config(void);
 /* USER CODE BEGIN PFP */
-void MX_USART1_UART_Init(void);
 static void Enable_NPU_RAM_ForCore(void);
 static void Enable_AXICACHE_RAM_ForCore(void);
 static void OpenDebug(void);
-void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
+// void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 /* Direct-register USART1 TX — HAL_UART_Transmit fails silently in the FSBL boot context
  * (HAL_GetTick may not advance), per reference N6_EDGEAI_1. Poll ISR.TXFNF (bit 7), write TDR. */
-static void uart1_putc(char c)
-{
-    while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }
-    USART1->TDR = (uint32_t)(uint8_t)c;
-}
-static void uart_puts(const char *s)
-{
-    if (USART1->CR1 == 0U) return;   /* UART not initialised yet */
-    for (; *s; ++s) uart1_putc(*s);
-}
+// static void uart1_putc(char c)
+// {
+//     while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }
+//     USART1->TDR = (uint32_t)(uint8_t)c;
+// }
+// static void uart_puts(const char *s)
+// {
+//     if (USART1->CR1 == 0U) return;   /* UART not initialised yet */
+//     for (; *s; ++s) uart1_putc(*s);
+// }
 
 /* USER CODE END 0 */
 
@@ -99,8 +112,8 @@ int main(void)
   /* USER CODE BEGIN 1 */
   /* RAM-bank power-on for the M55 core — BEFORE any code touches AXISRAM3-6 / CACHEAXIRAM
    * (boot ROM parks them; first access faults). Ref project N6_EDGEAI_1 main(). */
-  Enable_NPU_RAM_ForCore();
-  Enable_AXICACHE_RAM_ForCore();
+  // Enable_NPU_RAM_ForCore();
+  // Enable_AXICACHE_RAM_ForCore();
 
   /* Re-authorize Secure SWD core debug (runtime BSEC, no OTP) so the MCP GDB session can
    * attach to the running FSBL. Ref N6_EDGEAI_1. REMOVE for production. */
@@ -129,46 +142,84 @@ int main(void)
 
   /* MCU Configuration--------------------------------------------------------*/
   HAL_Init();
-  g_boot_stage = 1;
+
+  /* USER CODE BEGIN Init */
+
+  /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
-  g_boot_stage = 2;
 
   /* USER CODE BEGIN SysInit */
   /* NPU RAMs were powered in USER CODE 1; enable the M55 caches. */
-  SystemInit_POST();
-  SCB_EnableICache();
-  SCB_EnableDCache();
+  // SystemInit_POST();
+  // SCB_EnableICache();
+  // SCB_EnableDCache();
   g_boot_stage = 3;
   /* USER CODE END SysInit */
 
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_XSPI1_Init();
+  MX_XSPI2_Init();
+  MX_BSEC_Init();
+  MX_USART1_UART_Init();
+  MX_RAMCFG_Init();
+  SystemIsolation_Config();
+  // MX_EXTMEM_MANAGER_Init();
   /* USER CODE BEGIN 2 */
-  NPU_Config();
+  // NPU_Config();
   g_boot_stage = 4;
 
   /* NPU weights are memory-mapped from XSPI2 NOR @0x71000000 */
-  BSP_XSPI_NOR_Init_t xspiInit;
-  xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
-  xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
-  BSP_XSPI_NOR_Init(0, &xspiInit);
-  BSP_XSPI_NOR_EnableMemoryMappedMode(0);
+  // BSP_XSPI_NOR_Init_t xspiInit;
+  // xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
+  // xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
+  // BSP_XSPI_NOR_Init(0, &xspiInit);
+  // BSP_XSPI_NOR_EnableMemoryMappedMode(0);
   g_boot_stage = 5;
 
-  RISAF_Config();
+  // RISAF_Config();
   g_boot_stage = 6;
 
-  /* UART deferred (commented) — focus on the NPU code logic + MCP trace (step / read_memory).
-   * MX_USART1_UART_Init();   // BSP COM1 / USART1 PE5/PE6 — re-enable once init is proven. */
-
-  /* App logic: bring up the NPU calculator model + run one inference. Traced via MCP
+    /* App logic: bring up the NPU calculator model + run one inference. Traced via MCP
    * (g_boot_stage + step). The REPL (UART I/O) is deferred per focus. */
   /* LLM_FSBL_Init();  ...one inference... */
   g_boot_stage = 7;
-  /* USER CODE END 2 */
 
-  while (1) { __NOP(); }
+   {
+    (void)BSP_LED_Init(0U);   /* LED_GREEN = LED1 */
+    BSP_LED_Off(0U);
+    BSP_LED_On (0U);
 
+    (void)BSP_LED_Init(1U);   /* LED_RED = LED2 */
+    BSP_LED_Off(1U);
+    BSP_LED_On (1U);
+  }
+
+  {
+    /* Initialize COM1 port (115200, 8 bits (7-bit data + 1 stop bit), no parity */
+    BspCOMInit.BaudRate   = 115200;
+    BspCOMInit.WordLength = COM_WORDLENGTH_8B;
+    BspCOMInit.StopBits   = COM_STOPBITS_1;
+    BspCOMInit.Parity     = COM_PARITY_NONE;
+    BspCOMInit.HwFlowCtl  = COM_HWCONTROL_NONE;
+    if (BSP_COM_Init(COM1, &BspCOMInit) != BSP_ERROR_NONE)
+    {
+      Error_Handler();
+    }
+
+    printf( "\x1B[2J" );
+    printf("%c[0;0H", 0x1b);
+    printf("MAIN APP ON\n");
+  }
+
+  while (1) /* STAY IN FSBL */
+  {
+    HAL_Delay(1000);
+    BSP_LED_Toggle(0U);
+    BSP_LED_Toggle(1U);
+  }
   /* USER CODE END 2 */
 
   /* Launch the application */
@@ -300,6 +351,247 @@ void SystemClock_Config(void)
   {
     Error_Handler();
   }
+}
+
+/**
+  * @brief BSEC Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_BSEC_Init(void)
+{
+
+  /* USER CODE BEGIN BSEC_Init 0 */
+
+  /* USER CODE END BSEC_Init 0 */
+
+  /* USER CODE BEGIN BSEC_Init 1 */
+
+  /* USER CODE END BSEC_Init 1 */
+  /* USER CODE BEGIN BSEC_Init 2 */
+
+  /* USER CODE END BSEC_Init 2 */
+
+}
+
+/**
+  * @brief RAMCFG Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_RAMCFG_Init(void)
+{
+
+  /* USER CODE BEGIN RAMCFG_Init 0 */
+
+  /* USER CODE END RAMCFG_Init 0 */
+
+  /* USER CODE BEGIN RAMCFG_Init 1 */
+
+  /* USER CODE END RAMCFG_Init 1 */
+
+  /** Initialize RAMCFG SRAM1
+  */
+  hramcfg_SRAM1.Instance = RAMCFG_SRAM1_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initialize RAMCFG SRAM2
+  */
+  hramcfg_SRAM2.Instance = RAMCFG_SRAM2_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initialize RAMCFG SRAM3
+  */
+  hramcfg_SRAM3.Instance = RAMCFG_SRAM3_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initialize RAMCFG SRAM4
+  */
+  hramcfg_SRAM4.Instance = RAMCFG_SRAM4_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initialize RAMCFG SRAM5
+  */
+  hramcfg_SRAM5.Instance = RAMCFG_SRAM5_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initialize RAMCFG SRAM6
+  */
+  hramcfg_SRAM6.Instance = RAMCFG_SRAM6_AXI;
+  if (HAL_RAMCFG_Init(&hramcfg_SRAM6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN RAMCFG_Init 2 */
+
+  /* USER CODE END RAMCFG_Init 2 */
+
+}
+
+/**
+  * @brief RIF Initialization Function
+  * @param None
+  * @retval None
+  */
+  static void SystemIsolation_Config(void)
+{
+
+  /* USER CODE BEGIN RIF_Init 0 */
+
+  /* USER CODE END RIF_Init 0 */
+
+  /* set all required IPs as secure privileged */
+  __HAL_RCC_RIFSC_CLK_ENABLE();
+
+  /*RIMC configuration*/
+  RIMC_MasterConfig_t RIMC_master = {0};
+  RIMC_master.MasterCID = RIF_CID_1;
+  RIMC_master.SecPriv = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_NPRIV;
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_ETH1, &RIMC_master);
+
+  RIMC_master.MasterCID = RIF_CID_0;
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_SDMMC2, &RIMC_master);
+
+  /*RISUP configuration*/
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_NPU , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+
+  /* RIF-Aware IPs Config */
+
+  /* set up PWR configuration */
+  HAL_PWR_ConfigAttributes(PWR_ITEM_WKUP1,PWR_SEC_NPRIV);
+
+  /* set up GPIO configuration */
+  HAL_GPIO_ConfigPinAttributes(GPIOA,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOB,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOC,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOC,GPIO_PIN_8,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOC,GPIO_PIN_13,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_2,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOD,GPIO_PIN_14,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOE,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOF,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOG,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOH,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_2,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_7,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_8,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPION,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOO,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOO,GPIO_PIN_2,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOO,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOO,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOO,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_2,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_7,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_8,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_9,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_10,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_11,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_12,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_13,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_14,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOP,GPIO_PIN_15,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_0,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_1,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_2,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_3,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_4,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_5,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_6,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+  HAL_GPIO_ConfigPinAttributes(GPIOQ,GPIO_PIN_7,GPIO_PIN_SEC|GPIO_PIN_NPRIV);
+
+  /* USER CODE BEGIN RIF_Init 1 */
+  /* USART1 (BSP COM1 VCP) — complete the peripheral security like the rest of the FSBL:
+   * mark it secure-accessible. NPRIV (privileged FSBL access still allowed), consistent
+   * with its PE5/PE6 pins (SEC|NPRIV). Gentle — does not restrict the working access. */
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_USART1, RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_NPRIV);
+  /* USER CODE END RIF_Init 1 */
+  /* USER CODE BEGIN RIF_Init 2 */
+
+  /* USER CODE END RIF_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart1.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart1.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart1.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart1, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart1, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+
+  /* USER CODE END USART1_Init 2 */
+
 }
 
 /**
@@ -660,37 +952,6 @@ static void OpenDebug(void)
         Error_Handler();
 }
 
-/**
- * @brief USART1 initialization — TX=PE5, RX=PE6, AF7 (BSP COM1 on STM32N6570-DK VCP).
- */
-void MX_USART1_UART_Init(void)
-{
-  /* BSP COM1 = USART1 on PE5/PE6 AF7 (STM32N6570-DK ST-Link VCP) — board-canonical
-   * init: BSP_COM_Init configures the GPIO pins + the USART together (the documented
-   * way), avoiding any pin/MSP ordering pitfalls. The REPL and uart_puts use the global
-   * huart1, so mirror the BSP-initialised handle (hcom_uart[COM1]) into it. */
-  /* Direct-register USART1 init — no HAL_UART_Init (its TEACK/REACK poll uses HAL_GetTick,
-   * which may not advance in the FSBL boot context). PE5=TX, PE6=RX, AF7; 115200 8N1, over16. */
-  __HAL_RCC_GPIOE_CLK_ENABLE();
-  __HAL_RCC_USART1_CLK_ENABLE();
-
-  GPIO_InitTypeDef gpio = {0};
-  gpio.Pin       = GPIO_PIN_5 | GPIO_PIN_6;
-  gpio.Mode      = GPIO_MODE_AF_PP;
-  gpio.Pull      = GPIO_NOPULL;
-  gpio.Speed     = GPIO_SPEED_FREQ_HIGH;
-  gpio.Alternate = GPIO_AF7_USART1;
-  HAL_GPIO_Init(GPIOE, &gpio);
-
-  uint32_t uart_clk = HAL_RCCEx_GetPeriphCLKFreq(RCC_PERIPHCLK_USART1);
-  if (uart_clk == 0U) uart_clk = 64000000U;            /* fallback: HSI/default */
-  USART1->CR1 = 0U;                                    /* disable while configuring */
-  USART1->BRR = (uart_clk + (115200U / 2U)) / 115200U; /* oversampling by 16 */
-  USART1->CR2 = 0U;
-  USART1->CR3 = 0U;
-  USART1->CR1 = USART_CR1_UE | USART_CR1_TE | USART_CR1_RE;
-}
-
 /* USER CODE END 4 */
 
 /**
@@ -701,9 +962,12 @@ void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
   /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
+  // __disable_irq();
   while (1)
   {
+    HAL_Delay(200);
+    BSP_LED_Off(LED_GREEN);
+    BSP_LED_Toggle(LED_RED);
   }
   /* USER CODE END Error_Handler_Debug */
 }
