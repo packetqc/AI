@@ -29,6 +29,7 @@
 #include "network.h"                 /* STAI API + the TCN NPU model (Loop 3b) */
 #include "network_tokens.h"          /* device tokenizer support (rule prompts + decode) */
 #include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
+#include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
 // #include "llm_fsbl.h"
@@ -295,16 +296,14 @@ int main(void)
     }
 
     g_boot_stage = 10;
-    /* Query the NPU grammar oracle for each calculator rule — reproduces the host
-     * recall on-device: rule name -> rule body, decoded + displayed. */
+    /* Calculator: parse + evaluate "3 + 4" via the NPU grammar oracle. The runner
+     * queries the NPU for each rule (multi-step dialog), parses, and computes. */
     {
-      char body[160];
-      for (int r = 0; r < TOK_NUM_RULES; r++)
-      {
-        NPU_QueryRule(g_network, (int8_t *)in_buf, (const int8_t *)out_buf,
-                      r, body, (int)sizeof(body));
-        printf("NPU oracle: %-7s -> %s\r\n", g_rule_names[r], body);
-      }
+      const char *expr = "3 + 4";
+      int ok = 0;
+      long res = Grammar_Calc(g_network, (int8_t *)in_buf, (const int8_t *)out_buf, expr, &ok);
+      if (ok) printf("\r\nCALC: %s = %ld\r\n", expr, res);
+      else    printf("\r\nCALC: %s -> parse failed\r\n", expr);
     }
   }
 

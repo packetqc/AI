@@ -49,8 +49,8 @@ MEMORY
 _estack = ORIGIN(RAM) + LENGTH(RAM); /* end of "RAM" Ram type memory */
 _sstack = _estack - _Min_Stack_Size;
 
-_Min_Heap_Size = 0x200;      /* required amount of heap  */
-_Min_Stack_Size = 0x800; /* required amount of stack */
+_Min_Heap_Size = 0x1000;      /* heap (STL containers: map/vector/string) */
+_Min_Stack_Size = 0x8000; /* stack: C++ grammar-runner recursion + STL frames (was 0x800 -> STKOF) */
 
 /* Sections */
 SECTIONS

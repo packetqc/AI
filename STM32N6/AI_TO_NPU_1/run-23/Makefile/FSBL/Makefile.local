@@ -71,7 +71,8 @@ CXXFLAGS += -g -gdwarf-2
 endif
 CXX_SOURCES = \
   ../../FSBL/Core/Src/terminal_logger.cpp \
-  ../../FSBL/Core/Src/cpp_runtime.cpp
+  ../../FSBL/Core/Src/cpp_runtime.cpp \
+  ../../FSBL/AI/grammar_runner.cpp
 CXX_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(CXX_SOURCES:.cpp=.o)))
 OBJECTS += $(CXX_OBJECTS)
 $(BUILD_DIR)/$(TARGET).elf: $(CXX_OBJECTS)
