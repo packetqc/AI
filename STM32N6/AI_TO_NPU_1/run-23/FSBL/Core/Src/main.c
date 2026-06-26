@@ -55,7 +55,7 @@ XSPI_HandleTypeDef hxspi2;
 
 /* USER CODE BEGIN PV */
 UART_HandleTypeDef huart1;
-volatile int debugFlag = 1;  /* 1 = spin at while(debugFlag) after OpenDebug(); set 0 via GDB to continue */
+volatile int debugFlag = 0;  /* 0 = run free (Programmer/flash boot). Set 1 to spin for GDB attach. */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 /* USER CODE END PV */
 
