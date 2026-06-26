@@ -3,31 +3,64 @@
 # WHY: CubeMX regenerates ./Makefile (wiping the BSP source + its include and
 # restoring -specs=nano.specs) and ./STM32N657XX_AXISRAM2_fsbl.ld on every
 # project regeneration. This wrapper is NEVER touched by CubeMX, so the build
-# stays reproducible across regenerations.
+# stays reproducible across regenerations. It also wires the ST Edge AI /
+# Neural-ART runtime + the TCN model into the FSBL (we run only in the FSBL).
 #
 # USE:  make -f Makefile.local            (build)
 #       make -f Makefile.local clean all  (full rebuild)
 #
 # It includes the generated (vanilla) Makefile, then re-applies the durable
 # additions. The generated link rule's prerequisites ($(OBJECTS)) were already
-# expanded at parse time (before our OBJECTS +=), so we ALSO add the BSP object
-# as an explicit prerequisite of the .elf, otherwise make lists it in the link
-# command but never builds it.
+# expanded at parse time (before our OBJECTS +=), so we ALSO add each extra
+# object as an explicit prerequisite of the .elf, otherwise make lists it in the
+# link command but never builds it. The final LDFLAGS := must stay LAST so it
+# captures the updated LIBS / LDSCRIPT.
 
 include Makefile
 
 # --- durable BSP library (CubeMX won't list it: BSP_LED/BSP_COM are USER CODE, not .ioc peripherals) ---
 C_INCLUDES += -I../../Drivers/BSP/STM32N6570-DK
 OBJECTS    += $(BUILD_DIR)/stm32n6570_discovery.o
-
-# put the BSP object in the .elf prerequisites so make builds it before linking
 $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/stm32n6570_discovery.o
-
 $(BUILD_DIR)/stm32n6570_discovery.o: ../../Drivers/BSP/STM32N6570-DK/stm32n6570_discovery.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -Wa,-a,-ad,-alms=$(BUILD_DIR)/stm32n6570_discovery.lst $< -o $@
+
+# --- ST Edge AI / Neural-ART (ATON) runtime + TCN model (Loop 3) ---
+# Everything the Appli would normally hold lives in the FSBL — we run only in the FSBL.
+AI_BASE = /opt/ST/STEdgeAI/4.0/Middlewares/ST/AI
+ATON_RT = $(AI_BASE)/Npu/ll_aton
+
+AI_SOURCES = \
+  ../../FSBL/AI/network.c \
+  ../../FSBL/AI/network_data.c \
+  $(ATON_RT)/ll_aton.c \
+  $(ATON_RT)/ll_aton_cipher.c \
+  $(ATON_RT)/ll_aton_dbgtrc.c \
+  $(ATON_RT)/ll_aton_debug.c \
+  $(ATON_RT)/ll_aton_lib.c \
+  $(ATON_RT)/ll_aton_lib_sw_operators.c \
+  $(ATON_RT)/ll_aton_rt_main.c \
+  $(ATON_RT)/ll_aton_runtime.c \
+  $(ATON_RT)/ll_aton_util.c \
+  ../../FSBL/AI/npu_cache.c
+
+C_INCLUDES += -I../../FSBL/AI -I$(AI_BASE)/Inc -I$(ATON_RT) -I$(AI_BASE)/Npu/Devices/STM32N6xx
+C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC -DLL_ATON_SW_FALLBACK
+LIBS       += -L$(AI_BASE)/Lib/GCC/ARMCortexM55 -l:NetworkRuntime1200_CM55_GCC.a
+
+AI_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(AI_SOURCES:.c=.o)))
+OBJECTS   += $(AI_OBJECTS)
+$(BUILD_DIR)/$(TARGET).elf: $(AI_OBJECTS)
+
+# explicit per-source rule for every AI object (no vpath; bulletproof)
+define AI_BUILD_RULE
+$(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
+	$$(CC) -c $$(CFLAGS) $$< -o $$@
+endef
+$(foreach src,$(AI_SOURCES),$(eval $(call AI_BUILD_RULE,$(src))))
 
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 
-# --- toolchain: arm-none-eabi-gcc 15.2 ships no newlib-nano spec ---
+# --- toolchain: arm-none-eabi-gcc 15.2 ships no newlib-nano spec (LAST: captures updated LIBS/LDSCRIPT) ---
 LDFLAGS := $(filter-out -specs=nano.specs,$(LDFLAGS))
