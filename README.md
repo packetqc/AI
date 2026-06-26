@@ -2,6 +2,8 @@
 
 A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
 
+It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, proves it compiles **100% to NPU hardware** (`stedgeai analyze`), and generates the device C — so the trained grammar runs on-chip as a text REPL, with the CPU doing tokenize/embed/detokenize and the NPU running the convolution body. One grammar conceptualization, two runtimes: a Qwen2 model served locally via Ollama, and a Conv1D/TCN model running natively on the STM32N6570-DK NPU.
+
 ## What it does
 
 - **Builds a small Qwen2 model** from scratch using a custom BPE tokenizer trained over your own knowledge files and grammar rules.
