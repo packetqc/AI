@@ -40,6 +40,7 @@ MEMORY
 {
   ROM          (xrw) : ORIGIN = 0x34180400, LENGTH = 460K  /* AXISRAM2: FSBL code+rodata (expanded for NPU runtime) */
   RAM          (xrw) : ORIGIN = 0x341F3400, LENGTH = 50K   /* AXISRAM2: FSBL data+bss+stack (460K+50K fits within 1MB AXISRAM2) */
+  WEIGHTS_RAM  (xrw) : ORIGIN = 0x34100000, LENGTH = 512K  /* AXISRAM2 lower: free, boot-ROM-active (GDB-loadable), NPU-readable (AXI fabric) — AI weights */
   AI_RAM       (xrw) : ORIGIN = 0x34200000, LENGTH = 512K  /* AXISRAM3: AI activations */
   NOR_FLASH    (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* XSPI2 NOR: AI weights (memory-mapped) */
   WEIGHTS_SRAM (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* alias: atonn-generated section name */
@@ -83,6 +84,18 @@ SECTIONS
 
   /* vanilla run-23: weights stay in flash @ 0x71000000 (already flashed); reference by symbol */
   PROVIDE(_mem_pool_xSPI2_network = 0x71000000);
+
+  /* AI weights (~481 KB) → free lower AXISRAM2 @0x34100000: boot-ROM-active (so GDB load_and_run
+   * can write them — the NPU RAMs AXISRAM3-6 are parked until the FSBL un-parks them, too late for
+   * the loader), NPU-readable (AXI fabric), below the FSBL code. MUST precede .rodata so it captures
+   * .rodata.g_network_weights_array before the generic *(.rodata*) rule. No RISAF/parking/boot-copy. */
+  .ai_weights :
+  {
+    . = ALIGN(8);
+    KEEP(*(.rodata.g_network_weights_array))
+    KEEP(*(.ai_weights*))
+    . = ALIGN(8);
+  } > WEIGHTS_RAM
 
   /* Constant data into "RAM" Ram type memory */
   .rodata :

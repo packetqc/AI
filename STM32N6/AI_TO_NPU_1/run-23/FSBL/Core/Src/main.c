@@ -26,6 +26,7 @@
 // #include "stm32n6570_discovery_xspi.h"
 // #include "stm32n6570_discovery_errno.h"
 #include "stm32n6570_discovery.h"    /* BSP: COM1 VCP UART + LEDs (board-canonical) */
+#include "network.h"                 /* STAI API + the TCN NPU model (Loop 3b) */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
 // #include "llm_fsbl.h"
@@ -69,6 +70,11 @@ COM_InitTypeDef BspCOMInit;
 
 volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
+
+/* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
+__attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
+static uint8_t s_network_ctx[STAI_NETWORK_CONTEXT_SIZE];
+static stai_network *g_network = NULL;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -239,6 +245,24 @@ int main(void)
     }
     g_boot_stage = 8;
     printf("NPU clocked + reset OK (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
+  }
+
+  /* NPU MODEL */
+  {
+    /* Initialize the TCN model context (STAI). Inputs/outputs/weights are preallocated
+     * in network.c / network_data.c and placed by the custom linker. */
+    g_network = (stai_network *)s_network_ctx;
+    stai_return_code rc = stai_network_init(g_network);
+    if (rc != STAI_SUCCESS)
+    {
+      printf("NPU model init FAILED (stai rc=%d) - boot_stage=%lu\r\n",
+             (int)rc, (unsigned long)g_boot_stage);
+      Error_Handler();
+    }
+    g_boot_stage = 9;
+    printf("NPU model init OK (nodes=%d, MACC=%lu, ctx=%u B)\r\n",
+           STAI_NETWORK_NODES_NUM, (unsigned long)STAI_NETWORK_MACC_NUM,
+           (unsigned)STAI_NETWORK_CONTEXT_SIZE);
   }
 
   /* LLM TESTS */
