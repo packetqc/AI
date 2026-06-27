@@ -20,6 +20,12 @@
 
 extern "C" uint32_t HAL_GetTick(void);
 
+/* Per-token NPU epoch logging is OFF by default (it is ~30 lines/rule). Toggle at
+ * runtime via NPU_SetVerbose(1) — e.g. the host unified runner can request the full
+ * CPU<->NPU dialog on demand. POD bool: zero-init, no static-init guard needed. */
+static bool g_npu_verbose = false;
+extern "C" void NPU_SetVerbose(int on) { g_npu_verbose = (on != 0); }
+
 namespace {
 
 /* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand:
@@ -243,6 +249,7 @@ private:
  * host (opaque Ollama) cannot: the CPU builds the int8 embedding, the NPU runs the
  * conv epoch, the CPU takes argmax to pick the next token. */
 extern "C" void NPU_LogStep(int rule_idx, int pos, int tok_id, const char* piece) {
+    if (!g_npu_verbose) return;   /* quiet by default; NPU_SetVerbose(1) enables the dialog */
     const char* rule = (rule_idx >= 0 && rule_idx < TOK_NUM_RULES) ? g_rule_names[rule_idx] : "?";
     rlog().logf(llm::Severity::Debug, "NPU",
                 "[epoch] %-7s pos=%02d  cpu:embed[256x32] " "\xe2\x86\x92"

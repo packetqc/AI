@@ -99,6 +99,7 @@ static void Enable_AXICACHE_RAM_ForCore(void);
 static void OpenDebug(void);
 extern void TerminalLogger_SmokeTest(void);  /* C++ TerminalLogger (terminal_logger.cpp), extern "C" */
 extern void Cpp_STL_SmokeTest(void);         /* C++ STL infra test (cpp_runtime.cpp), extern "C" */
+extern void NPU_SetVerbose(int on);          /* per-token NPU dialog toggle (grammar_runner.cpp) */
 // void LLM_Repl_Run(void);   /* interactive NPU grammar REPL (llm_repl.cpp) */
 /* USER CODE END PFP */
 
@@ -323,9 +324,8 @@ int main(void)
            (unsigned)STAI_NETWORK_CONTEXT_SIZE);
   }
 
-  /* NPU INFERENCE (Loop 3c: one compute proof on the Neural-ART) */
+  /* NPU INFERENCE — boot self-test: prove the Neural-ART path end-to-end on-device. */
   {
-    /* Preallocated input/output buffers (the HW network bakes its own activations). */
     stai_ptr in_buf = NULL, out_buf = NULL;
     stai_size n_in = 0, n_out = 0;
     stai_network_get_inputs(g_network, &in_buf, &n_in);
@@ -337,58 +337,55 @@ int main(void)
     }
 
     g_boot_stage = 10;
-    /* Calculator: parse + evaluate "3 + 4" via the NPU grammar oracle. The runner
-     * queries the NPU for each rule (multi-step dialog), parses, and computes. */
     {
       const char *expr = "3 + 4";
       int ok = 0;
       long res = Grammar_Calc(g_network, (int8_t *)in_buf, (const int8_t *)out_buf, expr, &ok);
-      if (ok) printf("\r\nCALC: %s = %ld\r\n", expr, res);
-      else    printf("\r\nCALC: %s -> parse failed\r\n", expr);
+      if (ok) printf("\r\nNPU self-test: %s = %ld\r\n", expr, res);
+      else    printf("\r\nNPU self-test: %s -> parse failed\r\n", expr);
     }
   }
 
-  /* LLM TESTS */
-  {
-    /* C -> C++ transition test: the C++ TerminalLogger logging via the native printf. */
-    TerminalLogger_SmokeTest();
-    /* C++ STL infra test (operator new/delete + heap + vector/map/string). */
-    Cpp_STL_SmokeTest();
-  }
-
-  /* Interactive NPU calculator REPL over the ST-Link VCP (USART1 / huart1).
-   * Connect:  minicom -D /dev/ttyACM0 -b 115200   (or screen / picocom).
-   * Type an arithmetic expression (e.g. "12 * (3 + 4)") + Enter; the CPU parses it
-   * with the NPU-recalled grammar and prints the result. Grammar rules are NPU-queried
-   * once (the full CPU<->NPU dialog is shown on the first calc) then cached, so later
-   * prompts are instant. This is the device-mode peer of the host GrammarRunner. */
+  /* NPU-ORACLE server over the ST-Link VCP (USART1 / huart1) — device-as-oracle for the
+   * unified host runner (scripts/classes/class_model_runner.py, mode=device). The host
+   * owns the UX (prompt, history, TAB, /commands, auto-detection) + parse + evaluate;
+   * the device does what only it can — NPU grammar recall. The NPU is thus a drop-in
+   * replacement for the Ollama oracle (same query_fn seam as the host GrammarRunner).
+   *
+   * Protocol (line based, 115200 8N1):
+   *     host   -> "<rule_name>\n"      one of: expr term factor number digit
+   *     device -> "ANS:<rule_body>\n"  the NPU-recalled BNF rule body
+   *               "ERR:unknown rule '<x>'\n" on miss
+   * Per-token logging stays off (NPU_SetVerbose(0)) to keep the wire clean. */
   {
     stai_ptr rin = NULL, rout = NULL; stai_size rn = 0;
     stai_network_get_inputs(g_network, &rin, &rn);
     stai_network_get_outputs(g_network, &rout, &rn);
+    NPU_SetVerbose(0);
 
-    printf("\r\n=== NPU calculator REPL — type an expression, Enter to evaluate (Ctrl-A X in minicom to quit) ===\r\n");
+    printf("\r\n[NPU-ORACLE] ready  rules: expr term factor number digit\r\n");
     for (;;)
     {
-      char line[64];
+      char line[48];
       int  n = 0;
-      printf("calc> ");
-      for (;;)   /* read one line from the VCP, with echo + backspace */
+      for (;;)   /* read one rule-name line from the host */
       {
         uint8_t ch;
         if (HAL_UART_Receive(&huart1, &ch, 1, HAL_MAX_DELAY) != HAL_OK) continue;
         if (ch == '\r' || ch == '\n') break;
-        if (ch == 0x08 || ch == 0x7F) { if (n > 0) { --n; printf("\b \b"); } continue; }
-        if (n < (int)sizeof(line) - 1) { line[n++] = (char)ch; HAL_UART_Transmit(&huart1, &ch, 1, 100); }
+        if (n < (int)sizeof(line) - 1) line[n++] = (char)ch;
       }
       line[n] = '\0';
-      printf("\r\n");
       if (n == 0) continue;
 
-      int  ok  = 0;
-      long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, line, &ok);
-      if (ok) printf("= %ld\r\n", res);
-      else    printf("parse failed for \"%s\"\r\n", line);
+      int idx = -1;
+      for (int i = 0; i < TOK_NUM_RULES; ++i)
+        if (strcmp(line, g_rule_names[i]) == 0) { idx = i; break; }
+      if (idx < 0) { printf("ERR:unknown rule '%s'\r\n", line); continue; }
+
+      char body[160];
+      NPU_QueryRule(g_network, (int8_t *)rin, (const int8_t *)rout, idx, body, (int)sizeof(body));
+      printf("ANS:%s\r\n", body);
     }
   }
   /* USER CODE END 2 */
