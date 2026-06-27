@@ -41,9 +41,47 @@ By default the atonn puts the weights in **XSPI NOR flash @ 0x71000000** (`octoF
 GDB-loadable SRAM the software model already used. (Tune `npuRAM3` size so the whole
 weights blob lands in `cpuRAM2`; a few KB can otherwise spill into the parked NPU RAM.)
 
+## Deployment — flash-copy (dev=0 + dev=1 unified)  [FINAL, device-validated]
+
+The GDB-loadable-SRAM placement above is **dev=1 only**: the weights ride inside the FSBL
+image, so a dev=0 device (boot-from-flash, no probe) has **no weights on the system**. The
+shipped solution keeps the weights in **persistent flash, copied to SRAM at boot** — ONE
+path for both dev modes. (Do **not** try XIP read-in-place from XSPI: the Neural-ART epoch
+stalls reading XSPI-resident weights — confirmed dead end. Copy to AXISRAM and run from there.)
+
+1. **Weights blob** (`network_atonbuf.AXISRAM1.raw` ≙ `network_weights.bin`, 526 496 B) is
+   flashed ONCE to **XSPI2 NOR @0x70200000** (separate from the FSBL image):
+   ```bash
+   STM32_Programmer_CLI -c port=SWD mode=UR \
+     -el MX66UW1G45G_STM32N6570-DK.stldr -w network_weights.bin 0x70200000 -v
+   ```
+2. **At boot** the FSBL (after `MX_EXTMEM_MANAGER_Init` sets up the NOR) maps it, copies the
+   blob into **AXISRAM1 @0x34064000** (the `.addr_base` the HW `network.c` reads), and cleans
+   the M55 D-cache so the Neural-ART sees fresh weights:
+   ```c
+   (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);
+   memcpy((void *)0x34064000, (const void *)0x70200000, 526496);
+   SCB_CleanDCache_by_Addr((uint32_t *)0x34064000, 526496);
+   ```
+3. `.ai_weights` is **NOLOAD** (linker) and the `network_weights.o` bake is removed (Makefile)
+   → FSBL image **244 KB** (vs 1.4 MB baked), so dev=0 boots from a small signed image.
+
+- **dev=1**: `load_and_run` loads only the 244 KB code (weights are NOLOAD); the boot copy feeds
+  the NPU from the flashed NOR. Clear the real `debugFlag` (read its address from the ELF — it
+  moves with the build) before release, and drop the `load_and_run` BP at `main` or the resume
+  re-traps it.
+- **dev=0**: sign the FSBL, then flash it to **0x70000000**; boot-ROM loads it → copy → NPU,
+  fully autonomous (no probe):
+  ```bash
+  STM32_SigningTool_CLI -s -bin run-23_FSBL.bin -nk -of 0x80000000 -t fsbl \
+    -hv 2.3 -align -la 0x34180000 -o run-23_FSBL-trusted.bin -dump run-23_FSBL-trusted.bin
+  STM32_Programmer_CLI -c port=SWD mode=UR \
+    -el MX66UW1G45G_STM32N6570-DK.stldr -d run-23_FSBL-trusted.bin 0x70000000
+  ```
+
 ## Status
 
-- ✅ HW generation conclusive: 5 pure-HW epochs, weights in GDB-loadable AXISRAM2.
-- ▢ On-device timing confirmation: deploy this `generated_hw`/`generated_sram`
-  `network.c` (+ the `network_atonbuf.*.raw` weight blob at 0x34100000) into the
-  run-23 FSBL, rebuild, and time one forward pass (expect sub-ms vs the 200 ms SW).
+- ✅ HW generation: 5 pure-HW epochs (`--st-neural-art`), conv body on the Neural-ART.
+- ✅ Weights deployment: flash-copy **XSPI2 NOR 0x70200000 → AXISRAM1 0x34064000** (dev=0 + dev=1).
+- ✅ Device-validated: autonomous on-chip NPU grammar calculator over UART — `3 + 4 = 7` and
+  `6 * 7 = 42` (5 rule-queries/eval via the Neural-ART oracle), in **both dev=1 and dev=0**.
