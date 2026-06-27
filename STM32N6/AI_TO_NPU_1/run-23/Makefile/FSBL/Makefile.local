@@ -50,7 +50,11 @@ AI_SOURCES = \
   ../../FSBL/AI/npu_query.c
 
 C_INCLUDES += -I../../FSBL/AI -I$(AI_BASE)/Inc -I$(ATON_RT) -I$(AI_BASE)/Npu/Devices/STM32N6xx
-C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_POLLING -DLL_ATON_SW_FALLBACK
+# LL_ATON_RT_MODE=ASYNC is MANDATORY for --st-neural-art networks: they execute as
+# epoch *blobs* on the NPU epoch controller, which polling mode does not support
+# (ll_aton_runtime.c:132 asserts out). ASYNC makes RuntimeInit auto-install + NVIC-
+# enable the ATON ISR (NPU0_IRQn) so the epoch-end IRQ wakes the runtime's __WFE().
+C_DEFS     += -DLL_ATON_PLATFORM=LL_ATON_PLAT_STM32N6 -DLL_ATON_OSAL=LL_ATON_OSAL_BARE_METAL -DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC -DLL_ATON_SW_FALLBACK
 LIBS       += -L$(AI_BASE)/Lib/GCC/ARMCortexM55 -l:NetworkRuntime1200_CM55_GCC.a
 
 AI_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(AI_SOURCES:.c=.o)))

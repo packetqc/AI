@@ -287,6 +287,25 @@ int main(void)
     printf("NPU clocked + reset OK + AXI cache + RISAF mem (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
   }
 
+  /* NPU RUNTIME (global ATON runtime init — MUST run before any network init/run).
+   * The --st-neural-art network runs as epoch *blobs* on the NPU epoch controller,
+   * whose host sync is interrupt-based (RM0486 §20.3.15-16) and supported ONLY in
+   * LL_ATON_RT_ASYNC mode (polling asserts out — ll_aton_runtime.c:132). The runtime
+   * init is gated behind stai_runtime_init() (NOT stai_network_init): it enables the
+   * ATON interrupt controller and INSTALL+NVIC_EnableIRQ(NPU0_IRQn) so the epoch-end
+   * IRQ wakes the runtime's __WFE(). Skipping it = silent WFE stall (init OK, run never
+   * returns) — the run-22/early-run-23 bug. Build sets -DLL_ATON_RT_MODE=ASYNC. */
+  {
+    stai_return_code rrc = stai_runtime_init();
+    if (rrc != STAI_SUCCESS)
+    {
+      printf("NPU runtime init FAILED (stai rc=%d)\r\n", (int)rrc);
+      Error_Handler();
+    }
+    printf("NPU runtime init OK (ATON INTCTRL + NPU0 IRQ enabled, ISER1=0x%08lX)\r\n",
+           (unsigned long)NVIC->ISER[1]);
+  }
+
   /* NPU MODEL */
   {
     /* Initialize the TCN model context (STAI). Inputs/outputs/weights are preallocated
