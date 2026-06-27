@@ -12,6 +12,10 @@
 #include "network_tokens.h"   /* g_tok_decode, g_rule_prompt, TOK_EOS_ID, ... */
 #include <string.h>
 
+/* Per-token CPU<->NPU dialog logger (implemented in grammar_runner.cpp via the C++
+ * TerminalLogger). One line per autoregressive step = one NPU epoch. */
+extern void NPU_LogStep(int rule_idx, int pos, int tok_id, const char *piece);
+
 void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                    int rule_idx, char *out, int out_max)
 {
@@ -53,6 +57,9 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
             int8_t x = out_buf[v * L + pos];
             if (x > bv) { bv = x; best = v; }
         }
+
+        /* line-by-line CPU<->NPU dialog: this step's embedding Gather + NPU epoch + argmax */
+        NPU_LogStep(rule_idx, pos, best, (best == TOK_EOS_ID) ? "<eos>" : g_tok_decode[best]);
 
         if (best == TOK_EOS_ID)
             break;

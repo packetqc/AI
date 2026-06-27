@@ -10,6 +10,7 @@
 #include "grammar_runner.h"
 #include "npu_query.h"
 #include "network_tokens.h"
+#include "terminal_logger.hpp"
 #include <vector>
 #include <string>
 #include <map>
@@ -17,7 +18,14 @@
 #include <cstring>
 #include <cstdlib>
 
+extern "C" uint32_t HAL_GetTick(void);
+
 namespace {
+
+/* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand:
+ * the ctor only stores a tick fn + color flag (no heap, no static-init dependency). */
+static llm::TerminalLogger rlog() { return llm::TerminalLogger(HAL_GetTick, /*color=*/true); }
+
 
 struct Tok { char kind; std::string val; };          /* 'n'=nonterminal, 't'=terminal */
 typedef std::vector<Tok> Alt;
@@ -74,21 +82,35 @@ static const char* const PLAYBOOK[TOK_NUM_RULES] = {
 class Runner {
 public:
     Runner(stai_network* net, int8_t* in, const int8_t* out)
-        : net_(net), in_(in), out_(out) {}
+        : net_(net), in_(in), out_(out), interactions_(0) {}
 
     long run(const std::string& input, const std::string& start, int* ok) {
+        rlog().logf(llm::Severity::Notice, "RUNNER",
+                    "parse \"%s\" via NPU grammar oracle (start=<%s>)",
+                    input.c_str(), start.c_str());
         std::vector<std::string> toks = tokenize(input);
         size_t pos = 0;
         Node node;
         bool got = parse_rule(start, toks, pos, node);
-        if (!got || pos != toks.size()) { if (ok) *ok = 0; return 0; }
+        if (!got || pos != toks.size()) {
+            if (ok) *ok = 0;
+            rlog().logf(llm::Severity::Error, "RUNNER",
+                        "parse failed for \"%s\" (%d NPU rule-queries)",
+                        input.c_str(), interactions_);
+            return 0;
+        }
         Val r = eval(node);
         if (ok) *ok = r.num ? 1 : 0;
-        return r.num ? r.n : 0;
+        long res = r.num ? r.n : 0;
+        rlog().logf(llm::Severity::Ok, "RUNNER",
+                    "\"%s\" = %ld  (%d rule-queries via NPU oracle)",
+                    input.c_str(), res, interactions_);
+        return res;
     }
 
 private:
     stai_network* net_; int8_t* in_; const int8_t* out_;
+    int interactions_;
     std::map<std::string, std::vector<Alt> > cache_;
 
     const std::vector<Alt>& query(const std::string& name) {
@@ -101,7 +123,12 @@ private:
         if (idx >= 0) {
             char body[160];
             NPU_QueryRule(net_, in_, out_, idx, body, (int)sizeof(body));
-            std::printf("  [oracle] %-7s -> %s\r\n", name.c_str(), body);
+            /* Host GrammarRunner._query_rule line (class_model_grammar.py:429):
+             * "[model #N] <grammar> <rule> -> <answer>". The per-token CPU<->NPU
+             * epochs that produced <answer> were logged from npu_query.c above. */
+            rlog().logf(llm::Severity::Info, "RUNNER",
+                        "[model #%d] calculator %s " "\xe2\x86\x92" " %s",
+                        ++interactions_, name.c_str(), body);
             /* playbook authoritative; the oracle line above is the visible model dialog */
             alts = parse_body(PLAYBOOK[idx]);
         }
@@ -208,6 +235,18 @@ private:
 };
 
 } /* anonymous namespace */
+
+/* Per-token CPU<->NPU dialog line, called by npu_query.c for each autoregressive
+ * step (one NPU epoch per generated token). Shows the finest-grain interaction the
+ * host (opaque Ollama) cannot: the CPU builds the int8 embedding, the NPU runs the
+ * conv epoch, the CPU takes argmax to pick the next token. */
+extern "C" void NPU_LogStep(int rule_idx, int pos, int tok_id, const char* piece) {
+    const char* rule = (rule_idx >= 0 && rule_idx < TOK_NUM_RULES) ? g_rule_names[rule_idx] : "?";
+    rlog().logf(llm::Severity::Debug, "NPU",
+                "[epoch] %-7s pos=%02d  cpu:embed[256x32] " "\xe2\x86\x92"
+                " npu:run " "\xe2\x86\x92" " argmax v=%d '%s'",
+                rule, pos, tok_id, piece ? piece : "");
+}
 
 extern "C" long Grammar_Calc(stai_network* net, int8_t* in_buf, const int8_t* out_buf,
                              const char* input_str, int* ok) {
