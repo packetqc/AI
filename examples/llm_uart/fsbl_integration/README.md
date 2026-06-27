@@ -1,5 +1,13 @@
 # FSBL Integration — on-device LLM inference without booting Appli
 
+> **⚠️ Legacy (superseded).** This guide documents the original Appli→FSBL integration of the Qwen2
+> calculator test (`llm_fsbl.c` + `llm_test_fsbl.c`) used in the now-removed `run-22` project. The
+> maintained deployment is **`STM32N6/AI_TO_NPU_1/run-23`**, where the device runs the grammar
+> calculator **autonomously** on-chip (a host unified runner in device mode is a thin terminal) — see
+> [`docs/STM32_NPU_DEPLOYMENT.md`](../../../docs/STM32_NPU_DEPLOYMENT.md). The integration *technique*
+> below (linker/Makefile additions, FSBL `main.c` patch, SWD flash) still applies; only the project and
+> the on-device application changed.
+
 Run the Qwen2 calculator test entirely in the FSBL.  The FSBL halts before
 `BOOT_Application()` — no Appli flash required.
 
@@ -118,7 +126,7 @@ Expected: two output segments in the ELF:
 Flash both segments at once via STM32CubeProgrammer:
 
 ```bash
-STM32_Programmer_CLI -c port=SWD freq=4000 -d Makefile/FSBL/build/run-22_FSBL.elf
+STM32_Programmer_CLI -c port=SWD freq=4000 -d Makefile/FSBL/build/run-23_FSBL.elf
 ```
 
 The programmer reads the ELF load segments and flashes each to the correct address automatically.
@@ -128,7 +136,7 @@ For rapid iteration (weights unchanged):
 ```bash
 # Re-flash only FSBL code (fast, ~200 KB SWD transfer)
 STM32_Programmer_CLI -c port=SWD freq=4000 \
-  -d Makefile/FSBL/build/run-22_FSBL.elf 0x34180400
+  -d Makefile/FSBL/build/run-23_FSBL.elf 0x34180400
 
 # Weights stay in NOR flash from previous full flash
 ```

@@ -1,25 +1,23 @@
-"""class_model_runner.py - Unified runner (host / device) for grammar-LM oracles.
+"""class_model_runner.py - Unified runner (host / device) for grammar-LM solutions.
 
 Pioneer "nocode" grammar-LM line (dates from file/git history):
   2026-06-06  fsm_language_model.py            genesis - FSM language model
   2026-06-14  model_create_hugging_face.py     nocode model-from-grammar generation
   2026-06-16  model_create_hf_cl.py            interactive grammar client
-  2026-06-27  class_model_runner.py            NPU-as-oracle unified runner (this file)
+  2026-06-27  class_model_runner.py            unified host/device runner (this file)
 
-One interactive client - prompt, history, TAB completion, /commands, auto-detection -
-over a PLUGGABLE oracle backend selected by mode:
+One interactive client, two execution modes that differ by WHERE the CPU logic runs:
 
-  mode=host    query_fn -> Ollama chat model        (get_ollama_answer)
-  mode=device  query_fn -> serial /dev/ttyACM0 -> STM32N6 Neural-ART NPU oracle
+  mode=device  the STM32N6 is AUTONOMOUS. The runner is a thin serial terminal: it pushes the
+               prompt over the ST-Link VCP and collects the output; the device's own CPU code
+               (C++ GrammarRunner) tokenizes, parses, evaluates and drives its Neural-ART NPU
+               entirely on-chip. This proves the edge device does the job by itself.
 
-Both backends plug into the SAME GrammarRunner.query_fn seam, so the on-device NPU is
-a drop-in replacement for the chat model. The CPU runner parses + evaluates from the
-returned BNF rule bodies; the oracle only recalls the grammar.
+  mode=host    the HOST does the CPU logic. The runner runs GrammarRunner locally and queries an
+               Ollama chat model as the grammar oracle, then parses + evaluates on the host.
 
-Device protocol (line based, 115200 8N1) - see run-23 FSBL main.c [NPU-ORACLE]:
-  host   -> "<rule_name>\n"      one of the grammar's rule names (e.g. expr)
-  device -> "ANS:<rule_body>\n"  the NPU-recalled BNF rule body
-            "ERR:unknown rule '<x>'\n" on miss
+Device mode has NO ML dependencies (pure serial) — the ML chain is imported lazily only for host
+mode. Run device mode with the system python; run host mode from the project venv.
 
 Usage:
   python3 class_model_runner.py --mode device --port /dev/ttyACM0
@@ -34,19 +32,126 @@ import subprocess
 import urllib.request
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, os.path.dirname(_HERE))          # scripts/  so 'classes' resolves
-from classes.class_model_grammar import ModelGrammar, GrammarRunner   # noqa: E402
-from classes.class_terminal_logs import TerminalLogger                # noqa: E402
-
 _DEFAULT_GRAMMAR = os.path.join(os.path.dirname(_HERE), "..",
                                 "models", "grammars", "playbook_model_calculator.txt")
 
 
+def _logger():
+    """Lightweight colour logger (no ML deps)."""
+    sys.path.insert(0, os.path.dirname(_HERE))
+    from classes.class_terminal_logs import TerminalLogger
+    return TerminalLogger()
+
+
+def _install_completer(words):
+    try:
+        import readline
+        def _c(text, state):
+            opts = [w for w in words if w.startswith(text)]
+            return opts[state] if state < len(opts) else None
+        readline.set_completer(_c)
+        readline.parse_and_bind("tab: complete")
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
 # ----------------------------------------------------------------------------
-# Backends - query_fn factories (the pluggable oracle)
+# DEVICE mode - thin serial terminal to the autonomous on-chip calculator
+# ----------------------------------------------------------------------------
+class DeviceTerminal:
+    """Push a prompt to the device, collect its output. The device does all the work."""
+
+    PROMPT = "calc> "
+
+    def __init__(self, port="/dev/ttyACM0", baud=115200, logger=None, boot_timeout=12):
+        self.port = port
+        self.logger = logger
+        subprocess.run(["stty", "-F", port, str(baud), "raw", "-echo", "-echoe", "-echok"],
+                       check=False)
+        self.f = open(port, "r+b", buffering=0)
+        # consume the boot banner up to the first prompt (best-effort)
+        self._read_until_prompt(boot_timeout, echo=False)
+
+    def _read_until_prompt(self, timeout, echo=True):
+        buf = bytearray()
+        end = time.time() + timeout
+        while time.time() < end:
+            r, _, _ = select.select([self.f], [], [], max(0.0, end - time.time()))
+            if not r:
+                break
+            c = self.f.read(1)
+            if not c:
+                continue
+            buf += c
+            if buf.endswith(self.PROMPT.encode()):
+                break
+        text = buf.decode(errors="replace")
+        # drop the trailing prompt itself
+        if text.endswith(self.PROMPT):
+            text = text[:-len(self.PROMPT)]
+        return text
+
+    def eval_expr(self, expr, timeout=30):
+        self.f.write((expr + "\r").encode())
+        return self._read_until_prompt(timeout)
+
+
+def run_device(port=("/dev/ttyACM0"), grammar_file=_DEFAULT_GRAMMAR):
+    log = _logger()
+    log.log("info", "RUNNER", "device mode - connecting to autonomous STM32N6 on %s ..." % port)
+    try:
+        term = DeviceTerminal(port, logger=log)
+    except Exception as e:                                       # noqa: BLE001
+        log.log("error", "RUNNER", "cannot open %s: %s" % (port, e))
+        return 1
+    log.log("ok", "RUNNER", "device ready - it parses + evaluates + runs the NPU on-chip")
+    log.log("info", "SYSTEM", "type an expression (e.g. 3 + 4), /? for help, /bye to quit")
+
+    _install_completer(["/?", "/help", "/bye", "/mode", "/grammar", "exit", "quit"])
+    while True:
+        try:
+            ui = input(">>> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if not ui:
+            continue
+        low = ui.lower()
+        if low in ("/bye", "exit", "quit"):
+            log.log("ok", "SYSTEM", "closing runner - the device keeps running standalone")
+            break
+        if ui in ("/?", "/help"):
+            print("  /?            this help")
+            print("  /mode         show the active mode")
+            print("  /grammar      print the BNF grammar (for reference; the device has its own)")
+            print("  /bye          quit the runner (device stays autonomous)")
+            print("  <expression>  pushed to the device; it computes on-chip and returns the output")
+            continue
+        if low == "/mode":
+            log.log("info", "SYSTEM", "mode=device (autonomous)  port=%s" % port)
+            continue
+        if low == "/grammar":
+            _print_grammar(grammar_file)
+            continue
+        # push the prompt; the device does everything and we print what it returns
+        out = term.eval_expr(ui).strip("\r\n")
+        if out:
+            print(out)
+    return 0
+
+
+def _print_grammar(grammar_file):
+    try:
+        with open(grammar_file, "r", encoding="utf-8") as fh:
+            sys.stdout.write(fh.read())
+    except OSError as e:                                         # noqa: BLE001
+        print("(grammar unavailable: %s)" % e)
+
+
+# ----------------------------------------------------------------------------
+# HOST mode - the host runs GrammarRunner locally, Ollama as the grammar oracle
 # ----------------------------------------------------------------------------
 def ollama_query_fn(model, host=None):
-    """Host backend: query an Ollama chat model for one grammar rule."""
     host = host or os.environ.get("OLLAMA_HOST", "http://localhost:11434")
 
     def q(prompt):
@@ -58,125 +163,32 @@ def ollama_query_fn(model, host=None):
     return q
 
 
-class SerialOracle:
-    """Device backend: talk to the STM32N6 NPU oracle over the ST-Link VCP."""
+def run_host(grammar_file=_DEFAULT_GRAMMAR, model=None, host=None):
+    log = _logger()
+    if not model:
+        log.log("error", "RUNNER", "--model is required for host mode")
+        return 1
+    sys.path.insert(0, os.path.dirname(_HERE))
+    from classes.class_model_grammar import ModelGrammar, GrammarRunner   # lazy (pulls gguf chain)
 
-    def __init__(self, port="/dev/ttyACM0", baud=115200, logger=None, ready_timeout=15):
-        self.port = port
-        self.logger = logger
-        subprocess.run(["stty", "-F", port, str(baud), "raw", "-echo", "-echoe", "-echok"],
-                       check=False)
-        self.f = open(port, "r+b", buffering=0)
-        if not self._drain_until("[NPU-ORACLE] ready", ready_timeout) and logger:
-            logger.log("warning", "DEVICE",
-                       "did not see the ready banner (device may already be serving) - continuing")
-
-    def _readline(self, timeout):
-        buf = bytearray()
-        end = time.time() + timeout
-        while time.time() < end:
-            r, _, _ = select.select([self.f], [], [], max(0.0, end - time.time()))
-            if not r:
-                break
-            c = self.f.read(1)
-            if not c:
-                continue
-            if c in (b"\n", b"\r"):
-                if buf:
-                    return buf.decode(errors="replace")
-                continue
-            buf += c
-        return buf.decode(errors="replace") if buf else None
-
-    def _drain_until(self, marker, timeout):
-        end = time.time() + timeout
-        while time.time() < end:
-            ln = self._readline(max(0.5, end - time.time()))
-            if ln is None:
-                continue
-            if self.logger:
-                self.logger.log("debug", "DEVICE", ln)
-            if marker in ln:
-                return True
-        return False
-
-    def query(self, prompt):
-        """prompt is '<grammar> <rule>' (GrammarRunner convention); the device wants the rule."""
-        rule = prompt.split()[-1]
-        self.f.write((rule + "\n").encode())
-        for _ in range(64):
-            ln = self._readline(15)
-            if ln is None:
-                break
-            if ln.startswith("ANS:"):
-                return ln[4:].strip()
-            if ln.startswith("ERR:"):
-                return ""
-        return ""
-
-
-def serial_query_fn(port="/dev/ttyACM0", baud=115200, logger=None):
-    return SerialOracle(port, baud, logger).query
-
-
-# ----------------------------------------------------------------------------
-# Interactive runner with command assistance
-# ----------------------------------------------------------------------------
-def run_interactive(grammar_file=_DEFAULT_GRAMMAR, mode="device",
-                    model=None, port="/dev/ttyACM0", host=None):
-    logger = TerminalLogger()
-
-    gf = ModelGrammar.load_file(grammar_file, logger=logger)
+    gf = ModelGrammar.load_file(grammar_file, logger=log)
     if not gf:
-        logger.log("error", "RUNNER", "could not load grammar '%s'" % grammar_file)
+        log.log("error", "RUNNER", "could not load grammar '%s'" % grammar_file)
         return 1
     gname = gf["name"]
-    # load_file's "tree" is nested {grammar_name: {rule: body}} (ModelGrammar.to_playbook_tree);
-    # GrammarRunner wants the flat {rule: body} subtree.
     tree = gf["tree"]
-    if isinstance(tree.get(gname), dict):
-        playbook = tree[gname]
-    else:
-        playbook = tree
+    playbook = tree[gname] if isinstance(tree.get(gname), dict) else tree
     rules = list(playbook.keys())
     start_rule = rules[0] if rules else "expr"
+    qfn = ollama_query_fn(model, host)
 
-    if mode == "device":
-        logger.log("info", "RUNNER", "connecting to device NPU oracle on %s ..." % port)
-        try:
-            qfn = serial_query_fn(port, logger=logger)
-        except Exception as e:                                   # noqa: BLE001
-            logger.log("error", "RUNNER", "cannot open %s: %s" % (port, e))
-            return 1
-        logger.log("ok", "RUNNER", "device oracle ready")
-    else:
-        if not model:
-            logger.log("error", "RUNNER", "--model is required for host mode")
-            return 1
-        logger.log("info", "RUNNER", "using host Ollama model '%s'" % model)
-        qfn = ollama_query_fn(model, host)
+    log.log("info", "RUNNER", "host mode - GrammarRunner local, oracle = Ollama '%s'" % model)
+    log.log("info", "SYSTEM", "type an expression (e.g. 3 + 4), /? for help, /bye to quit")
+    _install_completer(["/?", "/help", "/bye", "/mode", "/grammar", "/rules"] + rules)
 
     def make_runner():
         return GrammarRunner(grammar_name=gname, query_fn=qfn,
-                             fallback_playbook=playbook, logger=logger)
-
-    # readline: history + TAB completion (commands + rule names)
-    CMDS = ["/help", "/?", "/bye", "/mode", "/rules", "/grammar", "exit", "quit"]
-    try:
-        import readline
-        def _completer(text, state):
-            opts = [c for c in CMDS + rules if c.startswith(text)]
-            return opts[state] if state < len(opts) else None
-        readline.set_completer(_completer)
-        readline.parse_and_bind("tab: complete")
-    except Exception:                                            # noqa: BLE001
-        pass
-
-    backend = (port if mode == "device" else model)
-    logger.log("info", "SYSTEM",
-               "===== unified grammar runner - mode=%s grammar=%s (%s) =====" % (mode, gname, backend))
-    logger.log("info", "SYSTEM",
-               "type an expression (e.g. 3 + 4), /? for help, TAB to complete, /bye to quit")
+                             fallback_playbook=playbook, logger=log)
 
     while True:
         try:
@@ -187,21 +199,19 @@ def run_interactive(grammar_file=_DEFAULT_GRAMMAR, mode="device",
         if not ui:
             continue
         low = ui.lower()
-
         if low in ("/bye", "exit", "quit"):
-            logger.log("ok", "SYSTEM", "closing runner - goodbye")
+            log.log("ok", "SYSTEM", "closing runner")
             break
         if ui in ("/?", "/help"):
             print("  /?            this help")
-            print("  /rules        recall every grammar rule via the oracle (shows the dialog)")
-            print("  /grammar      print the loaded playbook grammar")
-            print("  /mode         show the active oracle backend")
+            print("  /rules        recall every grammar rule via the Ollama oracle")
+            print("  /grammar      print the loaded BNF grammar")
+            print("  /mode         show the active mode")
             print("  /bye          quit")
-            print("  <expression>  auto-detected + evaluated via the %s oracle (e.g. 12 * (3 + 4))" % mode)
-            print("  TAB           complete commands + rule names")
+            print("  <expression>  parsed + evaluated locally; rules recalled from the model")
             continue
         if low == "/mode":
-            logger.log("info", "SYSTEM", "mode=%s  grammar=%s  backend=%s" % (mode, gname, backend))
+            log.log("info", "SYSTEM", "mode=host  grammar=%s  model=%s" % (gname, model))
             continue
         if low == "/grammar":
             for r in rules:
@@ -210,26 +220,25 @@ def run_interactive(grammar_file=_DEFAULT_GRAMMAR, mode="device",
         if low == "/rules":
             r = make_runner()
             for name in rules:
-                r._query_rule(name)          # triggers + logs the oracle dialog
+                r._query_rule(name)
             continue
-
-        # auto-detection: does the input parse against the grammar? (playbook-only, silent)
         if GrammarRunner.probe(gname, ui, playbook, start_rule=start_rule):
             make_runner().run(ui, start_rule=start_rule)
         else:
-            logger.log("warning", "RUNNER",
-                       "not a valid %s expression: '%s' (try: 3 + 4)" % (gname, ui))
+            log.log("warning", "RUNNER", "not a valid %s expression: '%s' (try: 3 + 4)" % (gname, ui))
     return 0
 
 
 if __name__ == "__main__":
     import argparse
-    ap = argparse.ArgumentParser(description="Unified grammar runner (host Ollama / device NPU).")
+    ap = argparse.ArgumentParser(description="Unified grammar runner (autonomous device / host Ollama).")
     ap.add_argument("--mode", choices=["host", "device"], default="device",
-                    help="oracle backend: host (Ollama) or device (STM32N6 NPU over serial)")
+                    help="device: autonomous STM32N6 over serial · host: GrammarRunner + Ollama")
     ap.add_argument("--grammar", default=_DEFAULT_GRAMMAR, help="BNF/EBNF playbook grammar file")
     ap.add_argument("--port", default="/dev/ttyACM0", help="device serial port (device mode)")
     ap.add_argument("--model", default=None, help="Ollama model name (host mode)")
     ap.add_argument("--host", default=None, help="Ollama host URL (host mode)")
     a = ap.parse_args()
-    sys.exit(run_interactive(a.grammar, a.mode, a.model, a.port, a.host))
+    if a.mode == "device":
+        sys.exit(run_device(a.port, a.grammar))
+    sys.exit(run_host(a.grammar, a.model, a.host))

@@ -2,7 +2,7 @@
 
 A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
 
-It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, proves it compiles **100% to NPU hardware** (`stedgeai analyze`), and generates the device C — so the trained grammar runs on-chip as a text REPL, with the CPU doing tokenize/embed/detokenize and the NPU running the convolution body. One grammar conceptualization, two runtimes: a Qwen2 model served locally via Ollama, and a Conv1D/TCN model running natively on the STM32N6570-DK NPU.
+It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, proves it compiles **100% to NPU hardware** (`stedgeai analyze`), and generates the device C — so the trained grammar runs on-chip on the Neural-ART, with the CPU doing tokenize/embed/detokenize and the NPU running the convolution body. One grammar conceptualization, two runtimes — a Qwen2 model served locally via Ollama and a Conv1D/TCN model running natively on the STM32N6570-DK NPU — exercised by **one unified runner** that either talks to the autonomous edge device (device mode) or runs the grammar engine locally against the chat model (host mode).
 
 ## What it does
 
@@ -27,7 +27,7 @@ The same grammar-and-training conceptualization drives two runtimes — a host m
 - **Proves it runs 100% on NPU hardware** — `stedgeai analyze` confirms a pure-hardware mapping (no CPU software-fallback), unlike the Qwen2 transformer which the Neural-ART cannot execute.
 - **Generates the device C** — `stedgeai generate` emits `network.c` / `network_data.c` that the STM32N6570-DK FSBL firmware consumes.
 - **Generates the CPU embedding table** (`scripts/model_generation/emit_npu_embed_header.py`) — the int8 `llm_embed.h` lookup the CPU feeds to the NPU, quantized to that model's NPU input scale so the CPU embedding space matches the NPU conv weights.
-- **Runs on-chip as a text REPL** — the FSBL tokenizes/embeds/detokenizes on the Cortex-M55 and runs the convolution body on the NPU, so you type `3 + 4` over UART and the trained grammar answers from the edge device.
+- **Runs on-chip, autonomously** — the FSBL tokenizes, parses, evaluates AND drives the NPU entirely on the Cortex-M55 + Neural-ART; type `3 + 4` over UART and the edge device returns `7` by itself. The host **unified runner** in device mode is just a thin terminal that pushes prompts and collects output. *(Why it matters: the edge device does the whole job — no transformer, no host, no network.)*
 - **Exports the host model to ONNX** — `/npu` or `scripts/model_generation/model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio.
 
 ## Architecture
@@ -37,20 +37,26 @@ scripts/model_generation/model_create_hf_cl.py           # Entry point: trains, 
 scripts/model_generation/model_export_npu.py             # Standalone NPU/ONNX export script
 scripts/model_generation/model_tools_grammar.py          # Grammar tool: converts external sources → grammar files
 
-classes/
+scripts/classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
   class_model_grammar.py        # ModelGrammar: BNF/EBNF parser  |  GrammarRunner: execution engine
+  class_model_runner.py         # Unified runner: host (Ollama) | device (NPU-over-serial) backends
   class_terminal_logs.py        # Colour terminal logger
   class_tools_grammar.py        # Grammar converters: Mermaid / Markdown / Text / PDF / Web / AI
 
-grammars/
+models/grammars/
   playbook_pyhealthcheck.txt    # Python healthcheck procedure grammar  ← default
   playbook_linux_healthcheck.txt   # Shell healthcheck procedure grammar
   playbook_model_calculator.txt    # Expression grammar: expr ::= expr "+" term | ...
 
-training/
+models/training/
   train_python_healthcheck_commands.json  # Python token vocabulary (_exec: python)  ← default
   train_linux_healthcheck_commands.json   # Shell token vocabulary (_exec: shell)
+
+STM32N6/AI_TO_NPU_1/run-23/          # live FSBL — autonomous NPU calculator firmware (STM32N6570-DK)
+  FSBL/Core/Src/main.c               # NPU init + ASYNC runtime + autonomous UART calc> REPL
+  FSBL/AI/grammar_runner.cpp         # C++ GrammarRunner port + per-token CPU<->NPU logging
+  FSBL/AI/npu_query.c                # autoregressive NPU rule recall (embed -> conv -> argmax)
 
 examples/
   grammar_sources/              # Example source files (one per supported format)
@@ -578,26 +584,90 @@ models/npu_export/
 > § *NPU-native architecture path*. The host export flow and the grammar runner are unchanged;
 > only the model architecture would change.
 >
-> **Latest dev:** `run-23` brings the NPU hardware path up under the FSBL-direct flow (verified
-> byte-identical to the operational reference); the open item is that the ATON streaming engine
-> does not yet complete an epoch. This exercise **continues when a compatible custom model — one
-> whose op set and purpose match the NPU's edge-AI design — is explored again**, so the solution
-> can build models on the host and run them on STM32 edge-AI devices end to end. That
-> re-exploration is tracked on the `reverse-engineering` branch.
+> **Latest dev (2026-06-27):** `run-23` runs the grammar calculator **autonomously on the NPU,
+> end-to-end on hardware**. The earlier epoch stall is **fixed**. Root cause was the runtime
+> integration, not the model: the `--st-neural-art` network executes as *epoch blobs* on the NPU
+> epoch controller, which requires `LL_ATON_RT_ASYNC` (polling is unsupported for epoch blobs) **and**
+> the global `stai_runtime_init()` that enables the ATON interrupt controller + `NPU0_IRQn`. Without
+> those the ATON never raised completion and the runtime slept forever in `__WFE()`. With both in
+> place the epoch completes and the device computes `3 + 4 = 7` on-chip over UART, fully autonomous.
+> A host **unified runner** in device mode is a thin terminal — see
+> [Unified runner (host/device)](#unified-runner-hostdevice) and
+> [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
 
-**End-to-end inference flow (host → device):**
+**End-to-end inference flow (device mode — the device is autonomous):**
 ```
-host:    input text → tokenise (tokenizer/, BPE vocab 374)
-device:  CPU int8 embedding lookup → int8[1,256,32]
-         → NPU / SW-fallback body  → logits[1,seq,374]
-         → CPU argmax last position → token id → decode
-         → C++ GrammarRunner REPL over USART1 (115200) drives the dialog
+host (unified runner):  >>> 3 + 4              push the prompt over UART (thin terminal)
+device (STM32N6):       tokenize → parse        C++ GrammarRunner on the Cortex-M55
+                        per grammar rule: CPU int8 embed → NPU conv → CPU argmax (autoregressive)
+                        evaluate parse tree → "= 7"          (all on-chip, BPE vocab 374)
+host (unified runner):  collect + print the device's output
 ```
 
-**On-device:** the model + a C++ port of the grammar engine run in the FSBL of
-`STM32N6/AI_TO_NPU_1/run-22`, exposing an interactive REPL over the ST-Link VCP
-(`/dev/ttyACM0`). See [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)
-§ *On-device deployment*.
+**On-device:** the Conv1D/TCN model + a C++ `GrammarRunner` run **autonomously** in the FSBL of
+`STM32N6/AI_TO_NPU_1/run-23` over the ST-Link VCP (`/dev/ttyACM0`); the host
+[`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py) in device mode is a
+thin terminal. See [Unified runner (host/device)](#unified-runner-hostdevice) below and
+[docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) § *On-device deployment*.
+
+## Unified runner (host/device)
+
+[`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py) is **one
+interactive client with two execution modes** that differ by *where the CPU logic runs*:
+
+- **`--mode device`** — the STM32N6 is **autonomous**. The runner is a thin serial terminal: it
+  pushes the prompt and collects the output; the device's own C++ `GrammarRunner` tokenizes, parses,
+  evaluates and drives its Neural-ART NPU entirely on-chip. *(Why it matters: it proves the edge
+  device does the whole job by itself — no transformer, no host, no network.)*
+- **`--mode host`** — the **host** runs `GrammarRunner` locally and queries an Ollama chat model as
+  the grammar oracle, parsing + evaluating on the host.
+
+```mermaid
+%%{init: {'theme':'neutral'}}%%
+flowchart LR
+    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner<br/>class_model_runner.py"]
+    CLI -->|"--mode device"| DEV["STM32N6 FSBL (run-23) — AUTONOMOUS<br/>C++ GrammarRunner on the M55:<br/>tokenize · parse · evaluate<br/>Neural-ART NPU rule recall"]
+    CLI -->|"--mode host"| HOST["GrammarRunner on host<br/>tokenize · parse · evaluate"]
+    HOST -->|"query_fn(rule)"| OLL["Ollama chat model"]
+    DEV -->|"device output (= 7)"| CLI
+    HOST -->|"= 7"| CLI
+    CLI --> RES["Result: 7"]
+```
+
+Device mode is dependency-free (pure serial — no venv needed); host mode pulls in the ML chain.
+
+**Run it:**
+
+```bash
+# device mode — thin terminal to the autonomous STM32N6 (run-23 FSBL loaded/flashed)
+python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0
+
+# host mode — GrammarRunner local + Ollama oracle (from the project venv)
+source venv/bin/activate
+python3 scripts/classes/class_model_runner.py --mode host --model model_calculator_test_npu
+```
+
+```
+>>> 3 + 4
+ ... device mode: the device's own [model #N] dialog, relayed over UART ...
+= 7
+>>> /grammar     # print the BNF grammar
+>>> /mode        # show the active mode
+>>> /bye
+```
+
+| Command | Description |
+|---|---|
+| `<expression>` | device mode: pushed to the autonomous device; host mode: parsed + evaluated locally |
+| `/grammar` | print the BNF grammar |
+| `/mode` | show the active mode (device port / host model) |
+| `/rules` | *(host mode)* recall every grammar rule via the Ollama oracle |
+| `/?` | help |
+| `/bye` | quit the runner (in device mode the device keeps running standalone) |
+
+In **device mode** the runner relays your line and prints the device's output; the parse, evaluate and
+NPU recall all happen **on-chip**. Full device flow:
+[docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
 
 ## License
 

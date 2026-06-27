@@ -27,7 +27,7 @@ UART_HandleTypeDef huart1;
 /* LED readout (works even when RISAF masks memory + UART):
  *   GREEN on = stai_network_run RETURNED  -> NPU epoch COMPLETED
  *   RED   on = stai_network_init FAILED   -> NPU init problem
- *   neither  = stuck inside stai_network_run -> epoch STALLED (run-22 behaviour) */
+ *   neither  = stuck inside stai_network_run -> epoch STALLED (the earlier polling-mode behaviour) */
 void NPU_LED_Init(void)
 {
     BSP_LED_Init(LED_GREEN);

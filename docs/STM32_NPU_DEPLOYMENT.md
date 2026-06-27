@@ -1,7 +1,8 @@
 # STM32N6570-DK Deployment Guide
 
 Deploying a grammar-driven model to the STM32N6570-DK, end to end — from the host export
-through ST Edge AI code generation to live on-device inference with an interactive UART REPL.
+through ST Edge AI code generation to live on-device inference, where the device runs the grammar
+calculator **autonomously** over UART (a host unified runner in device mode is just a thin terminal).
 
 **Status: WORKING (CPU path)** — the transformer runs on-device (Cortex-M55, INT8) and the
 interactive grammar REPL is validated live on hardware. See
@@ -9,12 +10,16 @@ interactive grammar REPL is validated live on hardware. See
 CPU-bound on the NPU) and [NPU-native path](#npu-native-architecture-path-light-speed) for the
 proven fast alternative.
 
-**Latest dev (NPU-native path, operational build):** `run-23` now carries the **Conv1D/TCN** model
-(proven 100% NPU-hardware by `stedgeai analyze`) plus run-22's full on-chip REPL stack and build
-technique — the FSBL builds clean; the on-hardware epoch + REPL confirmation is the remaining step. See
-[run-23 NPU-native operational build](#run-23--npu-native-operational-build-latest-dev) for the current
-state and [Roadmap](#roadmap--host-built-custom-edge-ai-models-on-the-npu) for where this thread
-continues.
+**Latest dev (2026-06-27) — NPU calculator running autonomously on hardware:** `run-23` runs the
+**Conv1D/TCN** grammar model on the Neural-ART end to end. The earlier epoch stall is **fixed** — root
+cause was the runtime integration, not the model: the `--st-neural-art` network executes as *epoch
+blobs* on the NPU epoch controller, which requires `LL_ATON_RT_ASYNC` (polling is unsupported for epoch
+blobs) **and** the global `stai_runtime_init()` that enables the ATON interrupt controller + `NPU0_IRQn`.
+The device runs the calculator **autonomously** on-chip — tokenize, parse, evaluate and NPU recall all on
+the M55 + Neural-ART; typing `3 + 4` returns `7` from the edge device by itself. A host
+[unified runner](#unified-runner-hostdevice) in device mode is just a thin terminal. See
+[run-23 NPU-native operational build](#run-23--npu-native-operational-build-latest-dev) and
+[Roadmap](#roadmap--host-built-custom-edge-ai-models-on-the-npu).
 
 ---
 
@@ -34,8 +39,8 @@ continues.
 
 - **Host** owns the model + grammar engine; the handoff artifact is `model_npu_qdq.onnx`.
 - **ST Edge AI** compiles ONNX → C and decides **weights/activation placement** (the speed knob).
-- **Device** runs it from the FSBL: CPU does the int8 embedding lookup, the NPU (or SW-fallback)
-  runs the body, and a C++ port of `GrammarRunner` drives an interactive REPL over UART.
+- **Device** runs it from the FSBL **autonomously**: the M55 tokenizes/parses/evaluates and drives the
+  NPU on-chip; the host unified runner (device mode) is just a thin terminal over UART.
 
 ---
 
@@ -184,38 +189,47 @@ Host tokenization uses `npu_export/tokenizer/` (BPE, vocab_size=374).
 
 ---
 
-## On-device deployment (FSBL + interactive REPL)
+## On-device deployment (autonomous FSBL)
 
-The generated network is integrated into the **FSBL** (First-Stage Boot Loader) of an
-ST Edge AI project (`STM32N6/AI_TO_NPU_1/run-22`). The FSBL is the complete application —
-there is no separate Appli image. On top of the C inference wrapper, a **C++ port of the host
-grammar engine** runs an interactive REPL over USART1:
+The generated network is integrated into the **FSBL** (First-Stage Boot Loader) of
+`STM32N6/AI_TO_NPU_1/run-23` — the FSBL is the complete application (no separate Appli image). The
+device runs the calculator **autonomously**: a C++ `GrammarRunner` on the Cortex-M55 tokenizes,
+parses, evaluates and drives the Neural-ART NPU entirely on-chip. The host
+[unified runner](#unified-runner-hostdevice) in device mode is just a thin terminal that pushes
+prompts and collects output.
 
 | Layer | File | Role |
 |---|---|---|
-| NPU inference | `FSBL/Core/Src/llm_fsbl.c` | `stai_network_*` wrapper: CPU int8 embedding → NPU run → argmax |
-| Tokenizer | `FSBL/Core/Src/llm_tokenizer.c` | BPE encode/decode, 374 vocab |
+| NPU init + calc REPL | `FSBL/Core/Src/main.c` | NPU clock/RISAF + `LL_ATON_RT_ASYNC` runtime + `stai_runtime_init`; UART `calc>` loop → `Grammar_Calc` |
+| Grammar engine (C++) | `FSBL/AI/grammar_runner.cpp` | `GrammarRunner` port: tokenize · parse · evaluate · NPU rule recall + CPU↔NPU logging (`NPU_SetVerbose`) |
+| NPU rule recall | `FSBL/AI/npu_query.c` | autoregressive recall: CPU int8 embed → NPU conv → CPU argmax, per token until EOS |
+| Tokenizer | `FSBL/AI/network_tokens.c` | BPE decode + per-rule prompts, 374 vocab |
 | Logger | `FSBL/Core/Src/terminal_logger.cpp` | C++ port of `class_terminal_logs.py` — same colored output |
-| Grammar engine | `FSBL/Core/Src/grammar_runner.cpp` | C++ port of `GrammarRunner` (tokenize / parse / evaluate / execute / probe) |
-| REPL | `FSBL/Core/Src/llm_repl.cpp` | `extern "C" LLM_Repl_Run` — reads a line, probes the grammar, queries the NPU per rule |
 
 C++ is built as an embedded subset (`-fno-exceptions -fno-rtti -fno-threadsafe-statics -nostdlib++`,
 no heap); the C boot/HAL/NPU layer is reached via `extern "C"`. The grammar engine is
-**model-agnostic at the query interface** — swapping the model does not change the REPL logic.
+**model-agnostic at the query interface** — swapping the model does not change the runner.
 
 ### Build + run (Linux host, ST-Link V3)
 
 ```bash
-# Build the FSBL (links the NPU runtime + the C++ REPL)
-cd STM32N6/AI_TO_NPU_1/run-22/Makefile/FSBL && make -j8 all
+# Build the run-23 FSBL (durable wrapper: NPU runtime + C++ + AI model)
+cd STM32N6/AI_TO_NPU_1/run-23/Makefile/FSBL && make -f Makefile.local all
 
-# Serial: the ST-Link VCP is /dev/ttyACM0 @ 115200 8N1 (no flow control)
-#   minicom -D /dev/ttyACM0 -b 115200     (the "Offline" indicator is just DCD — ignore)
+# Load + run from RAM via GDB (load ELF into AXISRAM, release the debugFlag trap) — see
+#   Knowledge/K_STM32_MCP/methodology/methodology-debug-fsbl-direct.md
+# On release the FSBL prints the "calc>" prompt and computes expressions on-chip over USART1.
+
+# Drive it from the host (the port is the ST-Link VCP, 115200 8N1):
+source venv/bin/activate
+python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0
+#   >>> 3 + 4      → Result: 7
 ```
 
-The FSBL is exercised via **GDB load-and-run** (load the ELF into AXISRAM2, release the
-`debugFlag` trap, run from RAM) — see `Knowledge/K_STM32_MCP/methodology/methodology-debug-fsbl-direct.md`.
-On release the REPL prints its banner and accepts expressions (`3 + 4`, `quit`).
+> The `Makefile.local` wrapper is durable across CubeMX regeneration and sets
+> `-DLL_ATON_RT_MODE=LL_ATON_RT_ASYNC` (mandatory for epoch-blob NPU networks). Changing `C_DEFS`
+> there needs a **clean** rebuild (`make -f Makefile.local clean all`) — objects depend on `Makefile`,
+> not `Makefile.local`.
 
 ---
 
@@ -307,58 +321,108 @@ compile the generated C into the FSBL firmware and flash to an STM32N6 board.
 
 ## run-23 — NPU-native, operational build (latest dev)
 
-`run-23` is now the **operational NPU-native project**: the Studio-generated vanilla NPU project,
-promoted to a first-class sibling of `run-22`, then completed by (a) swapping in the **Conv1D/TCN
-calculator model** — the architecture `stedgeai analyze` proves maps **100% to NPU hardware** — and
-(b) transposing run-22's full REPL stack + build technique so it builds and runs the on-chip text
-REPL. `run-23_FSBL.elf/.hex/.bin` build clean.
+`run-23` is the **operational NPU-native project** — and now the only one (the earlier `run-22`
+reference has been removed). It is the Studio-generated vanilla NPU project completed by (a) the
+**Conv1D/TCN calculator model**, the architecture `stedgeai analyze` proves maps **100% to NPU
+hardware**, and (b) the C/C++ host-port + build technique that runs the trained grammar on-chip.
+`run-23_FSBL.elf/.hex/.bin` build clean and run on hardware (the NPU epoch completes; `3 + 4 = 7`).
 
-### What was transposed from run-22 (kept as the reference)
+### What the FSBL carries
 
-`run-22` is retained as the proven reference. run-23 lacked two things; both were transposed in:
-
-- **The Python→C/C++ host port** — `llm_tokenizer.c`, `grammar_runner.cpp`, `llm_repl.cpp`,
-  `llm_fsbl.c` (the NPU-Conv1D inference wrapper), `terminal_logger.cpp` + headers. `main.c` drives
-  `LLM_Repl_Run()` over USART1 instead of the bare one-shot self-test.
-- **The build technique** — C++ rules (`CXX=g++`, embedded subset `-fno-exceptions -fno-rtti
-  -std=gnu++17`), link via **`g++ -nostdlib++`** (not `-specs=nano.specs`, which the host toolchain
-  lacks), and the linker `NPU_WEIGHTS` region `@0x34000000` (AXISRAM1) whose `.npu_weights` section
-  keeps the **489 KB weights blob out of the 460 K ROM** (load-and-run stages them to fast SRAM).
-  Without it the FSBL overflowed ROM by ~199 KB.
+- **The Python→C/C++ host port** — `FSBL/AI/network_tokens.c` (BPE), `FSBL/AI/npu_query.c`
+  (autoregressive NPU rule recall), `FSBL/AI/grammar_runner.cpp` (C++ `GrammarRunner` port + CPU↔NPU
+  logging), `FSBL/Core/Src/terminal_logger.cpp`. `main.c` initialises the NPU (`LL_ATON_RT_ASYNC`
+  runtime + `stai_runtime_init`) and runs the autonomous `calc>` loop over USART1 — the M55 does the
+  tokenize / parse / evaluate, the NPU does the rule recall, all on-chip.
+- **The build technique** — C++ embedded subset (`g++`, `-fno-exceptions -fno-rtti
+  -fno-threadsafe-statics`), link via **`g++ -nostdlib++`** (the host toolchain lacks
+  `-specs=nano.specs`), and the SRAM mpool profile + custom linker that stage the weights blob to
+  AXISRAM so it stays out of ROM (load-and-run loads it to fast SRAM).
 
 ### Model coherence — the CPU embedding table
 
-The CPU does the int8 embedding lookup before feeding the NPU, so `llm_embed.h` must come from
+The CPU does the int8 embedding lookup before feeding the NPU, so the embedding table must come from
 **this** model. `scripts/model_generation/emit_npu_embed_header.py` regenerates it from the TCN's
 `embed.weight`, quantized to the TCN's NPU input scale/zp (`0.029473 / -4`, read from the int8 ONNX
-`QuantizeLinear`) — replacing run-22's stale `model_cnn_calc` table (`0.02167 / -12`) that would
-otherwise feed the NPU an embedding space its conv weights don't match.
+`QuantizeLinear`) — otherwise the NPU is fed an embedding space its conv weights don't match.
 
 ### Status
 
 | Item | State |
 |---|---|
-| FSBL build | ✅ clean — `g++ -nostdlib++`, weights in AXISRAM1, activations AXISRAM3 (text ~674 KB) |
+| FSBL build | ✅ clean — `g++ -nostdlib++`, weights in AXISRAM1, activations AXISRAM3 |
 | Model | Conv1D/TCN, `stedgeai analyze` 100% pure hardware, clean `atonn` (no segfault) |
 | CPU embed table | ✅ coherent with the TCN (`emit_npu_embed_header.py`) |
-| On-device epoch + REPL | ⏳ pending — flash + live NPU debug (needs a connected board) |
+| NPU epoch on hardware | ✅ **completes** — `3 + 4 = 7` validated live (load-and-run, UART) |
+| Host integration | ✅ unified runner — device mode = thin terminal to the autonomous device; host mode = local GrammarRunner + Ollama (`class_model_runner.py`) |
 
-**On the earlier WFE stall:** it was observed with the old `model_cnn_calc` network (the engine
-stayed in `__ll_aton_stai_run_synchonously` WFE, never raising completion). The TCN compiles to
-100% pure hardware, so it is the model expected to close that gap — **to be confirmed on hardware.**
+**On the earlier WFE stall (root cause, fixed 2026-06-27):** the engine stayed in
+`__ll_aton_stai_run_synchonously` `__WFE()`, never woken. The cause was the **runtime integration,
+not the model**:
+
+1. The build set `LL_ATON_RT_MODE=LL_ATON_RT_POLLING`, but a `--st-neural-art` network runs as
+   *epoch blobs* on the NPU epoch controller, which polling does **not** support (`ll_aton_runtime.c`
+   asserts on the epoch-blob path). Switched to `LL_ATON_RT_ASYNC`.
+2. `main.c` called `stai_network_init()` (per-network) but never `stai_runtime_init()` (global) — the
+   only call that enables the ATON interrupt controller and `NVIC_EnableIRQ(NPU0_IRQn)`. Without it the
+   epoch-end IRQ never reached the M55, so `__WFE()` slept forever. Added `stai_runtime_init()` before
+   the first network init.
+
+With both in place the epoch completes and the device answers `3 + 4 = 7`. (The model swap to the TCN
+was necessary for a 100%-pure-hardware mapping, but it was **not** what unblocked the epoch.)
 
 ---
 
 ## Roadmap — host-built custom edge-AI models on the NPU
 
 The original no-code intent — **build a model on the host and run it on an STM32 edge-AI device** —
-is now code-complete end to end. The transformer (Qwen2) path stays for CPU/Ollama serving (the
-Neural-ART cannot execute it); the **Conv1D/TCN path is the NPU-native one**, and it is built,
-proven 100% pure-hardware by `stedgeai analyze`, integrated into `run-23` with the full on-chip REPL,
-and coherent end to end (CPU embed table ↔ NPU conv weights).
+is **done end to end on hardware** (2026-06-27). The transformer (Qwen2) path stays for CPU/Ollama
+serving (the Neural-ART cannot execute it); the **Conv1D/TCN path is the NPU-native one** — built,
+proven 100% pure-hardware by `stedgeai analyze`, integrated into `run-23`, with the NPU epoch
+completing live and the device running the calculator **autonomously** (a host
+[unified runner](#unified-runner-hostdevice) in device mode is a thin terminal).
+The host export flow, tokenizer, grammar runner and runner UX are model-agnostic and unchanged.
 
-**Remaining:** the on-hardware confirmation — flash `run-23`, watch the TCN epoch complete on the
-Neural-ART (vs the old `model_cnn_calc` WFE stall) and the REPL answer `3 + 4` over UART. The host
-export flow, tokenizer, grammar runner and REPL are model-agnostic and unchanged — only the model
-*architecture* changed. Re-exploration of further custom models is tracked on the
-**`reverse-engineering`** branch.
+**Next:** adapt other grammars (beyond the calculator) to the STM32 NPU solution, and wire the unified
+runner into both model-creation entry points (`model_create_hf_cl.py`, `model_create_npu_tcn.py`) so
+`--mode host|device` is selectable at launch.
+
+---
+
+## Unified runner (host/device)
+
+One interactive client — [`scripts/classes/class_model_runner.py`](../scripts/classes/class_model_runner.py)
+— with two execution modes that differ by *where the CPU logic runs*. In `--mode device` the STM32N6
+is **autonomous** and the runner is a thin serial terminal (push prompt, collect output); in
+`--mode host` the runner runs `GrammarRunner` locally and queries an Ollama chat model as the grammar
+oracle.
+
+```mermaid
+%%{init: {'theme':'neutral'}}%%
+sequenceDiagram
+    participant U as You
+    participant R as Unified runner
+    participant D as STM32N6 (autonomous)
+    U->>R: 3 + 4
+    R->>D: push "3 + 4" over USART1 (thin terminal)
+    D->>D: tokenize, parse (C++ GrammarRunner on M55)
+    loop per grammar rule
+        D->>D: NPU recall — embed, conv, argmax (autoregressive)
+    end
+    D->>D: evaluate parse tree
+    D-->>R: device output (= 7)
+    R-->>U: = 7
+```
+
+**device mode** (line based, 115200 8N1): the host pushes the expression line; the FSBL computes
+everything on-chip (tokenize, parse, evaluate, NPU recall) and streams its output back — the runner
+just relays it. Per-token CPU↔NPU epoch logging on the device is off by default (`NPU_SetVerbose(1)`
+enables it). **host mode**: the host runs `GrammarRunner` and the `query_fn` calls Ollama per rule.
+
+| Run | Command |
+|---|---|
+| Device (autonomous) | `python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0` |
+| Host (Ollama) | `python3 scripts/classes/class_model_runner.py --mode host --model <ollama-model>` |
+
+> Device mode is dependency-free (pure serial — no venv needed). Host mode pulls the `classes` ML
+> chain (`gguf` etc.) — run it from the project venv (`source venv/bin/activate`).

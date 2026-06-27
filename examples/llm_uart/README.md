@@ -1,14 +1,17 @@
 # llm_uart — on-device Qwen2 inference via NPU
 
 C source files that replicate the interactive inference logic of `model_create_hf_cl.py`
-running on the STM32N6570-DK using the generated STAI network from run-22.
+running on the STM32N6570-DK. *(Legacy example — see the note below for the maintained `run-23`
+deployment; the `run-22` project it originated from has been removed.)*
 
-> **Note (newer deployment):** this folder is the original **Appli**-based C example. The
-> maintained deployment now lives in the **FSBL** of `STM32N6/AI_TO_NPU_1/run-22`
-> (`llm_fsbl.c` + a C++ port of the grammar engine: `terminal_logger.cpp`,
-> `grammar_runner.cpp`, `llm_repl.cpp`) and runs an interactive REPL over USART1. For the
-> full export→device flow, the performance findings, and the NPU-native (Conv1D) path that
-> compiles 100% on the NPU, see [`docs/STM32_NPU_DEPLOYMENT.md`](../../docs/STM32_NPU_DEPLOYMENT.md).
+> **Note (current deployment):** this folder is the original **Appli**-based C example. The
+> maintained deployment now lives in the **FSBL** of `STM32N6/AI_TO_NPU_1/run-23`, where the device
+> runs the grammar calculator **autonomously** on-chip (`main.c` `calc>` loop +
+> `FSBL/AI/grammar_runner.cpp`, `npu_query.c`); a host **unified runner**
+> (`scripts/classes/class_model_runner.py`, `--mode host|device`) is a thin terminal in device mode.
+> For the full export→device flow, the epoch-stall fix (ASYNC + `stai_runtime_init`), and the
+> NPU-native (Conv1D/TCN) path that compiles 100% on the NPU, see
+> [`docs/STM32_NPU_DEPLOYMENT.md`](../../docs/STM32_NPU_DEPLOYMENT.md).
 
 ## Files
 
