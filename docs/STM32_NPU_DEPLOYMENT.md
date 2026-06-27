@@ -16,7 +16,11 @@ cause was the runtime integration, not the model: the `--st-neural-art` network 
 blobs* on the NPU epoch controller, which requires `LL_ATON_RT_ASYNC` (polling is unsupported for epoch
 blobs) **and** the global `stai_runtime_init()` that enables the ATON interrupt controller + `NPU0_IRQn`.
 The device runs the calculator **autonomously** on-chip — tokenize, parse, evaluate and NPU recall all on
-the M55 + Neural-ART; typing `3 + 4` returns `7` from the edge device by itself. A host
+the M55 + Neural-ART; typing `3 + 4` returns `7` from the edge device by itself. **Weights are now
+deployed by flash-copy** — flashed once to XSPI2 NOR `@0x70200000` and copied to AXISRAM1 `@0x34064000`
+at boot (`.ai_weights` NOLOAD, FSBL image 244 KB), so the device computes in **both dev=1 and dev=0**
+(boot from flash, no probe); device-validated `3 + 4 = 7` and `6 * 7 = 42`. (Baking left the SRAM-VMA
+blob out of the signed dev=0 image; XIP read-in-place stalls the epoch — both dead ends.) A host
 [unified runner](#unified-runner-hostdevice) in device mode is just a thin terminal. See
 [run-23 NPU-native operational build](#run-23--npu-native-operational-build-latest-dev) and
 [Roadmap](#roadmap--host-built-custom-edge-ai-models-on-the-npu).

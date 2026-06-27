@@ -585,14 +585,19 @@ models/npu_export/
 > only the model architecture would change.
 >
 > **Latest dev (2026-06-27):** `run-23` runs the grammar calculator **autonomously on the NPU,
-> end-to-end on hardware**. The earlier epoch stall is **fixed**. Root cause was the runtime
-> integration, not the model: the `--st-neural-art` network executes as *epoch blobs* on the NPU
-> epoch controller, which requires `LL_ATON_RT_ASYNC` (polling is unsupported for epoch blobs) **and**
-> the global `stai_runtime_init()` that enables the ATON interrupt controller + `NPU0_IRQn`. Without
-> those the ATON never raised completion and the runtime slept forever in `__WFE()`. With both in
-> place the epoch completes and the device computes `3 + 4 = 7` on-chip over UART, fully autonomous.
+> end-to-end on hardware, in BOTH dev modes — including dev=0 (boot from flash, no debug probe).**
+> The `--st-neural-art` network executes as *epoch blobs* on the NPU epoch controller, which requires
+> `LL_ATON_RT_ASYNC` (polling is unsupported for epoch blobs) **and** the global `stai_runtime_init()`
+> that enables the ATON interrupt controller + `NPU0_IRQn` so completion wakes the runtime's `__WFE()`.
+> **Weights are deployed by flash-copy — not baked, not XIP:** flashed once to XSPI2 NOR `@0x70200000`
+> and copied to AXISRAM1 `@0x34064000` at boot (FSBL image **244 KB**, `.ai_weights` NOLOAD) — one
+> unified path for dev=0 and dev=1. (Baking leaves the SRAM-VMA blob out of the signed dev=0 image —
+> "assets not on the system"; XIP read-in-place **stalls** the Neural-ART epoch — both dead ends.)
+> **Device-validated:** `3 + 4 = 7` and `6 * 7 = 42` on UART, fully autonomous, in **dev=1 and dev=0**.
 > A host **unified runner** in device mode is a thin terminal — see
-> [Unified runner (host/device)](#unified-runner-hostdevice) and
+> [run-23/README.md](STM32N6/AI_TO_NPU_1/run-23/README.md),
+> [Unified runner (host/device)](#unified-runner-hostdevice),
+> [models/npu_export/NPU_HW_GENERATE.md](models/npu_export/NPU_HW_GENERATE.md), and
 > [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
 
 **End-to-end inference flow (device mode — the device is autonomous):**
