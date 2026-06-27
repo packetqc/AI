@@ -114,6 +114,8 @@ private:
     std::map<std::string, std::vector<Alt> > cache_;
 
     const std::vector<Alt>& query(const std::string& name) {
+        /* Per-call rule cache: each rule is NPU-queried once per calculation, so the
+         * CPU<->NPU dialog shows exactly one [model #N] line per grammar rule. */
         std::map<std::string, std::vector<Alt> >::iterator it = cache_.find(name);
         if (it != cache_.end()) return it->second;
         std::vector<Alt> alts;

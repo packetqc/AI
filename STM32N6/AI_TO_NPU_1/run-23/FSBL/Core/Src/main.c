@@ -356,11 +356,40 @@ int main(void)
     Cpp_STL_SmokeTest();
   }
 
-  while (1) /* STAY IN FSBL */
+  /* Interactive NPU calculator REPL over the ST-Link VCP (USART1 / huart1).
+   * Connect:  minicom -D /dev/ttyACM0 -b 115200   (or screen / picocom).
+   * Type an arithmetic expression (e.g. "12 * (3 + 4)") + Enter; the CPU parses it
+   * with the NPU-recalled grammar and prints the result. Grammar rules are NPU-queried
+   * once (the full CPU<->NPU dialog is shown on the first calc) then cached, so later
+   * prompts are instant. This is the device-mode peer of the host GrammarRunner. */
   {
-    HAL_Delay(1000);
-    BSP_LED_Toggle(0U);
-    BSP_LED_Toggle(1U);
+    stai_ptr rin = NULL, rout = NULL; stai_size rn = 0;
+    stai_network_get_inputs(g_network, &rin, &rn);
+    stai_network_get_outputs(g_network, &rout, &rn);
+
+    printf("\r\n=== NPU calculator REPL — type an expression, Enter to evaluate (Ctrl-A X in minicom to quit) ===\r\n");
+    for (;;)
+    {
+      char line[64];
+      int  n = 0;
+      printf("calc> ");
+      for (;;)   /* read one line from the VCP, with echo + backspace */
+      {
+        uint8_t ch;
+        if (HAL_UART_Receive(&huart1, &ch, 1, HAL_MAX_DELAY) != HAL_OK) continue;
+        if (ch == '\r' || ch == '\n') break;
+        if (ch == 0x08 || ch == 0x7F) { if (n > 0) { --n; printf("\b \b"); } continue; }
+        if (n < (int)sizeof(line) - 1) { line[n++] = (char)ch; HAL_UART_Transmit(&huart1, &ch, 1, 100); }
+      }
+      line[n] = '\0';
+      printf("\r\n");
+      if (n == 0) continue;
+
+      int  ok  = 0;
+      long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, line, &ok);
+      if (ok) printf("= %ld\r\n", res);
+      else    printf("parse failed for \"%s\"\r\n", line);
+    }
   }
   /* USER CODE END 2 */
 
