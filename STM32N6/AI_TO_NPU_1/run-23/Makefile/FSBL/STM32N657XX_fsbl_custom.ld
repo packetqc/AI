@@ -89,7 +89,10 @@ SECTIONS
    * can write them — the NPU RAMs AXISRAM3-6 are parked until the FSBL un-parks them, too late for
    * the loader), NPU-readable (AXI fabric), below the FSBL code. MUST precede .rodata so it captures
    * .rodata.g_network_weights_array before the generic *(.rodata*) rule. No RISAF/parking/boot-copy. */
-  .ai_weights :
+  /* NOLOAD: weights are NOT baked into the FSBL image — flashed once to XSPI2 NOR @0x70200000 and
+   * copied to this VMA (0x34064000) at boot by main.c (dev=0/dev=1 unified). Reserves the region;
+   * keeps the FSBL image small so dev=0 boots cleanly from a signed image. */
+  .ai_weights (NOLOAD) :
   {
     . = ALIGN(8);
     KEEP(*(.rodata.g_network_weights_array))

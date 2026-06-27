@@ -189,12 +189,16 @@ int main(void)
   // NPU_Config();
   g_boot_stage = 4;
 
-  /* NPU weights are memory-mapped from XSPI2 NOR @0x71000000 */
-  // BSP_XSPI_NOR_Init_t xspiInit;
-  // xspiInit.InterfaceMode = MX66UW1G45G_OPI_MODE;
-  // xspiInit.TransferRate  = MX66UW1G45G_DTR_TRANSFER;
-  // BSP_XSPI_NOR_Init(0, &xspiInit);
-  // BSP_XSPI_NOR_EnableMemoryMappedMode(0);
+  /* AI weights — dev=0/dev=1 UNIFIED load from flash to SRAM (not baked, not XIP). The HW network
+   * reads its weights from AXISRAM1 @0x34064000; they are flashed ONCE to XSPI2 NOR @0x70200000
+   * (separate from the FSBL image, so they are present at dev=0 — where the baked .ai_weights blob
+   * is NOT carried by the signed image). MX_EXTMEM_MANAGER_Init (above) set up the NOR; ensure it is
+   * memory-mapped, copy the weights into AXISRAM, then clean the M55 D-cache so the Neural-ART reads
+   * fresh weights over its AXI master. SIZE = network_weights.bin (526496 B) — re-flash 0x70200000
+   * + update this size if the model changes. */
+  (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);            /* NOR readable (idempotent) */
+  memcpy((void *)0x34064000UL, (const void *)0x70200000UL, 526496UL);  /* flash NOR -> AXISRAM1 */
+  SCB_CleanDCache_by_Addr((uint32_t *)0x34064000UL, 526496);           /* NPU sees fresh weights */
   g_boot_stage = 5;
 
   // RISAF_Config();

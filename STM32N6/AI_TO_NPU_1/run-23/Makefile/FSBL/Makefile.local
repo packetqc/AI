@@ -68,11 +68,13 @@ $(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
 endef
 $(foreach src,$(AI_SOURCES),$(eval $(call AI_BUILD_RULE,$(src))))
 
-# atonn HW weights blob (assembly .incbin -> .ai_weights section @ WEIGHTS_RAM 0x34064000)
-OBJECTS += $(BUILD_DIR)/network_weights.o
-$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/network_weights.o
-$(BUILD_DIR)/network_weights.o: ../../FSBL/AI/network_weights.S ../../FSBL/AI/network_weights.bin Makefile | $(BUILD_DIR)
-	$(CC) -c $(CFLAGS) $< -o $@
+# atonn HW weights blob: NOT baked into the FSBL image anymore — flashed once to XSPI2 NOR
+# @0x70200000 and copied to AXISRAM @0x34064000 at boot by main.c (dev=0/dev=1 unified). Keeps the
+# FSBL image small so dev=0 boots from a signed image (.ai_weights is NOLOAD — reserves the region).
+# OBJECTS += $(BUILD_DIR)/network_weights.o
+# $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/network_weights.o
+# $(BUILD_DIR)/network_weights.o: ../../FSBL/AI/network_weights.S ../../FSBL/AI/network_weights.bin Makefile | $(BUILD_DIR)
+# 	$(CC) -c $(CFLAGS) $< -o $@
 
 # --- C++ (g++, embedded subset): TerminalLogger display + grammar runner (STL) ---
 CXX      = $(PREFIX)g++
