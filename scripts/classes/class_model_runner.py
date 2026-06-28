@@ -34,6 +34,7 @@ import urllib.request
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.dirname(os.path.dirname(_HERE))            # scripts/classes -> scripts -> repo root
 _GRAMMAR_DIR = os.path.join(_REPO, "models", "grammars")  # structural; the grammar filename is user-managed
+_TRAINING_DIR = os.path.join(_REPO, "models", "training") # structural; training filename(s) declared in grammar meta
 
 
 def _logger():
@@ -45,7 +46,15 @@ def _logger():
 
 def _install_completer(words):
     try:
-        import readline
+        import readline, atexit
+        # persistent command history (restored across runner sessions) + up-arrow recall
+        histfile = os.path.join(os.path.expanduser("~"), ".model_runner_history")
+        try:
+            readline.read_history_file(histfile)
+        except OSError:
+            pass
+        readline.set_history_length(2000)
+        atexit.register(readline.write_history_file, histfile)
         def _c(text, state):
             opts = [w for w in words if w.startswith(text)]
             return opts[state] if state < len(opts) else None
@@ -102,6 +111,32 @@ def _print_grammar(grammar_file):
             sys.stdout.write(fh.read())
     except OSError as e:                                         # noqa: BLE001
         print("(grammar unavailable: %s)" % e)
+
+
+def _grammar_meta(grammar_path):
+    """Parse '# Key : value' meta directives from a grammar file (lightweight, no ML)."""
+    meta = {}
+    if not grammar_path:
+        return meta
+    try:
+        with open(grammar_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                s = line.strip()
+                if not s.startswith("#") or ":" not in s:
+                    continue
+                head, val = s[1:].split(":", 1)
+                key = head.strip()
+                if key and " " not in key:
+                    meta[key.lower()] = val.strip()
+    except OSError:
+        pass
+    return meta
+
+
+def _grammar_training(grammar_path):
+    """Training file(s) declared by the grammar's '# Training :' meta (comma-separated list)."""
+    raw = _grammar_meta(grammar_path).get("training", "")
+    return [f.strip() for f in raw.split(",") if f.strip() and f.strip().lower() != "none"]
 
 
 def ollama_query_fn(model, host=None):
@@ -214,6 +249,10 @@ def _show_config(cfg, mode, args):
             if k in keys and m != mode:
                 tag = "   (%s mode)" % m
         print("    %-13s %s%s" % (k, cfg.get(k), tag))
+    # training file(s) are derived from the grammar's '# Training :' meta — not a settable key
+    _tr = _grammar_training(os.path.join(_GRAMMAR_DIR, cfg["grammar"])) if cfg.get("grammar") else []
+    print("    %-13s %s" % ("training",
+          (", ".join(_tr) + "   (from grammar meta)") if _tr else "(none — inline/expression grammar)"))
     print("  -- builder (model_create_npu_tcn.py) --")
     for k in _BUILDER_DISPLAY:
         v = cfg.get(k)

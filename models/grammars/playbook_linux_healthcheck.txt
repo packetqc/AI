@@ -1,4 +1,5 @@
 # Linux OS healthcheck routine — procedure grammar
+# Training : train_linux_healthcheck_commands.json
 #
 # This is an EXECUTE-MODE grammar: the GrammarRunner traverses it top-down, querying
 # the model for each rule, and executes an OS command when it reaches a terminal token

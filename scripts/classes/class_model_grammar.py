@@ -247,10 +247,23 @@ class ModelGrammar:
         prose = cls.to_prose(rules, grammar_name)
         pair_count = len(ModelAssets.flatten_playbook(tree))
 
+        # Comment meta directives "# Key : value" (e.g. "# Grammar : name", "# Source : ...",
+        # "# Training : train_xxx_commands.json"). Single-word keys only, lower-cased, so prose
+        # comments with colons are ignored. Lets a grammar declare its external training file.
+        meta = {}
+        for _line in text.splitlines():
+            _s = _line.strip()
+            if not _s.startswith("#") or ":" not in _s:
+                continue
+            _head, _val = _s[1:].split(":", 1)
+            _key = _head.strip()
+            if _key and " " not in _key:
+                meta[_key.lower()] = _val.strip()
+
         _log("info",
              "Parsed '" + grammar_name + "' from " + str(path)
              + ": " + str(len(rules)) + " rule(s), " + str(pair_count) + " trained pair(s).")
-        return {"rules": rules, "tree": tree, "prose": prose, "name": grammar_name}
+        return {"rules": rules, "tree": tree, "prose": prose, "name": grammar_name, "meta": meta}
 
     # --------------------------------------------------------- model integration
 

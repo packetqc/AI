@@ -1,4 +1,5 @@
 # Python3 OS healthcheck routine — procedure grammar
+# Training : train_python_healthcheck_commands.json
 #
 # Mirror of playbook_linux_healthcheck.txt but every terminal token runs a
 # python3 -c one-liner instead of a raw shell utility.  Proves that grammar
