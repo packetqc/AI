@@ -144,6 +144,33 @@ def build_windows(tokenizer, pairs, L):
     return (torch.tensor(X), torch.tensor(Y), torch.tensor(M, dtype=torch.float32))
 
 
+def build_grammar_tokenizer(grammar_path, save_dir, vocab_size=1024):
+    """Build a grammar-SPECIFIC byte-level BPE tokenizer from the grammar's own vocabulary
+    (rule names + bodies) and save it to save_dir. The NPU model carries its own tokenizer —
+    no transformer model is reused, so a new grammar's tokens are first-class. Returns the tokenizer."""
+    from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders
+    from transformers import Qwen2TokenizerFast
+    special = "<|endoftext|>"
+    corpus = []
+    for name, body in grammar_pairs(grammar_path):
+        corpus.append(name)
+        corpus.append(body)
+    if not corpus:
+        corpus = [special]
+    raw = Tokenizer(models.BPE(unk_token=None))
+    raw.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False, use_regex=False)
+    raw.decoder = decoders.ByteLevel()
+    raw.train_from_iterator(corpus, trainer=trainers.BpeTrainer(
+        vocab_size=vocab_size, special_tokens=[special],
+        initial_alphabet=pre_tokenizers.ByteLevel.alphabet()))
+    tok = Qwen2TokenizerFast(tokenizer_object=raw)
+    tok.add_special_tokens({"bos_token": special, "eos_token": special,
+                            "pad_token": special, "unk_token": special})
+    os.makedirs(save_dir, exist_ok=True)
+    tok.save_pretrained(save_dir)
+    return tok
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Create (train) or re-export an NPU-native Conv1D/TCN grammar model. "
@@ -211,7 +238,13 @@ def main():
     dev = "cuda" if torch.cuda.is_available() else "cpu"
     log("TCN", f"name={name} v{version}  device={dev}  tokenizer={tokenizer}")
 
-    tok = AutoTokenizer.from_pretrained(tokenizer)
+    if os.path.isdir(tokenizer):
+        log("TCN", "reusing tokenizer: %s" % tokenizer)
+        tok = AutoTokenizer.from_pretrained(tokenizer)
+    else:
+        log("TCN", "tokenizer '%s' not found — building a grammar-specific NPU tokenizer" % tokenizer)
+        tok = build_grammar_tokenizer(grammar, out_dir)
+        log("TCN", "built grammar tokenizer (vocab=%d) saved with the model: %s" % (len(tok), out_dir))
     vocab = len(tok)
     pairs = grammar_pairs(grammar)
     X, Y, Mask = build_windows(tok, pairs, seq_len)
