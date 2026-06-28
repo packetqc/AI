@@ -261,6 +261,7 @@ def prompt_setup(config=None, logger=None):
     mode = (_ask("mode", options=["device", "host"], default="device") or "device").lower()
     if mode not in ("device", "host"):
         mode = "device"
+    cfg["mode"] = mode
     g = _ask("grammar", options=_list_grammar_files(), default=cfg.get("grammar"))
     if g:
         cfg["grammar"] = g
@@ -268,6 +269,14 @@ def prompt_setup(config=None, logger=None):
         m = _ask("model (Ollama)", options=(_ollama_models() or None), default=cfg.get("model"))
         if m:
             cfg["model"] = m
+    else:   # device — prompt for the serial port (auto-detected list as assistance)
+        ports = _list_serial_ports()
+        dflt = cfg.get("port")
+        if ports and dflt not in ports:
+            dflt = ports[0]
+        p = _ask("port (device serial)", options=(ports or None), default=dflt)
+        if p:
+            cfg["port"] = p
     n = _ask("name", default=cfg.get("name"))
     if n:
         cfg["name"] = n
