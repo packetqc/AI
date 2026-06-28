@@ -19,5 +19,11 @@
   "target": "stm32n6",
   "net_name": "network",
   "c_api": "st-ai",
-  "opset": 17
+  "opset": 17,
+
+  "sec_gguf": null,
+  "sec_out": null,
+  "sec_registry": null,
+  "sec_assets": null,
+  "sec_dynamic": false
 }

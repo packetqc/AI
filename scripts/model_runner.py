@@ -75,6 +75,15 @@ def main(argv=None):
     bld.add_argument("--c-api", default=None, dest="c_api", help="stedgeai C API")
     bld.add_argument("--opset", type=int, default=None, help="ONNX opset for the exported body")
 
+    # security config — used by /security (model_security_re.py)
+    sec = ap.add_argument_group("security (model_security_re.py)")
+    sec.add_argument("--sec-gguf", default=None, dest="sec_gguf", help="security target: .gguf artifact path")
+    sec.add_argument("--sec-out", default=None, dest="sec_out", help="security report output dir")
+    sec.add_argument("--sec-registry", default=None, dest="sec_registry", help="approved-models registry (integrity)")
+    sec.add_argument("--sec-assets", default=None, dest="sec_assets", help="assets dir fallback (integrity)")
+    sec.add_argument("--sec-dynamic", action="store_true", default=None, dest="sec_dynamic",
+                     help="enable dynamic probing by default for /security")
+
     a = ap.parse_args(argv)
     # only explicitly-set flags enter the config; everything else uses the library default
     config = {k: v for k, v in vars(a).items() if k != "mode" and v is not None}

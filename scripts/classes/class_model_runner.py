@@ -134,7 +134,8 @@ _ARCH_KEYS = ("embed_dim", "seq_len", "kernel")           # value lives in the w
 _BUILDER_OPS_KEYS = ("name", "version", "tokenizer", "epochs", "lr", "out_dir",
                      "npu_dir", "stedgeai", "target", "net_name", "c_api", "opset")
 _BUILDER_DISPLAY = _BUILDER_OPS_KEYS + _ARCH_KEYS
-_ALL_KEYS = _RUNTIME_KEYS + _BUILDER_OPS_KEYS + _ARCH_KEYS
+_SECURITY_KEYS = ("sec_gguf", "sec_out", "sec_registry", "sec_assets", "sec_dynamic")
+_ALL_KEYS = _RUNTIME_KEYS + _BUILDER_OPS_KEYS + _ARCH_KEYS + _SECURITY_KEYS
 
 
 def _load_defaults():
@@ -150,8 +151,13 @@ def _load_defaults():
 
 DEFAULT_CONFIG = _load_defaults()
 
+def _as_bool(s):
+    return str(s).strip().lower() in ("1", "true", "yes", "on")
+
+
 _CFG_TYPES = {"baud": int, "boot_timeout": int, "embed_dim": int, "seq_len": int,
-              "kernel": int, "epochs": int, "lr": float, "opset": int}
+              "kernel": int, "epochs": int, "lr": float, "opset": int,
+              "sec_dynamic": _as_bool}
 _MODE_KEYS = {"device": ("port", "baud", "boot_timeout"), "host": ("model", "host")}
 _BUILDER_FLAGS = {
     "name": "--name", "version": "--version", "tokenizer": "--tokenizer",
@@ -218,6 +224,10 @@ def _show_config(cfg, mode, args):
         else:
             shown = "(from config file)"
         print("    %-13s %s" % (k, shown))
+    print("  -- security (model_security_re.py) --")
+    for k in _SECURITY_KEYS:
+        v = cfg.get(k)
+        print("    %-13s %s" % (k, v if v is not None else "(unset)"))
 
 
 def _set_config(log, cfg, args):
@@ -278,13 +288,29 @@ def _run_security(log, cfg, args):
         subcmd = args.pop(0).lower()
     else:
         subcmd = "analyze"
+
+    # acquisition target: explicit passthrough wins; else config sec_gguf, else Ollama model
     if "--ollama" not in args and "--gguf" not in args:
-        if cfg.get("model"):
-            args = ["--ollama", cfg["model"]] + args
+        if cfg.get("sec_gguf"):
+            args = ["--gguf", str(cfg["sec_gguf"])] + args
+        elif cfg.get("model"):
+            args = ["--ollama", str(cfg["model"])] + args
         else:
             log.log("warning", "SECURITY",
-                    "no target — set the Ollama model (/set model <name>) or pass --gguf <path> / --ollama <name>")
+                    "no target — /set model <name> (Ollama) or /set sec_gguf <path>, or pass --ollama/--gguf")
             return
+
+    # config-managed options, forwarded only where valid for the subcommand
+    if cfg.get("sec_out") and "--out" not in args:
+        args += ["--out", str(cfg["sec_out"])]
+    if cfg.get("sec_dynamic") and subcmd != "threat" and "--dynamic" not in args:
+        args += ["--dynamic"]
+    if subcmd in ("analyze", "integrity"):
+        if cfg.get("sec_registry") and "--registry" not in args:
+            args += ["--registry", str(cfg["sec_registry"])]
+        if cfg.get("sec_assets") and "--assets" not in args:
+            args += ["--assets", str(cfg["sec_assets"])]
+
     argv = [sys.executable, _SECURITY_SCRIPT, subcmd] + args
     log.log("info", "SECURITY", "%s: %s" % (subcmd, " ".join(argv[1:])))
     try:
