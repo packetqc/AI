@@ -11,6 +11,7 @@ The result is **one grammar conceptualization, two device paths** — the Qwen2 
 # TOC
 
 - [Install & Info](#install--info)
+- [Runner](#runner)
 - [Host Model to CPU Device](#host-model-to-cpu-device)
 - [Host Model to NPU Device](#host-model-to-npu-device)
 - [Security](#security)
@@ -179,6 +180,113 @@ ollama serve &
 
 ---
 
+# Runner
+
+The **unified runner** [`scripts/model_runner.py`](scripts/model_runner.py) (a thin CLI over
+[`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py)) is the single
+management hub for the whole solution: it runs the grammar model (on the host or on the autonomous
+device) and, from the same REPL, **creates/exports** the NPU model (`/create` `/export`) and runs
+**security analysis** (`/security`) — all driven by one config file.
+
+## Configuration — single source of truth
+
+All runner/CLI-manageable defaults live in one file:
+[`scripts/model_runner_config.json`](scripts/model_runner_config.json). The scripts themselves hold
+**only** structural folders, naming/call logic, and the model **architecture**
+(`embed_dim` / `seq_len` / `kernel`) — **no user values are hardcoded**. Path values are stored as
+*atoms* (a grammar filename, a tokenizer name) and composed with the structural folders inside the
+scripts (e.g. `models/grammars/` + `<grammar atom>`).
+
+Three equivalent ways to manage config (same keys everywhere):
+
+| Where | How |
+|---|---|
+| Config file | edit `scripts/model_runner_config.json` (the defaults) |
+| CLI flags | `--grammar`, `--name`, `--epochs`, `--sec-out`, … at launch |
+| Live in the REPL | `/set <key> <value>`, `/get <key>`, `/config` |
+
+```
+>>> /config                 # runtime + builder + security config
+>>> /set epochs 800
+>>> /set model my-ollama-model
+>>> /set sec_dynamic true
+```
+
+Architecture keys have no value in the config file — their default lives in the worker
+(`model_create_npu_tcn.py`); `/set` still overrides them.
+
+## Modes
+
+| Mode | Launch | What runs where |
+|---|---|---|
+| **host** | `--mode host --model <ollama>` | the host runs `GrammarRunner`; Ollama is the grammar oracle (needs the venv) |
+| **device** | `--mode device --port <port>` | thin serial terminal to the **autonomous** STM32N6 (dependency-free, pure serial) |
+
+## Commands
+
+Every command is available in both modes (mode-specific ones are gated):
+
+| Input | Description |
+|---|---|
+| `<expression>` | device: pushed to the autonomous device; host: parsed + evaluated locally |
+| `/set <k> <v>` | set a config value (runtime / builder / security) |
+| `/get [k]` · `/config` | show one / all config values |
+| `/grammar` | print the active BNF grammar |
+| `/create` | build: train + export the NPU-native TCN — see [Host Model to NPU Device](#host-model-to-npu-device) |
+| `/export` | build: re-export only (`--export-only`) |
+| `/security [sub]` | blackbox model analysis — see [Security](#security) (`analyze`/`reconstruct`/`threat`/`integrity`) |
+| `/rules` | *(host only)* recall every grammar rule via the Ollama oracle |
+| `/mode` | show the active mode + key config |
+| `/?` · `/bye` | help · quit (in device mode the device keeps running standalone) |
+
+## Running
+
+```bash
+# device mode — thin terminal to the autonomous STM32N6 (run-23 FSBL loaded/flashed)
+python3 scripts/model_runner.py --mode device --port /dev/ttyACM0
+
+# host mode — GrammarRunner local + Ollama oracle (from the project venv)
+source venv/bin/activate
+python3 scripts/model_runner.py --mode host --model model_calculator_test_npu
+```
+
+```mermaid
+%%{init: {'theme':'neutral'}}%%
+flowchart LR
+    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner<br/>scripts/model_runner.py"]
+    CLI -->|"--mode device"| DEV["STM32N6 FSBL (run-23) — AUTONOMOUS<br/>tokenize · parse · evaluate · NPU recall"]
+    CLI -->|"--mode host"| HOST["GrammarRunner on host"]
+    HOST -->|"query_fn(rule)"| OLL["Ollama chat model"]
+    DEV -->|"device output (= 7)"| CLI
+    HOST -->|"= 7"| CLI
+    CLI --> RES["Result: 7"]
+```
+
+## Manage models & security from the runner
+
+From the same REPL, with config supplied by `/set` (or the config file / CLI):
+
+```
+>>> /set name model_calc_tcn_v2
+>>> /set epochs 800
+>>> /create                       # → model_create_npu_tcn.py --name model_calc_tcn_v2 --epochs 800 …
+>>> /export                       # re-export only (--export-only)
+
+>>> /set model model_calculator_test_npu
+>>> /security analyze --dynamic   # → model_security_re.py analyze --ollama … --dynamic
+```
+
+`/create`/`/export` build the NPU model (full pipeline in [Host Model to NPU Device](#host-model-to-npu-device));
+`/security` runs the blackbox analyzer (detail in [Security](#security)). Both run as subprocesses, so
+**device mode stays dependency-free**. Security options are config-managed too
+(`sec_gguf`/`sec_out`/`sec_registry`/`sec_assets`/`sec_dynamic`), forwarded subcommand-aware.
+
+> The **host model** itself (the Qwen2 grammar model and its interactive training CLI,
+> `model_create_hf_cl.py`) is documented under [Host Model to CPU Device](#host-model-to-cpu-device);
+> the unified runner above is the operational hub that drives, builds and audits models.
+
+---
+
 # Host Model to CPU Device
 
 **Path: Qwen2 transformer → STM32N6570-DK Cortex-M55 CPU.** This is the baseline path: you build and
@@ -305,8 +413,8 @@ and **slash commands**:
 | `TAB` | Multi-level grammar tree completion; live model query fallback |
 
 > **Note** — this is the host-model CLI (`model_create_hf_cl.py`). To run the same grammar against
-> the autonomous NPU device, use the unified runner in device mode — see
-> [Run with the unified runner (device mode)](#run-with-the-unified-runner-device-mode).
+> the autonomous NPU device, use the unified runner in device mode — see [Runner](#runner)
+> (§ [Modes](#modes), § [Running](#running)).
 
 ### Tab completion
 
@@ -618,48 +726,17 @@ User types: pyhealthcheck py_system_status py_check_uptime
 
 The playbook is always authoritative: even if the tiny model mis-answers a rule query, the stored BNF body replaces the response. Left-recursive grammars (like the calculator's `expr ::= expr "+" term | term`) are handled via iterative extension.
 
-## Run with the unified runner (host mode)
+## Run it (host mode)
 
-[`scripts/model_runner.py`](scripts/model_runner.py) is the **official runner entry point** — a thin
-CLI over the runner library [`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py).
-On the CPU path you use **`--mode host`**: the host runs `GrammarRunner` locally and queries an Ollama
-chat model as the grammar oracle, parsing + evaluating on the host. *(The same runner drives the NPU
-device in `--mode device` — see [Host Model to NPU Device](#host-model-to-npu-device).)*
-
-```mermaid
-%%{init: {'theme':'neutral'}}%%
-flowchart LR
-    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner --mode host<br/>scripts/model_runner.py"]
-    CLI --> HOST["GrammarRunner on host<br/>tokenize · parse · evaluate"]
-    HOST -->|"query_fn(rule)"| OLL["Ollama chat model"]
-    HOST -->|"= 7"| CLI
-    CLI --> RES["Result: 7"]
-```
-
-**Run it** (host mode pulls in the ML chain — use the project venv):
+Running the trained host model is the unified runner's **host mode** — full details under
+[Runner](#runner) (§ [Modes](#modes), § [Running](#running), § [Commands](#commands)):
 
 ```bash
 source venv/bin/activate
-python3 scripts/model_runner.py --mode host --model model_calculator_test_npu
+python3 scripts/model_runner.py --mode host --model <ollama-model>
 ```
 
-```
->>> 3 + 4
- ... host mode: GrammarRunner queries the Ollama oracle per rule ...
-= 7
->>> /grammar     # print the BNF grammar
->>> /mode        # show the active mode
->>> /bye
-```
-
-| Command | Description |
-|---|---|
-| `<expression>` | parsed + evaluated locally by `GrammarRunner` |
-| `/grammar` | print the BNF grammar |
-| `/mode` | show the active mode (host model) |
-| `/rules` | recall every grammar rule via the Ollama oracle |
-| `/?` | help |
-| `/bye` | quit the runner |
+The host runs `GrammarRunner` and queries Ollama as the grammar oracle, parsing + evaluating locally.
 
 ## Export & deploy to the STM32N6570-DK CPU
 
@@ -774,46 +851,17 @@ Full end-to-end walkthrough: [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLO
 > [models/npu_export/NPU_HW_GENERATE.md](models/npu_export/NPU_HW_GENERATE.md), and
 > [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
 
-## Run with the unified runner (device mode)
+## Run it (device mode)
 
-[`scripts/model_runner.py`](scripts/model_runner.py) — the same official runner entry point used on the
-CPU path — drives the device with **`--mode device`**. Here the STM32N6 is **autonomous**: the runner is
-a thin serial terminal that pushes the prompt over the ST-Link VCP and collects the output; the device's
-own C++ `GrammarRunner` tokenizes, parses, evaluates and drives its Neural-ART NPU entirely on-chip.
-*(Why it matters: it proves the edge device does the whole job by itself — no transformer, no host, no
-network.)*
-
-```mermaid
-%%{init: {'theme':'neutral'}}%%
-flowchart LR
-    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner --mode device<br/>scripts/model_runner.py"]
-    CLI -->|"push over UART"| DEV["STM32N6 FSBL (run-23) — AUTONOMOUS<br/>C++ GrammarRunner on the M55:<br/>tokenize · parse · evaluate<br/>Neural-ART NPU rule recall"]
-    DEV -->|"device output (= 7)"| CLI
-    CLI --> RES["Result: 7"]
-```
-
-**Run it** (device mode is dependency-free — pure serial, no venv needed; run-23 FSBL loaded/flashed):
+Driving the autonomous device is the unified runner's **device mode** — full details under
+[Runner](#runner) (§ [Modes](#modes), § [Running](#running)):
 
 ```bash
 python3 scripts/model_runner.py --mode device --port /dev/ttyACM0
 ```
 
-```
->>> 3 + 4
- ... device mode: the device's own [model #N] dialog, relayed over UART ...
-= 7
->>> /grammar     # print the BNF grammar
->>> /mode        # show the active mode
->>> /bye
-```
-
-| Command | Description |
-|---|---|
-| `<expression>` | pushed to the autonomous device over UART; the device computes and returns the result |
-| `/grammar` | print the BNF grammar |
-| `/mode` | show the active mode (device port) |
-| `/?` | help |
-| `/bye` | quit the runner (the device keeps running standalone) |
+The STM32N6 is autonomous; the runner is a thin serial terminal (dependency-free, pure serial) that
+pushes the prompt over the ST-Link VCP and prints what the device computes on-chip.
 
 ## On-device autonomous
 
@@ -845,6 +893,12 @@ the Ollama API. It generalises across GGUF model types (**qwen2 / llama / mistra
 **Blackbox trust boundary (hard rule).** Analysis uses only (a) the model artifact and (b) live
 query access. It never reads the client/app source, the training files, or the HF source — a real
 analyst auditing an unknown model has only the model.
+
+> **Driven from the runner.** `/security [analyze|reconstruct|threat|integrity]` in the unified
+> [Runner](#runner) invokes this tool. The target and options are config-managed —
+> `model` / `sec_gguf` (target), `sec_out`, `sec_registry`, `sec_assets`, `sec_dynamic` — via `/set`
+> or [`scripts/model_runner_config.json`](scripts/model_runner_config.json), forwarded
+> subcommand-aware. The CLI below is the underlying interface.
 
 ## Two tracks
 
