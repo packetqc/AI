@@ -226,7 +226,7 @@ cd STM32N6/AI_TO_NPU_1/run-23/Makefile/FSBL && make -f Makefile.local all
 
 # Drive it from the host (the port is the ST-Link VCP, 115200 8N1):
 source venv/bin/activate
-python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0
+python3 scripts/model_runner.py --mode device --port /dev/ttyACM0
 #   >>> 3 + 4      → Result: 7
 ```
 
@@ -358,7 +358,7 @@ The CPU does the int8 embedding lookup before feeding the NPU, so the embedding 
 | Model | Conv1D/TCN, `stedgeai analyze` 100% pure hardware, clean `atonn` (no segfault) |
 | CPU embed table | ✅ coherent with the TCN (`emit_npu_embed_header.py`) |
 | NPU epoch on hardware | ✅ **completes** — `3 + 4 = 7` validated live (load-and-run, UART) |
-| Host integration | ✅ unified runner — device mode = thin terminal to the autonomous device; host mode = local GrammarRunner + Ollama (`class_model_runner.py`) |
+| Host integration | ✅ unified runner — device mode = thin terminal to the autonomous device; host mode = local GrammarRunner + Ollama (`scripts/model_runner.py`, over `class_model_runner.py`) |
 
 **On the earlier WFE stall (root cause, fixed 2026-06-27):** the engine stayed in
 `__ll_aton_stai_run_synchonously` `__WFE()`, never woken. The cause was the **runtime integration,
@@ -395,7 +395,8 @@ runner into both model-creation entry points (`model_create_hf_cl.py`, `model_cr
 
 ## Unified runner (host/device)
 
-One interactive client — [`scripts/classes/class_model_runner.py`](../scripts/classes/class_model_runner.py)
+One interactive client — official entry point [`scripts/model_runner.py`](../scripts/model_runner.py),
+a thin CLI over the runner library [`scripts/classes/class_model_runner.py`](../scripts/classes/class_model_runner.py)
 — with two execution modes that differ by *where the CPU logic runs*. In `--mode device` the STM32N6
 is **autonomous** and the runner is a thin serial terminal (push prompt, collect output); in
 `--mode host` the runner runs `GrammarRunner` locally and queries an Ollama chat model as the grammar
@@ -425,8 +426,8 @@ enables it). **host mode**: the host runs `GrammarRunner` and the `query_fn` cal
 
 | Run | Command |
 |---|---|
-| Device (autonomous) | `python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0` |
-| Host (Ollama) | `python3 scripts/classes/class_model_runner.py --mode host --model <ollama-model>` |
+| Device (autonomous) | `python3 scripts/model_runner.py --mode device --port /dev/ttyACM0` |
+| Host (Ollama) | `python3 scripts/model_runner.py --mode host --model <ollama-model>` |
 
 > Device mode is dependency-free (pure serial — no venv needed). Host mode pulls the `classes` ML
 > chain (`gguf` etc.) — run it from the project venv (`source venv/bin/activate`).

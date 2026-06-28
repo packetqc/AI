@@ -54,13 +54,14 @@ scripts/model_generation/
   export_tokens.py              # Emit network_tokens.c/.h — device decode table + rule prompts + EOS
   model_tools_grammar.py        # Grammar tool: converts external sources → grammar files
 
+scripts/model_runner.py         # Official unified runner entry point (CLI over class_model_runner)
 scripts/model_security_re.py    # Model Security RE CLI: analyze | reconstruct | threat | integrity
 scripts/model_security/         # Analyst toolkit package (acquire / reconstruct / threat / integrity / report)
 
 scripts/classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
   class_model_grammar.py        # ModelGrammar: BNF/EBNF parser  |  GrammarRunner: execution engine
-  class_model_runner.py         # Unified runner: host (Ollama) | device (NPU-over-serial) backends
+  class_model_runner.py         # Unified runner library: host (Ollama) | device (NPU-over-serial) — backs scripts/model_runner.py
   class_model_security.py       # Deprecated shim → re-exports scripts/model_security/*
   class_terminal_logs.py        # Colour terminal logger
   class_tools_grammar.py        # Grammar converters: Mermaid / Markdown / Text / PDF / Web / AI
@@ -647,15 +648,16 @@ host (unified runner):  collect + print the device's output
 ```
 
 **On-device:** the Conv1D/TCN model + a C++ `GrammarRunner` run **autonomously** in the FSBL of
-`STM32N6/AI_TO_NPU_1/run-23` over the ST-Link VCP (`/dev/ttyACM0`); the host
-[`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py) in device mode is a
+`STM32N6/AI_TO_NPU_1/run-23` over the ST-Link VCP (`/dev/ttyACM0`); the host runner
+[`scripts/model_runner.py`](scripts/model_runner.py) in device mode is a
 thin terminal. See [Unified runner (host/device)](#unified-runner-hostdevice) below and
 [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) § *On-device deployment*.
 
 ## Unified runner (host/device)
 
-[`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py) is **one
-interactive client with two execution modes** that differ by *where the CPU logic runs*:
+[`scripts/model_runner.py`](scripts/model_runner.py) is the **official runner entry point** — a thin
+CLI over the runner library [`scripts/classes/class_model_runner.py`](scripts/classes/class_model_runner.py).
+It is **one interactive client with two execution modes** that differ by *where the CPU logic runs*:
 
 - **`--mode device`** — the STM32N6 is **autonomous**. The runner is a thin serial terminal: it
   pushes the prompt and collects the output; the device's own C++ `GrammarRunner` tokenizes, parses,
@@ -667,7 +669,7 @@ interactive client with two execution modes** that differ by *where the CPU logi
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
 flowchart LR
-    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner<br/>class_model_runner.py"]
+    U["You<br/>&gt;&gt;&gt; 3 + 4"] --> CLI["Unified runner<br/>scripts/model_runner.py"]
     CLI -->|"--mode device"| DEV["STM32N6 FSBL (run-23) — AUTONOMOUS<br/>C++ GrammarRunner on the M55:<br/>tokenize · parse · evaluate<br/>Neural-ART NPU rule recall"]
     CLI -->|"--mode host"| HOST["GrammarRunner on host<br/>tokenize · parse · evaluate"]
     HOST -->|"query_fn(rule)"| OLL["Ollama chat model"]
@@ -682,11 +684,11 @@ Device mode is dependency-free (pure serial — no venv needed); host mode pulls
 
 ```bash
 # device mode — thin terminal to the autonomous STM32N6 (run-23 FSBL loaded/flashed)
-python3 scripts/classes/class_model_runner.py --mode device --port /dev/ttyACM0
+python3 scripts/model_runner.py --mode device --port /dev/ttyACM0
 
 # host mode — GrammarRunner local + Ollama oracle (from the project venv)
 source venv/bin/activate
-python3 scripts/classes/class_model_runner.py --mode host --model model_calculator_test_npu
+python3 scripts/model_runner.py --mode host --model model_calculator_test_npu
 ```
 
 ```
