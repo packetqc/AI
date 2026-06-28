@@ -513,7 +513,7 @@ def _run_builder(log, cfg, export_only=False):
         argv.append("--export-only")
     log.log("info", "BUILD", ("export-only" if export_only else "create+export") + ": " + " ".join(argv[1:]))
     try:
-        rc = subprocess.run(argv).returncode
+        rc = subprocess.run(argv, cwd=_REPO).returncode   # repo root: relative model paths resolve
         log.log("ok" if rc == 0 else "error", "BUILD", "builder exit code %d" % rc)
     except Exception as e:                                       # noqa: BLE001
         log.log("error", "BUILD", "failed to run builder: %s" % e)
@@ -562,7 +562,7 @@ def _run_security(log, cfg, args):
     argv = [sys.executable, _SECURITY_SCRIPT, subcmd] + args
     log.log("info", "SECURITY", "%s: %s" % (subcmd, " ".join(argv[1:])))
     try:
-        rc = subprocess.run(argv).returncode
+        rc = subprocess.run(argv, cwd=_REPO).returncode   # repo root: relative model paths resolve
         log.log("ok" if rc == 0 else "error", "SECURITY", "model_security_re exit code %d" % rc)
     except Exception as e:                                       # noqa: BLE001
         log.log("error", "SECURITY", "failed to run model_security_re: %s" % e)
