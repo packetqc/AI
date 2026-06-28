@@ -52,26 +52,108 @@ def _list_grammar_files():
         return []
 
 
-def _complete_candidates(buf, commands, config_keys, security_subcmds, grammar_names):
+def _dir_names(base):
+    """Immediate sub-directory names under base (bare names — for name atoms)."""
+    try:
+        return sorted(d for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
+    except OSError:
+        return []
+
+
+def _rel_dirs(base):
+    """Immediate sub-directories under base as repo-relative paths (folder-list assistance)."""
+    try:
+        return sorted(os.path.relpath(os.path.join(base, d), _REPO)
+                      for d in os.listdir(base) if os.path.isdir(os.path.join(base, d)))
+    except OSError:
+        return []
+
+
+def _rel_files(base, suffix):
+    import glob
+    return sorted(os.path.relpath(p, _REPO)
+                  for p in glob.glob(os.path.join(base, "**", "*" + suffix), recursive=True)
+                  if os.path.isfile(p))
+
+
+def _top_files(base, suffix):
+    """Top-level files of a type directly under base (repo-relative) — narrow assistance."""
+    try:
+        return sorted(os.path.relpath(os.path.join(base, f), _REPO)
+                      for f in os.listdir(base)
+                      if f.endswith(suffix) and os.path.isfile(os.path.join(base, f)))
+    except OSError:
+        return []
+
+
+def _cur(cfg, key):
+    """Current value of a config key as a single-item hint list (for free values)."""
+    v = (cfg or {}).get(key)
+    return [str(v)] if v not in (None, "") else []
+
+
+def _value_candidates(key, cfg=None):
+    """Tab assistance for a config VALUE by key — always a file list, folder list, or known list;
+    free numeric/text keys fall back to the current value as a hint, so every key assists."""
+    key = key.lower()
+    if key == "mode":
+        return ["device", "host"]
+    if key == "sec_dynamic":
+        return ["true", "false"]
+    if key == "grammar":
+        return _list_grammar_files()
+    if key == "model":
+        return _ollama_models() or _cur(cfg, key)
+    if key == "name":
+        return _dir_names(os.path.join(_REPO, "models", "generated", "convolutional")) or _cur(cfg, key)
+    if key == "tokenizer":
+        return _dir_names(os.path.join(_REPO, "models", "generated", "transformer")) or _cur(cfg, key)
+    if key == "port":
+        return _list_serial_ports() or _cur(cfg, key)
+    if key == "target":
+        return ["stm32n6"]
+    if key == "net_name":
+        return ["network"]
+    if key == "c_api":
+        return ["st-ai"]
+    if key == "host":
+        return ["http://localhost:11434"]
+    if key == "sec_gguf":
+        return _rel_files(os.path.join(_REPO, "models"), ".gguf") or _cur(cfg, key)
+    if key == "sec_registry":
+        return _top_files(os.path.join(_REPO, "models"), ".json") or _cur(cfg, key)
+    if key == "sec_out":
+        return _rel_dirs(os.path.join(_REPO, "models", "forensics")) or _cur(cfg, key)
+    if key == "out_dir":
+        return _rel_dirs(os.path.join(_REPO, "models", "generated", "convolutional")) or _cur(cfg, key)
+    if key == "npu_dir":
+        return _rel_dirs(os.path.join(_REPO, "models", "npu_export")) or _cur(cfg, key)
+    if key == "sec_assets":
+        return _rel_dirs(os.path.join(_REPO, "models")) or _cur(cfg, key)
+    # free numeric/text values (version, epochs, lr, opset, baud, boot_timeout, embed_dim, ...)
+    return _cur(cfg, key)
+
+
+def _complete_candidates(buf, commands, cfg, security_subcmds, grammar_names):
     """Context-aware Tab candidates from the current line buffer."""
     toks = buf.split()
     first_word = (not toks) or (len(toks) == 1 and not buf.endswith(" "))
     if first_word:
         return list(commands) + list(grammar_names)
     head = toks[0].lower()
+    if head == "/grammar":
+        return _list_grammar_files()
     if head in ("/set", "/get"):
-        # /set grammar <TAB> -> grammar filenames; otherwise complete the config key
-        if len(toks) >= 2 and toks[1].lower() == "grammar" and (len(toks) > 2 or buf.endswith(" ")):
-            return _list_grammar_files()
-        if len(toks) >= 2 and toks[1].lower() == "mode" and (len(toks) > 2 or buf.endswith(" ")):
-            return ["device", "host"]
-        return list(config_keys)
+        # /set <key> <value> : per-key value assistance; otherwise the config key list
+        if head == "/set" and len(toks) >= 2 and (len(toks) > 2 or buf.endswith(" ")):
+            return _value_candidates(toks[1], cfg)
+        return sorted(cfg)
     if head == "/security":
         return list(security_subcmds)
     return []
 
 
-def _install_completer(commands, config_keys=(), security_subcmds=(), grammar_names=()):
+def _install_completer(commands, cfg=None, security_subcmds=(), grammar_names=()):
     """In-depth Tab completion + persistent command history.
        first token -> commands (+ grammar rule names in host mode); /set·/get -> config keys
        (grammar filenames after 'grammar'); /security -> subcommands."""
@@ -88,7 +170,7 @@ def _install_completer(commands, config_keys=(), security_subcmds=(), grammar_na
 
         def _c(text, state):
             cands = _complete_candidates(readline.get_line_buffer(), commands,
-                                         config_keys, security_subcmds, grammar_names)
+                                         cfg or {}, security_subcmds, grammar_names)
             opts = [c for c in cands if c.startswith(text)]
             return opts[state] if state < len(opts) else None
 
@@ -223,6 +305,32 @@ def _grammar_training(grammar_path):
     """Training file(s) declared by the grammar's '# Training :' meta (comma-separated list)."""
     raw = _grammar_meta(grammar_path).get("training", "")
     return [f.strip() for f in raw.split(",") if f.strip() and f.strip().lower() != "none"]
+
+
+def _load_command_vocab(grammar_path, log):
+    """Auto-load the command-vocabulary (token -> command) from the training file(s) the grammar
+    declares in its meta, so procedure-grammar tokens are executable in host mode. Atoms compose
+    with the structural TRAINING_DIR; returns a commands dict for GrammarRunner."""
+    cmds = {}
+    for f in _grammar_training(grammar_path):
+        p = f if (os.path.isabs(f) or os.sep in f) else os.path.join(_TRAINING_DIR, f)
+        if not os.path.isfile(p):
+            log.log("warning", "RUNNER", "grammar training file not found: %s" % p)
+            continue
+        try:
+            with open(p, "r", encoding="utf-8") as fh:
+                obj = json.load(fh)
+        except (OSError, ValueError) as e:
+            log.log("warning", "RUNNER", "could not read training file %s: %s" % (p, e))
+            continue
+        if isinstance(obj, dict) and obj.get("_type") == "command_vocabulary":
+            n = 0
+            for k, v in obj.items():
+                if k == "_exec" or (not k.startswith("_") and isinstance(v, str)):
+                    cmds[k] = v
+                    n += 0 if k.startswith("_") else 1
+            log.log("info", "RUNNER", "auto-loaded training '%s' (%d token(s))" % (os.path.basename(p), n))
+    return cmds
 
 
 def ollama_query_fn(model, host=None):
@@ -507,10 +615,11 @@ def _setup_backend(mode, cfg, log):
     rules = list(playbook.keys())
     start_rule = rules[0] if rules else "expr"
     qfn = ollama_query_fn(cfg["model"], cfg.get("host"))
+    commands = _load_command_vocab(grammar_file, log)   # auto-loaded from the grammar meta
 
     def make_runner():
         return GrammarRunner(grammar_name=gname, query_fn=qfn,
-                             fallback_playbook=playbook, logger=log)
+                             fallback_playbook=playbook, logger=log, commands=commands)
 
     host_ctx = {"gname": gname, "playbook": playbook, "rules": rules,
                 "start_rule": start_rule, "make_runner": make_runner,
@@ -526,7 +635,7 @@ def _repl(current_mode, cfg, device, host_ctx, log):
     if host_ctx:
         base = base + ["/rules"]
     _install_completer(base,
-                       config_keys=sorted(cfg.keys()),
+                       cfg=cfg,
                        security_subcmds=list(_SECURITY_SUBCMDS),
                        grammar_names=(host_ctx["rules"] if host_ctx else []))
     grammar_file = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
@@ -570,7 +679,16 @@ def _repl(current_mode, cfg, device, host_ctx, log):
                 return cfg["mode"]
             continue
         if cmd == "/grammar":
-            if host_ctx:
+            if len(parts) >= 2 and parts[1].strip():       # /grammar <file> -> switch grammar
+                cfg["grammar"] = parts[1].strip()
+                log.log("ok", "SYSTEM", "grammar set to %s" % cfg["grammar"])
+                _tr = _grammar_training(os.path.join(_GRAMMAR_DIR, cfg["grammar"]))
+                log.log("info", "SYSTEM", "training (from grammar meta): "
+                        + (", ".join(_tr) if _tr else "none"))
+                if host_ctx:        # host backend depends on the grammar + its training -> reload
+                    return current_mode
+                continue
+            if host_ctx:                                    # /grammar -> print active grammar
                 for r in host_ctx["rules"]:
                     print("  <%s> ::= %s" % (r, host_ctx["playbook"][r]))
             elif grammar_file:
