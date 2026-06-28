@@ -255,33 +255,44 @@ def prompt_setup(config=None, logger=None):
     with no arguments: mode, model-or-grammar, name — with listing assistance. Everything else
     keeps its config-file default and stays settable later via /set · /get. Returns (mode, cfg)."""
     log = logger or _logger()
+    provided = dict(config or {})
     cfg = dict(DEFAULT_CONFIG)
-    if config:
-        cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
-    print("== runner setup (no arguments) — Enter accepts [default]; all values are /set-able later ==")
-    mode = (_ask("mode", options=["device", "host"], default="device") or "device").lower()
-    if mode not in ("device", "host"):
-        mode = "device"
+    cfg.update({k: v for k, v in provided.items() if k in cfg and v is not None})
+    print("== runner setup — Enter accepts [default]; CLI-provided values kept; all values /set-able later ==")
+    # mode (skip if already provided on the CLI)
+    if str(provided.get("mode", "")).lower() in ("device", "host"):
+        mode = str(provided["mode"]).lower()
+    else:
+        mode = (_ask("mode", options=["device", "host"], default=cfg.get("mode") or "device") or "device").lower()
+        if mode not in ("device", "host"):
+            mode = "device"
     cfg["mode"] = mode
-    g = _ask("grammar", options=_list_grammar_files(), default=cfg.get("grammar"))
-    if g:
-        cfg["grammar"] = g
+    # grammar (the model-or-grammar essential)
+    if "grammar" not in provided:
+        g = _ask("grammar", options=_list_grammar_files(), default=cfg.get("grammar"))
+        if g:
+            cfg["grammar"] = g
     _apply_grammar_derived(cfg, log)   # tokenizer auto-set from the grammar meta (still /set-able)
+    # mode-specific essential
     if mode == "host":
-        m = _ask("model (Ollama)", options=(_ollama_models() or None), default=cfg.get("model"))
-        if m:
-            cfg["model"] = m
-    else:   # device — prompt for the serial port (auto-detected list as assistance)
-        ports = _list_serial_ports()
-        dflt = cfg.get("port")
-        if ports and dflt not in ports:
-            dflt = ports[0]
-        p = _ask("port (device serial)", options=(ports or None), default=dflt)
-        if p:
-            cfg["port"] = p
-    n = _ask("name", default=cfg.get("name"))
-    if n:
-        cfg["name"] = n
+        if "model" not in provided:
+            m = _ask("model (Ollama)", options=(_ollama_models() or None), default=cfg.get("model"))
+            if m:
+                cfg["model"] = m
+    else:
+        if "port" not in provided:
+            ports = _list_serial_ports()
+            dflt = cfg.get("port")
+            if ports and dflt not in ports:
+                dflt = ports[0]
+            p = _ask("port (device serial)", options=(ports or None), default=dflt)
+            if p:
+                cfg["port"] = p
+    # name
+    if "name" not in provided:
+        n = _ask("name", default=cfg.get("name"))
+        if n:
+            cfg["name"] = n
     return mode, cfg
 
 

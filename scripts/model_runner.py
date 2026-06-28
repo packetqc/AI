@@ -39,18 +39,13 @@ from classes.class_model_runner import run, prompt_setup
 
 def main(argv=None):
     raw = sys.argv[1:] if argv is None else list(argv)
-    # No arguments → interactively ask the essentials (mode, model/grammar, name) with listing.
-    if not raw:
-        mode, config = prompt_setup()
-        return run(mode, config)
-
     ap = argparse.ArgumentParser(
         prog="model_runner.py",
         description="Official unified grammar runner (autonomous device / host Ollama). "
                     "All flags are also settable live with /set; builder flags are forwarded "
                     "to model_create_npu_tcn.py via /create | /export.",
     )
-    ap.add_argument("--mode", choices=["host", "device"], default="device",
+    ap.add_argument("--mode", choices=["host", "device"], default=None,
                     help="device: autonomous STM32N6 over serial · host: GrammarRunner + Ollama")
 
     # runtime config (None here = use the library default)
@@ -91,9 +86,16 @@ def main(argv=None):
                      help="enable dynamic probing by default for /security")
 
     a = ap.parse_args(raw)
-    # only explicitly-set flags enter the config; everything else uses the library default
-    config = {k: v for k, v in vars(a).items() if k != "mode" and v is not None}
-    return run(a.mode, config)
+    provided = {k: v for k, v in vars(a).items() if v is not None}
+    mode = provided.get("mode")
+    # basic essentials per mode — if any is missing from the CLI, prompt for the rest (with listing)
+    essentials = {"mode", "grammar", "name"} | ({"model"} if mode == "host" else {"port"})
+    if mode is None or not essentials.issubset(provided):
+        mode, config = prompt_setup(provided)
+        return run(mode, config)
+    # all essentials supplied on the CLI -> run directly
+    config = {k: v for k, v in provided.items() if k != "mode"}
+    return run(mode, config)
 
 
 if __name__ == "__main__":
