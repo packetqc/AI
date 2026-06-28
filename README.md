@@ -701,6 +701,19 @@ flow in [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)):
 2. **Disable** the Neural ART NPU toggle (Cortex-M55 CPU path)
 3. Click Generate Project
 
+## Running on the device (CPU)
+
+The CPU path's **on-device running style differs from the NPU path**: there is no autonomous turnkey
+firmware. The exported `generated_cpu/network.c` (an ST Edge AI / X-CUBE-AI network) is a library you
+integrate into your own STM32 app and call from firmware — the Cortex-M55 executes the transformer in
+software (**minutes/token**). The host unified runner does **not** drive it (device mode targets the
+NPU's `run-23` FSBL — see the NPU path); you exercise the model from within your own firmware.
+
+`examples/llm_uart/` is the reference on-device wiring — BPE tokenizer + STAI inference + UART loop
+(`llm_tokenizer.c`, `llm_npu.c`, `llm_test.c`, plus an FSBL variant under `fsbl_integration/`). *(Legacy
+Appli-based example, superseded by the NPU-native `run-23` deployment, but still the closest template for
+running the transformer on the M55.)*
+
 ---
 
 # Host Model to NPU Device
