@@ -1,0 +1,7 @@
+{
+  "_type": "command_vocabulary",
+  "_grammar": "fibonacci",
+  "_exec": "python",
+  "fib_sequence": "a, b = 0, 1\nseq = []\nfor _ in range(15):\n    seq.append(a)\n    a, b = b, a + b\nprint('--- fibonacci (first 15) ---')\nprint(' '.join(str(x) for x in seq))",
+  "fib_ratio": "a, b = 0, 1\nfor _ in range(25):\n    a, b = b, a + b\nprint('--- golden ratio approximation ---')\nprint(f'F(n+1)/F(n) = {b / a:.10f}   (phi = 1.6180339887...)')"
+}

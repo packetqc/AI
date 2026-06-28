@@ -1,0 +1,15 @@
+# Fibonacci sequence — procedure grammar (demo)
+# Grammar  : fibonacci
+# Training : train_fibonacci_commands.json
+# Exec     : python
+#
+# A simple, self-contained grammar-model conception demo: each terminal token runs an
+# independent python3 snippet (no shared state across tokens, like the healthcheck grammars).
+# The token bodies live in the external training file declared above (# Training :), which the
+# loader auto-loads from the grammar meta.
+#
+# Trigger: type   fibonacci   (auto-detected) or   /run fibonacci
+
+<fibonacci>     ::= <fib_sequence> <fib_ratio>
+<fib_sequence>  ::= "fib_sequence"
+<fib_ratio>     ::= "fib_ratio"
