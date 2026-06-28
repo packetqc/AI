@@ -30,17 +30,34 @@ The same grammar-and-training conceptualization drives two runtimes — a host m
 - **Runs on-chip, autonomously** — the FSBL tokenizes, parses, evaluates AND drives the NPU entirely on the Cortex-M55 + Neural-ART; type `3 + 4` over UART and the edge device returns `7` by itself. The host **unified runner** in device mode is just a thin terminal that pushes prompts and collects output. *(Why it matters: the edge device does the whole job — no transformer, no host, no network.)*
 - **Exports the host model to ONNX** — `/npu` or `scripts/model_generation/model_export_npu.py` produces FP32 + INT8 ONNX files ready for import into STM32Cube.AI Studio.
 
+### Model Security RE — reverse-engineer a loadable model (host)
+
+- **Analyzes a ready-to-load model as a blackbox** (`scripts/model_security_re.py`) — given only an Ollama model name or a `.gguf` file, it extracts the model's content and judges whether it encodes a command/code-execution capability, without trusting the client, training files, or HF source.
+- **Static track (never loads the model)** — parses the GGUF artifact with `gguf-py`'s `GGUFReader`: format-safety triage (offset/size/overflow), metadata + tokenizer + tensor extraction, and an exec-capability pattern sweep.
+- **Dynamic track (output is evidence, never executed)** — probes the live model over the Ollama API at temperature 0, reconstructs the BNF grammar from the responses, and scores recall against an offline oracle to confirm or clear static flags.
+- **Composes a verdict** — `INERT` / `INCONCLUSIVE` / `EXECUTABLE-CAPABILITY`, written to `models/forensics/`. Independent analysis code (only `gguf-py` + the Ollama API), generalising across `qwen2` / `llama` / `mistral` GGUFs. Full guide: [docs/MODEL_SECURITY_RE.md](docs/MODEL_SECURITY_RE.md).
+
 ## Architecture
 
 ```
-scripts/model_generation/model_create_hf_cl.py           # Entry point: trains, exports, serves, interactive CLI
-scripts/model_generation/model_export_npu.py             # Standalone NPU/ONNX export script
-scripts/model_generation/model_tools_grammar.py          # Grammar tool: converts external sources → grammar files
+scripts/model_generation/
+  model_create_hf_cl.py         # Entry point: trains Qwen2, exports, serves, interactive CLI
+  model_export_gguf.py          # Standalone GGUF export (host model → Ollama)
+  model_export_npu.py           # Standalone NPU/ONNX export (Qwen2 → INT8 ONNX for Cube.AI)
+  model_create_npu_tcn.py       # NPU-NATIVE path: build/train Conv1D/TCN → ONNX → stedgeai analyze/generate
+  emit_npu_embed_header.py      # Device CPU int8 embedding table (llm_embed.h) for the TCN model
+  export_embed.py               # Emit network_embed.c/.h — int8 embedding table for run-23 FSBL
+  export_tokens.py              # Emit network_tokens.c/.h — device decode table + rule prompts + EOS
+  model_tools_grammar.py        # Grammar tool: converts external sources → grammar files
+
+scripts/model_security_re.py    # Model Security RE CLI: analyze | reconstruct | threat | integrity
+scripts/model_security/         # Analyst toolkit package (acquire / reconstruct / threat / integrity / report)
 
 scripts/classes/
   class_model_assets.py         # ModelAssets: knowledge accumulation + incremental rebuild
   class_model_grammar.py        # ModelGrammar: BNF/EBNF parser  |  GrammarRunner: execution engine
   class_model_runner.py         # Unified runner: host (Ollama) | device (NPU-over-serial) backends
+  class_model_security.py       # Deprecated shim → re-exports scripts/model_security/*
   class_terminal_logs.py        # Colour terminal logger
   class_tools_grammar.py        # Grammar converters: Mermaid / Markdown / Text / PDF / Web / AI
 
@@ -48,15 +65,25 @@ models/grammars/
   playbook_pyhealthcheck.txt    # Python healthcheck procedure grammar  ← default
   playbook_linux_healthcheck.txt   # Shell healthcheck procedure grammar
   playbook_model_calculator.txt    # Expression grammar: expr ::= expr "+" term | ...
+  playbook_kali_discovery.txt      # Discovery grammar (generated from examples/grammar_sources)
 
 models/training/
   train_python_healthcheck_commands.json  # Python token vocabulary (_exec: python)  ← default
   train_linux_healthcheck_commands.json   # Shell token vocabulary (_exec: shell)
+  train_kali_discovery_commands.json      # Discovery token vocabulary (generated)
+
+models/generated/               # Trained-model output tree (created at runtime)
+  transformer/<name>/           # Qwen2 weights + <name>.state.json + tokenizer + GGUF + Modelfile
+  convolutional/<name>/         # TCN weights + tokenizer + ONNX (fp32 + int8)
+models/npu_export/<name>/       # stedgeai analyze report + generated device C
+models/forensics/               # Model Security RE working dir (reports, extracted artifacts)
 
 STM32N6/AI_TO_NPU_1/run-23/          # live FSBL — autonomous NPU calculator firmware (STM32N6570-DK)
   FSBL/Core/Src/main.c               # NPU init + ASYNC runtime + autonomous UART calc> REPL
   FSBL/AI/grammar_runner.cpp         # C++ GrammarRunner port + per-token CPU<->NPU logging
   FSBL/AI/npu_query.c                # autoregressive NPU rule recall (embed -> conv -> argmax)
+  FSBL/AI/network_embed.c            # int8 CPU embedding table (from export_embed.py)
+  FSBL/AI/network_tokens.c           # device decode table + rule prompts (from export_tokens.py)
 
 examples/
   grammar_sources/              # Example source files (one per supported format)
@@ -66,10 +93,13 @@ examples/
     disk_maintenance.md         # Markdown: disk health checks (shell exec)
     python_sysinfo.md           # Markdown: system info via Python (python exec)
     network_scan.mmd            # Mermaid: network scan procedure
+  llm_uart/                     # Device-side LLM-over-UART integration (FSBL): llm_npu, llm_tokenizer, llm_test
   test_grammar_tools.py         # Self-test for all grammar converters
 
 docs/
   GRAMMAR_TOOLS.md              # Full reference for scripts/model_generation/model_tools_grammar.py
+  STM32_NPU_DEPLOYMENT.md       # End-to-end host → ST Edge AI → on-device FSBL NPU deployment
+  MODEL_SECURITY_RE.md          # Blackbox Model Security RE — static + dynamic analysis guide
 ```
 
 ## Prerequisites
@@ -145,10 +175,13 @@ On the **first run** the script:
 
 On subsequent runs the saved state is restored and the model is re-exported without retraining.
 
-> **Fresh start:** delete the state file to force a full retrain:
+> **Fresh start:** delete the saved model directory to force a full retrain. The
+> state lives inside the generated model folder, not at the repo root:
 > ```bash
-> rm model_optimized_1.state.json
+> rm -rf models/generated/transformer/model_discoverit_version_1/
 > ```
+> (The default model name is `model_discoverit_version_<version>` — see
+> `model_create` / `STATE_PATH` in `scripts/model_generation/model_create_hf_cl.py`.)
 
 ### Startup arguments
 
@@ -673,6 +706,77 @@ python3 scripts/classes/class_model_runner.py --mode host --model model_calculat
 In **device mode** the runner relays your line and prints the device's output; the parse, evaluate and
 NPU recall all happen **on-chip**. Full device flow:
 [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
+
+## Model Security RE — blackbox analysis of a loadable model
+
+`scripts/model_security_re.py` reverse-engineers a model that is **ready to load** (downloaded and
+served by Ollama, or a raw `.gguf`): it extracts the model's content, judges security issues from
+that content, and decides whether the model **encodes a command/code-execution capability**. The
+RE/security tooling is **independent code** written for analysis — not a reuse of the host
+model-creation solution — and its only dependencies are the external `gguf-py` parsing library and
+the Ollama API. It generalises across GGUF model types (**qwen2 / llama / mistral**).
+
+**Blackbox trust boundary (hard rule).** Analysis uses only (a) the model artifact and (b) live
+query access. It never reads the client/app source, the training files, or the HF source — a real
+analyst auditing an unknown model has only the model.
+
+### Two tracks
+
+| Track | What it does | Runs the model? |
+|---|---|---|
+| **Static** | Parses the Ollama-downloaded GGUF file with `gguf-py` `GGUFReader` — format-safety triage + content extraction + exec-capability pattern sweep | **No** — artifact only |
+| **Dynamic** | Queries the loaded model live (Ollama API, temp 0), treats output as **evidence**, reconstructs the BNF grammar and scores recall vs an offline oracle | Yes — read-only, output **never executed** |
+
+The dynamic track is **opt-in and gated** (generative + static-safe models only) via the `--dynamic`
+flag. The composed verdict is one of `INERT` / `INCONCLUSIVE` / `EXECUTABLE-CAPABILITY`.
+
+### Prerequisites
+
+```bash
+pip install gguf            # GGUF parsing (GGUFReader)
+# Ollama must be running for --ollama acquisition and the dynamic track
+```
+
+### Usage
+
+```bash
+# Full master report (all 3 sections; add --dynamic to include live probing)
+python3 scripts/model_security_re.py analyze --ollama model_calculator_test_npu
+python3 scripts/model_security_re.py analyze --ollama model_calculator_test_npu --dynamic \
+        --registry approved_models.json --assets models/
+
+# Section 1 only — grammar / symbol reconstruction
+python3 scripts/model_security_re.py reconstruct --ollama model_calculator_test_npu
+
+# Section 3 only — threat scan + verdict (static, no live probing)
+python3 scripts/model_security_re.py threat --gguf models/generated/transformer/model_discoverit_version_1/model_discoverit_version_1.gguf
+
+# Section 2 only — integrity vs an enterprise allowlist
+python3 scripts/model_security_re.py integrity --ollama model_calculator_test_npu \
+        --registry approved_models.json --assets models/
+```
+
+| Subcommand | Scope |
+|---|---|
+| `analyze` | All 3 sections → master report (supports `--dynamic`, `--registry`, `--assets`) |
+| `reconstruct` | Section 1 — discover symbols + reconstruct grammar |
+| `threat` | Section 3 — exec-capability sweep + verdict (static only) |
+| `integrity` | Section 2 — compare against an approved-models registry (`--registry` / `--assets`) |
+
+Acquisition is `--ollama <name>` (resolves the downloaded blob via `ollama show --modelfile`) or, for
+the static path, `--gguf <path>` directly. Reports are written under `models/forensics/` (override
+with `--out`).
+
+### Worked example — `model_calculator_test_npu`
+
+- **Static:** format-safety OK (27 tensors, offsets in-bounds); alphabet = digits `0-9` + ops
+  `( ) * + - / =`; BPE merges leak `expr/term/factor/number/digit`. One `[A/LOW] rm` (BPE fragment)
+  → verdict **INCONCLUSIVE → confirm dynamically**.
+- **Dynamic:** nonterminals recovered 5/5; the model **recalls the grammar, does not compute**
+  (`3+4=` ≠ `7`) and never emits a command → confirms **INERT**.
+- **Composed verdict:** the static LOW flag is resolved to **inert / no executable capability**.
+
+**Full methodology, tooling, and roadmap:** [docs/MODEL_SECURITY_RE.md](docs/MODEL_SECURITY_RE.md).
 
 ## License
 
