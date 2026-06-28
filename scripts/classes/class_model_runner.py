@@ -436,6 +436,8 @@ _BUILDER_FLAGS = {
     "target": "--target", "net_name": "--net-name", "c_api": "--c-api", "opset": "--opset",
 }
 _BUILDER_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_generation", "model_create_npu_tcn.py")
+_HOST_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_generation", "model_create_hf_cl.py")
+_CPU_EXPORT_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_generation", "model_export_npu.py")
 _SECURITY_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_security_re.py")
 _SECURITY_SUBCMDS = ("analyze", "reconstruct", "threat", "integrity")
 
@@ -449,8 +451,12 @@ def _print_help(mode):
     print("  /config         show all config        (/get <key> for one value)")
     print("  /set <k> <v>    set a config value      (runtime or builder key)")
     print("  /grammar        print the BNF grammar")
-    print("  /create         build: train + export the NPU-native TCN (model_create_npu_tcn.py)")
-    print("  /export         build: re-export only   (--export-only)")
+    if mode == "device":
+        print("  /create         build: train + export the NPU-native TCN (model_create_npu_tcn.py)")
+        print("  /export         build: re-export only the NPU model (--export-only)")
+    else:
+        print("  /create         build: train the Qwen2 host model (model_create_hf_cl.py --build-only)")
+        print("  /export         export the host model to CPU ONNX (model_export_npu.py)")
     print("  /security [sub] blackbox model analysis (model_security_re.py: analyze|reconstruct|threat|integrity)")
     if mode == "host":
         print("  /rules          recall every grammar rule via the Ollama oracle   [host]")
@@ -547,6 +553,40 @@ def _run_builder(log, cfg, export_only=False):
         log.log("ok" if rc == 0 else "error", "BUILD", "builder exit code %d" % rc)
     except Exception as e:                                       # noqa: BLE001
         log.log("error", "BUILD", "failed to run builder: %s" % e)
+
+
+def _run_host_build(log, cfg):
+    """host mode /create: train the Qwen2 host model (model_create_hf_cl.py --build-only), named after
+    the grammar's tokenizer so it produces transformer/<tokenizer> that the NPU build can reuse."""
+    if not os.path.isfile(_HOST_SCRIPT):
+        log.log("error", "BUILD", "host creator not found: %s" % _HOST_SCRIPT)
+        return
+    argv = [sys.executable, _HOST_SCRIPT, "--build-only"]
+    name = cfg.get("tokenizer") or cfg.get("name")
+    if name:
+        argv += ["--name", str(name)]
+    if cfg.get("grammar"):
+        argv += ["--grammar", os.path.join("models", "grammars", str(cfg["grammar"]))]
+    log.log("info", "BUILD", "host create (Qwen2): " + " ".join(argv[1:]))
+    try:
+        rc = subprocess.run(argv, cwd=_REPO).returncode
+        log.log("ok" if rc == 0 else "error", "BUILD", "host creator exit code %d" % rc)
+    except Exception as e:                                       # noqa: BLE001
+        log.log("error", "BUILD", "failed to run host creator: %s" % e)
+
+
+def _run_host_export(log, cfg):
+    """host mode /export: export the trained Qwen2 host model to CPU ONNX (model_export_npu.py)."""
+    if not os.path.isfile(_CPU_EXPORT_SCRIPT):
+        log.log("error", "BUILD", "CPU export not found: %s" % _CPU_EXPORT_SCRIPT)
+        return
+    argv = [sys.executable, _CPU_EXPORT_SCRIPT]
+    log.log("info", "BUILD", "host export (transformer -> CPU ONNX): " + " ".join(argv[1:]))
+    try:
+        rc = subprocess.run(argv, cwd=_REPO).returncode
+        log.log("ok" if rc == 0 else "error", "BUILD", "CPU export exit code %d" % rc)
+    except Exception as e:                                       # noqa: BLE001
+        log.log("error", "BUILD", "failed to run CPU export: %s" % e)
 
 
 def _run_security(log, cfg, args):
@@ -740,7 +780,13 @@ def _repl(current_mode, cfg, device, host_ctx, log):
                 print("(no grammar configured)")
             continue
         if cmd in ("/create", "/export"):
-            _run_builder(log, cfg, export_only=(cmd == "/export")); continue
+            if current_mode == "device":            # device -> NPU-native TCN path
+                _run_builder(log, cfg, export_only=(cmd == "/export"))
+            elif cmd == "/create":                  # host -> Qwen2 host model
+                _run_host_build(log, cfg)
+            else:                                   # host -> CPU ONNX export
+                _run_host_export(log, cfg)
+            continue
         if cmd == "/security":
             _run_security(log, cfg, parts[1:]); continue
         if cmd == "/rules":

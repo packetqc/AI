@@ -53,6 +53,17 @@ _parser.add_argument(
     "--model", "-m", metavar="NAME_OR_FILE", default=None,
     help="Skip training: use an existing Ollama model by name, or import a local .gguf file.",
 )
+_parser.add_argument(
+    "--name", "-n", metavar="NAME", default=None,
+    help="Output model name (folder under models/generated/transformer/ + Ollama model name). "
+         "Default: model_discoverit_version_<version>. The unified runner sets this to the grammar's "
+         "'# Tokenizer :' so the NPU build can reuse the host tokenizer.",
+)
+_parser.add_argument(
+    "--build-only", action="store_true",
+    help="Train, export GGUF, register with Ollama, then exit — no interactive session "
+         "(used by the unified runner's /create in host mode).",
+)
 _args = _parser.parse_args()
 # Ordered: user training → user grammars → built-in defaults
 _CLI_FILES = list(_args.train) + list(_args.grammar)
@@ -61,7 +72,7 @@ _CLI_FILES = list(_args.train) + list(_args.grammar)
 #
 #################################################################################################
 version = "1"
-model_create = "model_discoverit_version_" + version
+model_create = _args.name or ("model_discoverit_version_" + version)
 
 # Each model is self-contained in its own folder under models/: HF weights +
 # <name>.gguf + <name>.state.json + Modelfile all live inside models/<name>/.
@@ -71,7 +82,7 @@ gguf_path = os.path.join(model_path, model_create + ".gguf")
 
 modelfile_path = os.path.join(model_path, "Modelfile")
 
-NAME = "model_to_discover"
+NAME = _args.name or "model_to_discover"
 OLLAMA_MODEL_NAME = NAME
 
 # Knowledge files trained into the model at start-up, IN ORDER (markdown / plain JSON / grammar
@@ -615,7 +626,9 @@ else:
     grammar_name = None
     arch = dict(ARCH_DEFAULTS)
     vocab_cap = DEFAULT_VOCAB_CAP
-    for _path in _CLI_FILES + list(INIT_KNOWLEDGE_FILES):
+    # CLI grammars/training REPLACE the built-in defaults (clean single-grammar model);
+    # only fall back to INIT_KNOWLEDGE_FILES when nothing was passed on the CLI.
+    for _path in (_CLI_FILES if _CLI_FILES else list(INIT_KNOWLEDGE_FILES)):
         _name = seed_from_file(_path, knowledge_texts, playbook)
         if _name:
             grammar_name = _name
@@ -856,6 +869,11 @@ local_log_path = "./chroma_db/chat_history.log"
 os.makedirs("./chroma_db", exist_ok=True)
 
 
+if _args.build_only:
+    logger.log("ok", "MODEL",
+               "build-only: '" + model_create + "' trained, exported and registered — exiting "
+               "(no interactive session).")
+    raise SystemExit(0)
 
 
 while True:
