@@ -1,25 +1,30 @@
 #!/usr/bin/env python3
 """model_runner.py — official entry point for the unified grammar runner.
 
-This is the supported CLI for running a grammar-LM solution. It is a thin wrapper
-over the runner class library (``scripts/classes/class_model_runner.py``) — all the
-logic lives in that library; this script only parses arguments and dispatches.
+This is the supported CLI for running and managing a grammar-LM solution. It is a thin
+wrapper over the runner class library (``scripts/classes/class_model_runner.py``) — all the
+logic lives there; this script only parses arguments into a config dict and dispatches.
 
 Two execution modes that differ by WHERE the CPU logic runs:
 
-  --mode device   the STM32N6 is AUTONOMOUS. The runner is a thin serial terminal:
-                  it pushes the prompt over the ST-Link VCP and collects the output;
-                  the device's own C++ GrammarRunner tokenizes, parses, evaluates and
-                  drives its Neural-ART NPU entirely on-chip. NO ML dependencies —
-                  run it with the system python.
+  --mode device   the STM32N6 is AUTONOMOUS. The runner is a thin serial terminal: it
+                  pushes the prompt over the ST-Link VCP and collects the output; the
+                  device's own C++ GrammarRunner tokenizes, parses, evaluates and drives
+                  its Neural-ART NPU entirely on-chip. NO ML dependencies — run with the
+                  system python.
 
-  --mode host     the HOST runs GrammarRunner locally and queries an Ollama chat model
-                  as the grammar oracle, parsing + evaluating on the host. Needs the
-                  project venv (the ML chain is imported lazily only for this mode).
+  --mode host     the HOST runs GrammarRunner locally and queries an Ollama chat model as
+                  the grammar oracle, parsing + evaluating on the host. Needs the project
+                  venv (the ML chain is imported lazily only for this mode).
+
+Every value below is also settable live from the REPL with ``/set <key> <value>`` and
+shown with ``/config``. Builder keys (name/epochs/…) are forwarded to the NPU builder
+``model_create_npu_tcn.py`` when you run ``/create`` or ``/export`` from the runner.
 
 Usage:
   python3 scripts/model_runner.py --mode device --port /dev/ttyACM0
   python3 scripts/model_runner.py --mode host   --model model_calculator_test_npu
+  python3 scripts/model_runner.py --mode device --name model_calc_tcn_v2 --epochs 800
 """
 import os
 import sys
@@ -29,29 +34,47 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 # The runner class library is the single source of truth for the runner behaviour.
-from classes.class_model_runner import run_device, run_host, _DEFAULT_GRAMMAR
+from classes.class_model_runner import run
 
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
         prog="model_runner.py",
-        description="Official unified grammar runner (autonomous device / host Ollama).",
+        description="Official unified grammar runner (autonomous device / host Ollama). "
+                    "All flags are also settable live with /set; builder flags are forwarded "
+                    "to model_create_npu_tcn.py via /create | /export.",
     )
     ap.add_argument("--mode", choices=["host", "device"], default="device",
                     help="device: autonomous STM32N6 over serial · host: GrammarRunner + Ollama")
-    ap.add_argument("--grammar", default=_DEFAULT_GRAMMAR,
-                    help="BNF/EBNF playbook grammar file")
-    ap.add_argument("--port", default="/dev/ttyACM0",
-                    help="device serial port (device mode)")
-    ap.add_argument("--model", default=None,
-                    help="Ollama model name (host mode)")
-    ap.add_argument("--host", default=None,
-                    help="Ollama host URL (host mode)")
-    a = ap.parse_args(argv)
 
-    if a.mode == "device":
-        return run_device(a.port, a.grammar)
-    return run_host(a.grammar, a.model, a.host)
+    # runtime config (None here = use the library default)
+    rt = ap.add_argument_group("runtime")
+    rt.add_argument("--grammar", default=None, help="BNF/EBNF playbook grammar file")
+    rt.add_argument("--port", default=None, help="device serial port (device mode)")
+    rt.add_argument("--baud", type=int, default=None, help="device serial baud (device mode)")
+    rt.add_argument("--boot-timeout", type=int, default=None, dest="boot_timeout",
+                    help="seconds to wait for the device boot prompt (device mode)")
+    rt.add_argument("--model", default=None, help="Ollama model name (host mode)")
+    rt.add_argument("--host", default=None, help="Ollama host URL (host mode)")
+
+    # builder config — forwarded to model_create_npu_tcn.py by /create | /export
+    bld = ap.add_argument_group("builder (model_create_npu_tcn.py)")
+    bld.add_argument("--name", default=None, help="model name (output dir + file stem)")
+    bld.add_argument("--version", default=None, help="version tag")
+    bld.add_argument("--tokenizer", default=None, help="tokenizer dir to reuse for the vocab")
+    bld.add_argument("--embed-dim", type=int, default=None, dest="embed_dim", help="C — conv channels")
+    bld.add_argument("--seq-len", type=int, default=None, dest="seq_len", help="L — fixed NPU window")
+    bld.add_argument("--kernel", type=int, default=None, help="causal conv kernel size")
+    bld.add_argument("--epochs", type=int, default=None, help="training epochs")
+    bld.add_argument("--lr", type=float, default=None, help="learning rate")
+    bld.add_argument("--out-dir", default=None, dest="out_dir", help="builder output dir override")
+    bld.add_argument("--npu-dir", default=None, dest="npu_dir", help="builder NPU export dir override")
+    bld.add_argument("--stedgeai", default=None, help="path to the stedgeai CLI")
+
+    a = ap.parse_args(argv)
+    # only explicitly-set flags enter the config; everything else uses the library default
+    config = {k: v for k, v in vars(a).items() if k != "mode" and v is not None}
+    return run(a.mode, config)
 
 
 if __name__ == "__main__":

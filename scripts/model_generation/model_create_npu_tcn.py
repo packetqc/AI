@@ -33,7 +33,7 @@ from transformers import AutoTokenizer
 # ── config ──────────────────────────────────────────────────────────────────────
 VERSION       = "1"
 NAME          = "model_calculator_tcn_version_" + VERSION
-TOKENIZER_DIR = "models/generated/transformer/model_calculator_version_1"   # reuse 374-vocab tokenizer
+TOKENIZER_DIR = "models/generated/transformer/" + NAME   # reuse 374-vocab tokenizer
 GRAMMAR_FILE  = "models/grammars/playbook_model_calculator.txt"
 OUT_DIR       = os.path.join("models", "generated", "convolutional", NAME)
 NPU_DIR       = os.path.join("models", "npu_export", NAME)
@@ -73,10 +73,10 @@ class TCNBody(nn.Module):
 class GrammarTCN(nn.Module):
     """Full model (host training + inference): token ids -> logits. The CPU embedding
     lookup is the only non-conv op; on the device it runs on the CM55, the body on NPU."""
-    def __init__(self, vocab, C=EMBED_DIM):
+    def __init__(self, vocab, C=EMBED_DIM, k=KERNEL):
         super().__init__()
         self.embed = nn.Embedding(vocab, C)
-        self.body  = TCNBody(C, vocab)
+        self.body  = TCNBody(C, vocab, k)
 
     def forward(self, ids):                      # ids [B, L]
         emb = self.embed(ids).transpose(1, 2)    # [B, C, L]
@@ -125,26 +125,56 @@ def main():
         description="Create (train) or re-export an NPU-native Conv1D/TCN grammar model. "
                     "This script OWNS the NPU export — it is the only path that yields a model "
                     "the Neural-ART runs in hardware (the transformer path in model_create_hf_cl.py "
-                    "/ model_export_npu.py exports CPU-only ONNX).")
+                    "/ model_export_npu.py exports CPU-only ONNX). Every config value below is "
+                    "overridable from the CLI or from the unified runner (/set + /create | /export).")
+    ap.add_argument("--name",      default=NAME,          help="model name (output dir + file stem)")
+    ap.add_argument("--version",   default=VERSION,       help="version tag (recorded in meta.json)")
+    ap.add_argument("--tokenizer", default=TOKENIZER_DIR, help="tokenizer dir to reuse for the vocab")
+    ap.add_argument("--grammar",   default=GRAMMAR_FILE,  help="BNF/EBNF playbook grammar file")
+    ap.add_argument("--embed-dim", type=int, default=EMBED_DIM, dest="embed_dim",
+                    help="C — embedding channels = NPU conv channels")
+    ap.add_argument("--seq-len",   type=int, default=SEQ_LEN, dest="seq_len",
+                    help="L — fixed NPU window (static shapes)")
+    ap.add_argument("--kernel",    type=int, default=KERNEL, help="causal conv kernel size")
+    ap.add_argument("--epochs",    type=int, default=EPOCHS, help="training epochs")
+    ap.add_argument("--lr",        type=float, default=LR,   help="learning rate")
+    ap.add_argument("--out-dir",   default=None, dest="out_dir",
+                    help="output dir (default: models/generated/convolutional/<name>)")
+    ap.add_argument("--npu-dir",   default=None, dest="npu_dir",
+                    help="NPU export dir (default: models/npu_export/<name>)")
+    ap.add_argument("--stedgeai",  default=STEDGEAI, help="path to the stedgeai CLI")
     ap.add_argument("--export-only", action="store_true",
                     help="export when ready: skip training, load the already-trained <name>.pt and "
                          "re-run export (ONNX + INT8) -> stedgeai analyze -> generate.")
     args = ap.parse_args()
 
-    os.makedirs(OUT_DIR, exist_ok=True)
-    os.makedirs(NPU_DIR, exist_ok=True)
+    name      = args.name
+    version   = args.version
+    tokenizer = args.tokenizer
+    grammar   = args.grammar
+    embed_dim = args.embed_dim
+    seq_len   = args.seq_len
+    kernel    = args.kernel
+    epochs    = args.epochs
+    lr        = args.lr
+    out_dir   = args.out_dir or os.path.join("models", "generated", "convolutional", name)
+    npu_dir   = args.npu_dir or os.path.join("models", "npu_export", name)
+    stedgeai  = args.stedgeai
+
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(npu_dir, exist_ok=True)
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    log("TCN", f"device={dev}  vocab tokenizer={TOKENIZER_DIR}")
+    log("TCN", f"name={name} v{version}  device={dev}  tokenizer={tokenizer}")
 
-    tok = AutoTokenizer.from_pretrained(TOKENIZER_DIR)
+    tok = AutoTokenizer.from_pretrained(tokenizer)
     vocab = len(tok)
-    pairs = grammar_pairs(GRAMMAR_FILE)
-    X, Y, Mask = build_windows(tok, pairs, SEQ_LEN)
+    pairs = grammar_pairs(grammar)
+    X, Y, Mask = build_windows(tok, pairs, seq_len)
     X, Y, Mask = X.to(dev), Y.to(dev), Mask.to(dev)
-    log("TCN", f"vocab={vocab}  pairs={len(pairs)}  windows={tuple(X.shape)}  C={EMBED_DIM} L={SEQ_LEN}")
+    log("TCN", f"vocab={vocab}  pairs={len(pairs)}  windows={tuple(X.shape)}  C={embed_dim} L={seq_len}")
 
-    model = GrammarTCN(vocab, EMBED_DIM).to(dev)
-    pt_path = os.path.join(OUT_DIR, NAME + ".pt")
+    model = GrammarTCN(vocab, embed_dim, kernel).to(dev)
+    pt_path = os.path.join(out_dir, name + ".pt")
     if args.export_only:
         if not os.path.exists(pt_path):
             log("TCN", f"--export-only but {pt_path} not found — train first (run without --export-only)")
@@ -152,58 +182,58 @@ def main():
         model.load_state_dict(torch.load(pt_path, map_location=dev))
         log("TCN", f"export-only: loaded trained weights {pt_path} (training skipped)")
     else:
-        opt = torch.optim.Adam(model.parameters(), lr=LR)
+        opt = torch.optim.Adam(model.parameters(), lr=lr)
         ce = nn.CrossEntropyLoss(reduction="none")
         model.train()
-        for ep in range(EPOCHS):
+        for ep in range(epochs):
             opt.zero_grad()
             logits = model(X)                                # [B, V, L]
             loss = ce(logits, Y) * Mask                      # [B, L]
             loss = loss.sum() / Mask.sum().clamp(min=1)
             loss.backward(); opt.step()
             if (ep + 1) % 150 == 0 or ep == 0:
-                log("TRAIN", f"epoch {ep+1}/{EPOCHS}  loss={loss.item():.4f}")
+                log("TRAIN", f"epoch {ep+1}/{epochs}  loss={loss.item():.4f}")
 
     # ── recall check (greedy, host) ──
     model.eval()
     truth = {n: b for n, b in pairs if not n.startswith("A ")}
     hits = 0
     with torch.no_grad():
-        for name in truth:
-            ids = tok(name, add_special_tokens=False)["input_ids"]
-            cur = (ids + [tok.eos_token_id] * SEQ_LEN)[:SEQ_LEN]
+        for rule_name in truth:
+            ids = tok(rule_name, add_special_tokens=False)["input_ids"]
+            cur = (ids + [tok.eos_token_id] * seq_len)[:seq_len]
             out = []
-            for pos in range(len(ids) - 1, SEQ_LEN - 1):
+            for pos in range(len(ids) - 1, seq_len - 1):
                 lg = model(torch.tensor([cur]).to(dev))[0, :, pos]
                 nxt = int(lg.argmax())
                 if nxt == tok.eos_token_id:
                     break
                 out.append(nxt)
-                if pos + 1 < SEQ_LEN:
+                if pos + 1 < seq_len:
                     cur[pos + 1] = nxt
             dec = tok.decode(out).strip()
-            ok = any(t in dec for t in truth[name].replace('"', '').split()[:3])
+            ok = any(t in dec for t in truth[rule_name].replace('"', '').split()[:3])
             hits += ok
-            log("RECALL", f"{name:9} -> {dec[:60]!r}  {'OK' if ok else '–'}")
+            log("RECALL", f"{rule_name:9} -> {dec[:60]!r}  {'OK' if ok else '–'}")
     log("RECALL", f"{hits}/{len(truth)} rule names produced grammar-like output")
 
     # ── save torch + tokenizer ──
-    torch.save(model.state_dict(), os.path.join(OUT_DIR, NAME + ".pt"))
-    tok.save_pretrained(OUT_DIR)
-    json.dump({"name": NAME, "arch": "tcn", "embed_dim": EMBED_DIM, "seq_len": SEQ_LEN,
-               "kernel": KERNEL, "vocab": vocab, "recall": f"{hits}/{len(truth)}"},
-              open(os.path.join(OUT_DIR, NAME + ".meta.json"), "w"), indent=2)
+    torch.save(model.state_dict(), os.path.join(out_dir, name + ".pt"))
+    tok.save_pretrained(out_dir)
+    json.dump({"name": name, "version": version, "arch": "tcn", "embed_dim": embed_dim,
+               "seq_len": seq_len, "kernel": kernel, "vocab": vocab, "recall": f"{hits}/{len(truth)}"},
+              open(os.path.join(out_dir, name + ".meta.json"), "w"), indent=2)
 
     # ── export NPU body ONNX: embeddings[1,C,L] -> logits[1,V,L] (static shapes) ──
     body = model.body.eval().cpu()
-    dummy = torch.randn(1, EMBED_DIM, SEQ_LEN)
-    fp32 = os.path.join(OUT_DIR, "model_npu.onnx")
+    dummy = torch.randn(1, embed_dim, seq_len)
+    fp32 = os.path.join(out_dir, "model_npu.onnx")
     torch.onnx.export(body, dummy, fp32, input_names=["embeddings"], output_names=["logits"],
                       opset_version=17, dynamo=False)
-    log("ONNX", f"NPU-body fp32 exported: {fp32}  (in embeddings[1,{EMBED_DIM},{SEQ_LEN}] -> logits[1,{vocab},{SEQ_LEN}])")
+    log("ONNX", f"NPU-body fp32 exported: {fp32}  (in embeddings[1,{embed_dim},{seq_len}] -> logits[1,{vocab},{seq_len}])")
 
     # ── INT8 static quantization with calibration from real embeddings ──
-    int8 = os.path.join(OUT_DIR, "model_npu_int8.onnx")
+    int8 = os.path.join(out_dir, "model_npu_int8.onnx")
     try:
         from onnxruntime.quantization import quantize_static, CalibrationDataReader, QuantType, QuantFormat
         with torch.no_grad():
@@ -221,11 +251,11 @@ def main():
         int8 = fp32
 
     # ── stedgeai analyze: prove NPU-native (100% hardware) ──
-    if not STEDGEAI:
+    if not stedgeai:
         log("STEDGEAI", "CLI not found — skipping analyze/generate (run on a toolchain host)")
         return
-    rep = os.path.join(NPU_DIR, "analyze_report.txt")
-    r = subprocess.run([STEDGEAI, "analyze", "--model", int8, "--target", "stm32n6",
+    rep = os.path.join(npu_dir, "analyze_report.txt")
+    r = subprocess.run([stedgeai, "analyze", "--model", int8, "--target", "stm32n6",
                         "--name", "network"], capture_output=True, text=True)
     open(rep, "w").write(r.stdout + "\n--- stderr ---\n" + r.stderr)
     out = r.stdout
@@ -238,15 +268,15 @@ def main():
             log("ANALYZE", line.strip()[:100])
 
     # ── stedgeai generate: device C code ──
-    gen = os.path.join(NPU_DIR, "generated")
+    gen = os.path.join(npu_dir, "generated")
     os.makedirs(gen, exist_ok=True)
-    g = subprocess.run([STEDGEAI, "generate", "--model", int8, "--target", "stm32n6",
+    g = subprocess.run([stedgeai, "generate", "--model", int8, "--target", "stm32n6",
                         "--name", "network", "--c-api", "st-ai", "--output", gen],
                        capture_output=True, text=True)
     cfiles = glob.glob(os.path.join(gen, "*.c"))
     log("STEDGEAI", f"generate -> {len(cfiles)} C file(s) in {gen}" if cfiles
         else f"generate produced no C (see report); rc={g.returncode}")
-    log("DONE", f"NPU-native TCN model + export complete: {OUT_DIR} , {NPU_DIR}")
+    log("DONE", f"NPU-native TCN model + export complete: {out_dir} , {npu_dir}")
 
 
 if __name__ == "__main__":
