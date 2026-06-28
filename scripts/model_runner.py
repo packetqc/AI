@@ -70,6 +70,10 @@ def main(argv=None):
     bld.add_argument("--out-dir", default=None, dest="out_dir", help="builder output dir override")
     bld.add_argument("--npu-dir", default=None, dest="npu_dir", help="builder NPU export dir override")
     bld.add_argument("--stedgeai", default=None, help="path to the stedgeai CLI")
+    bld.add_argument("--target", default=None, help="stedgeai target")
+    bld.add_argument("--net-name", default=None, dest="net_name", help="stedgeai network name (FSBL-coupled)")
+    bld.add_argument("--c-api", default=None, dest="c_api", help="stedgeai C API")
+    bld.add_argument("--opset", type=int, default=None, help="ONNX opset for the exported body")
 
     a = ap.parse_args(argv)
     # only explicitly-set flags enter the config; everything else uses the library default

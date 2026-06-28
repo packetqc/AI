@@ -142,19 +142,25 @@ DEFAULT_CONFIG = {
     "out_dir":   None,
     "npu_dir":   None,
     "stedgeai":  None,
+    "target":    None,
+    "net_name":  None,
+    "c_api":     None,
+    "opset":     None,
 }
 
 _CFG_TYPES = {"baud": int, "boot_timeout": int, "embed_dim": int, "seq_len": int,
-              "kernel": int, "epochs": int, "lr": float}
+              "kernel": int, "epochs": int, "lr": float, "opset": int}
 _MODE_KEYS = {"device": ("port", "baud", "boot_timeout"), "host": ("model", "host")}
 _RUNTIME_KEYS = ("grammar", "port", "baud", "boot_timeout", "model", "host")
 _BUILDER_DISPLAY = ("name", "version", "tokenizer", "embed_dim", "seq_len", "kernel",
-                    "epochs", "lr", "out_dir", "npu_dir", "stedgeai")
+                    "epochs", "lr", "out_dir", "npu_dir", "stedgeai",
+                    "target", "net_name", "c_api", "opset")
 _BUILDER_FLAGS = {
     "name": "--name", "version": "--version", "tokenizer": "--tokenizer",
     "grammar": "--grammar", "embed_dim": "--embed-dim", "seq_len": "--seq-len",
     "kernel": "--kernel", "epochs": "--epochs", "lr": "--lr",
     "out_dir": "--out-dir", "npu_dir": "--npu-dir", "stedgeai": "--stedgeai",
+    "target": "--target", "net_name": "--net-name", "c_api": "--c-api", "opset": "--opset",
 }
 _BUILDER_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_generation", "model_create_npu_tcn.py")
 _SECURITY_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_security_re.py")

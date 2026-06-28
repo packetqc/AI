@@ -42,6 +42,10 @@ SEQ_LEN       = 32      # L — fixed window (NPU needs static shapes)
 KERNEL        = 3
 EPOCHS        = 600
 LR            = 3e-3
+OPSET         = 17          # ONNX opset for the exported body
+TARGET        = "stm32n6"   # stedgeai target
+NET_NAME      = "network"   # stedgeai network name -> network.c/.h (FSBL-coupled; change with care)
+C_API         = "st-ai"     # stedgeai C API
 STEDGEAI      = next((p for p in ("/opt/ST/STEdgeAI/4.0/Utilities/linux/stedgeai",
                                   shutil.which("stedgeai") or "") if p and os.path.exists(p)), None)
 
@@ -143,6 +147,11 @@ def main():
     ap.add_argument("--npu-dir",   default=None, dest="npu_dir",
                     help="NPU export dir (default: models/npu_export/<name>)")
     ap.add_argument("--stedgeai",  default=STEDGEAI, help="path to the stedgeai CLI")
+    ap.add_argument("--target",    default=TARGET,   help="stedgeai target")
+    ap.add_argument("--net-name",  default=NET_NAME, dest="net_name",
+                    help="stedgeai network name -> network.c/.h (FSBL-coupled; change with care)")
+    ap.add_argument("--c-api",     default=C_API, dest="c_api", help="stedgeai C API")
+    ap.add_argument("--opset",     type=int, default=OPSET, help="ONNX opset for the exported body")
     ap.add_argument("--export-only", action="store_true",
                     help="export when ready: skip training, load the already-trained <name>.pt and "
                          "re-run export (ONNX + INT8) -> stedgeai analyze -> generate.")
@@ -160,6 +169,10 @@ def main():
     out_dir   = args.out_dir or os.path.join("models", "generated", "convolutional", name)
     npu_dir   = args.npu_dir or os.path.join("models", "npu_export", name)
     stedgeai  = args.stedgeai
+    target    = args.target
+    net_name  = args.net_name
+    c_api     = args.c_api
+    opset     = args.opset
 
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(npu_dir, exist_ok=True)
@@ -229,7 +242,7 @@ def main():
     dummy = torch.randn(1, embed_dim, seq_len)
     fp32 = os.path.join(out_dir, "model_npu.onnx")
     torch.onnx.export(body, dummy, fp32, input_names=["embeddings"], output_names=["logits"],
-                      opset_version=17, dynamo=False)
+                      opset_version=opset, dynamo=False)
     log("ONNX", f"NPU-body fp32 exported: {fp32}  (in embeddings[1,{embed_dim},{seq_len}] -> logits[1,{vocab},{seq_len}])")
 
     # ── INT8 static quantization with calibration from real embeddings ──
@@ -255,8 +268,8 @@ def main():
         log("STEDGEAI", "CLI not found — skipping analyze/generate (run on a toolchain host)")
         return
     rep = os.path.join(npu_dir, "analyze_report.txt")
-    r = subprocess.run([stedgeai, "analyze", "--model", int8, "--target", "stm32n6",
-                        "--name", "network"], capture_output=True, text=True)
+    r = subprocess.run([stedgeai, "analyze", "--model", int8, "--target", target,
+                        "--name", net_name], capture_output=True, text=True)
     open(rep, "w").write(r.stdout + "\n--- stderr ---\n" + r.stderr)
     out = r.stdout
     sw = re.search(r"software fallback\D+(\d+)", out, re.I)
@@ -270,8 +283,8 @@ def main():
     # ── stedgeai generate: device C code ──
     gen = os.path.join(npu_dir, "generated")
     os.makedirs(gen, exist_ok=True)
-    g = subprocess.run([stedgeai, "generate", "--model", int8, "--target", "stm32n6",
-                        "--name", "network", "--c-api", "st-ai", "--output", gen],
+    g = subprocess.run([stedgeai, "generate", "--model", int8, "--target", target,
+                        "--name", net_name, "--c-api", c_api, "--output", gen],
                        capture_output=True, text=True)
     cfiles = glob.glob(os.path.join(gen, "*.c"))
     log("STEDGEAI", f"generate -> {len(cfiles)} C file(s) in {gen}" if cfiles
