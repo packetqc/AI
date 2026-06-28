@@ -253,14 +253,25 @@ If the name is not found in Ollama and is not a `.gguf` file, the script lists a
 | `/read` markdown (in-flight learning) | ❌ requires trained model |
 | `/npu` export | ❌ requires trained model weights |
 
-## Interactive CLI
+## Runner interactive CLI
+
+Launching the host runner (`python scripts/model_generation/model_create_hf_cl.py`)
+trains/restores the model and then drops to a `>>>` prompt. From there you can run
+grammars, evaluate expressions, chat with the model, train knowledge in-flight, and
+export to the NPU. Type `/?` for the command list:
 
 ```
 >>> /?
 ```
 
-| Command | Description |
+The prompt accepts both **bare input** (auto-detected — see [Auto-detect modes](#auto-detect-modes))
+and **slash commands**:
+
+| Input | Description |
 |---|---|
+| `<grammar / rule / token>` | Auto-detect and run a loaded grammar, a sub-rule, or a command token |
+| `<expression>` | Parse + evaluate against loaded grammars (e.g. `3 + 4 * 2`) |
+| `<any other text>` | Chat with the model — fallback when no grammar/expression matches |
 | `/?` | Show this help |
 | `/grammar <file>` | Load a BNF/EBNF grammar file and augment the model in-flight |
 | `/read <file>` | Train a markdown / JSON knowledge file into the model in-flight |
@@ -268,8 +279,12 @@ If the name is not found in Ollama and is not a `.gguf` file, the script lists a
 | `/npu [dir]` | Export model to ONNX for STM32Cube.AI / STM32N6570-DK NPU (default: `models/npu_export/`) |
 | `/context` | Show all loaded files, command vocabularies, exec modes, and knowledge document count |
 | `/tokens [grammar]` | Show grammar rules and token commands (all grammars, or filter by name) |
-| `/bye` | Exit |
+| `/bye` (or `exit`, `quit`) | Exit the CLI |
 | `TAB` | Multi-level grammar tree completion; live model query fallback |
+
+> **Note** — this is the CLI of the **host** runner (`model_create_hf_cl.py`). The
+> serial/device-oriented runner has its own minimal command set — see
+> [Unified runner (host/device)](#unified-runner-hostdevice).
 
 ### Tab completion
 
