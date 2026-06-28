@@ -1,5 +1,6 @@
 # Grammar : calculator
 # Training : none
+# Tokenizer : model_calculator_version_1
 <expr>     ::= <expr> "+" <term> | <expr> "-" <term> | <term>
 <term>     ::= <term> "*" <factor> | <term> "/" <factor> | <factor>
 <factor>   ::= "(" <expr> ")" | <number>

@@ -1,7 +1,8 @@
 # Fibonacci sequence — procedure grammar (demo)
-# Grammar  : fibonacci
-# Training : train_fibonacci_commands.json
-# Exec     : python
+# Grammar   : fibonacci
+# Training  : train_fibonacci_commands.json
+# Tokenizer : model_calculator_version_1
+# Exec      : python
 #
 # A simple, self-contained grammar-model conception demo: each terminal token runs an
 # independent python3 snippet (no shared state across tokens, like the healthcheck grammars).

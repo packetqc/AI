@@ -254,6 +254,7 @@ def prompt_setup(config=None, logger=None):
     """Interactive setup of the essential model-management values when the runner is started
     with no arguments: mode, model-or-grammar, name — with listing assistance. Everything else
     keeps its config-file default and stays settable later via /set · /get. Returns (mode, cfg)."""
+    log = logger or _logger()
     cfg = dict(DEFAULT_CONFIG)
     if config:
         cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
@@ -265,6 +266,7 @@ def prompt_setup(config=None, logger=None):
     g = _ask("grammar", options=_list_grammar_files(), default=cfg.get("grammar"))
     if g:
         cfg["grammar"] = g
+    _apply_grammar_derived(cfg, log)   # tokenizer auto-set from the grammar meta (still /set-able)
     if mode == "host":
         m = _ask("model (Ollama)", options=(_ollama_models() or None), default=cfg.get("model"))
         if m:
@@ -315,6 +317,23 @@ def _grammar_training(grammar_path):
     """Training file(s) declared by the grammar's '# Training :' meta (comma-separated list)."""
     raw = _grammar_meta(grammar_path).get("training", "")
     return [f.strip() for f in raw.split(",") if f.strip() and f.strip().lower() != "none"]
+
+
+def _apply_grammar_derived(cfg, log):
+    """On grammar selection, derive grammar-bound config from the grammar meta: the tokenizer is
+    auto-set (still /set-overridable), and the training file(s) are surfaced. Mirrors how training
+    is bound to the grammar — the association lives in the grammar, not in scattered config."""
+    gpath = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
+    if not gpath:
+        return
+    meta = _grammar_meta(gpath)
+    tok = meta.get("tokenizer")
+    if tok and tok.lower() != "none":
+        cfg["tokenizer"] = tok
+        log.log("info", "SYSTEM", "tokenizer (from grammar meta): %s" % tok)
+    tr = _grammar_training(gpath)
+    if tr:
+        log.log("info", "SYSTEM", "training (from grammar meta): %s" % ", ".join(tr))
 
 
 def _load_command_vocab(grammar_path, log):
@@ -683,19 +702,22 @@ def _repl(current_mode, cfg, device, host_ctx, log):
             _show_config(cfg, current_mode, parts[1:]); continue
         if cmd == "/set":
             _set_config(log, cfg, parts[1:])
-            if len(parts) >= 3 and parts[1].lower() == "mode" \
+            key = parts[1].lower() if len(parts) >= 2 else ""
+            if len(parts) >= 3 and key == "mode" \
                     and cfg.get("mode") in ("host", "device") and cfg["mode"] != current_mode:
                 log.log("info", "SYSTEM", "switching mode: %s -> %s" % (current_mode, cfg["mode"]))
                 return cfg["mode"]
+            if len(parts) >= 3 and key == "grammar":
+                _apply_grammar_derived(cfg, log)   # new grammar -> auto-set tokenizer + training
+                if host_ctx:                       # reload host backend with the new grammar
+                    return current_mode
             continue
         if cmd == "/grammar":
             if len(parts) >= 2 and parts[1].strip():       # /grammar <file> -> switch grammar
                 cfg["grammar"] = parts[1].strip()
                 log.log("ok", "SYSTEM", "grammar set to %s" % cfg["grammar"])
-                _tr = _grammar_training(os.path.join(_GRAMMAR_DIR, cfg["grammar"]))
-                log.log("info", "SYSTEM", "training (from grammar meta): "
-                        + (", ".join(_tr) if _tr else "none"))
-                if host_ctx:        # host backend depends on the grammar + its training -> reload
+                _apply_grammar_derived(cfg, log)   # auto-set tokenizer + surface training from meta
+                if host_ctx:        # host backend depends on grammar + tokenizer + training -> reload
                     return current_mode
                 continue
             if host_ctx:                                    # /grammar -> print active grammar
