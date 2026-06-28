@@ -63,6 +63,8 @@ def _complete_candidates(buf, commands, config_keys, security_subcmds, grammar_n
         # /set grammar <TAB> -> grammar filenames; otherwise complete the config key
         if len(toks) >= 2 and toks[1].lower() == "grammar" and (len(toks) > 2 or buf.endswith(" ")):
             return _list_grammar_files()
+        if len(toks) >= 2 and toks[1].lower() == "mode" and (len(toks) > 2 or buf.endswith(" ")):
+            return ["device", "host"]
         return list(config_keys)
     if head == "/security":
         return list(security_subcmds)
@@ -135,6 +137,12 @@ class DeviceTerminal:
     def eval_expr(self, expr, timeout=30):
         self.f.write((expr + "\r").encode())
         return self._read_until_prompt(timeout)
+
+    def close(self):
+        try:
+            self.f.close()
+        except Exception:                                       # noqa: BLE001
+            pass
 
 
 def _ollama_models():
@@ -242,7 +250,7 @@ def ollama_query_fn(model, host=None):
 # lives in the worker (model_create_npu_tcn.py); /set still overrides them.
 _CONFIG_FILE = os.path.join(_REPO, "scripts", "model_runner_config.json")
 
-_RUNTIME_KEYS = ("grammar", "port", "baud", "boot_timeout", "model", "host")
+_RUNTIME_KEYS = ("mode", "grammar", "port", "baud", "boot_timeout", "model", "host")
 _ARCH_KEYS = ("embed_dim", "seq_len", "kernel")           # value lives in the worker, override-only
 _BUILDER_OPS_KEYS = ("name", "version", "tokenizer", "epochs", "lr", "out_dir",
                      "npu_dir", "stedgeai", "target", "net_name", "c_api", "opset")
@@ -356,6 +364,11 @@ def _set_config(log, cfg, args):
     if key not in cfg:
         log.log("warning", "CONFIG", "unknown key '%s' (known: %s)" % (key, ", ".join(sorted(cfg))))
         return
+    if key == "mode":
+        val = val.strip().lower()
+        if val not in ("host", "device"):
+            log.log("error", "CONFIG", "mode must be 'host' or 'device'")
+            return
     caster = _CFG_TYPES.get(key)
     if caster:
         try:
@@ -437,57 +450,77 @@ def _run_security(log, cfg, args):
         log.log("error", "SECURITY", "failed to run model_security_re: %s" % e)
 
 
-# ----------------------------------------------------------------------------
-# unified REPL — one client, commands gated by the active mode
-# ----------------------------------------------------------------------------
-def run(mode, config=None, logger=None):
-    log = logger or _logger()
-    cfg = dict(DEFAULT_CONFIG)
-    if config:
-        cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
-    # the grammar filename is a user-managed atom; compose it with the structural folder
-    grammar_file = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
+def _list_serial_ports():
+    import glob
+    return sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
 
-    device = None
-    host_ctx = None
+
+def _resolve_device_port(cfg, log):
+    """Pick the device serial port: the configured one if present; else auto-detect
+    (/dev/ttyACM*, /dev/ttyUSB*) — one match is used, several prompt with a list, none prompts."""
+    port = cfg.get("port")
+    if port and os.path.exists(port):
+        return port
+    found = _list_serial_ports()
+    if len(found) == 1:
+        log.log("info", "RUNNER", "auto-detected device port: %s" % found[0])
+        return found[0]
+    if len(found) > 1:
+        return _ask("device port", options=found, default=(port if port in found else found[0]))
+    return _ask("device port (none auto-detected)", default=port)
+
+
+def _setup_backend(mode, cfg, log):
+    """(Re)build the backend for the active mode. Returns (device, host_ctx) or None on failure."""
+    grammar_file = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
     if mode == "device":
-        log.log("info", "RUNNER", "device mode - connecting to autonomous STM32N6 on %s ..." % cfg["port"])
+        port = _resolve_device_port(cfg, log)
+        if not port:
+            log.log("error", "RUNNER", "no device serial port available")
+            return None
+        cfg["port"] = port
+        log.log("info", "RUNNER", "device mode - connecting to autonomous STM32N6 on %s ..." % port)
         try:
-            device = DeviceTerminal(cfg["port"], baud=int(cfg["baud"]), logger=log,
+            device = DeviceTerminal(port, baud=int(cfg["baud"]), logger=log,
                                     boot_timeout=int(cfg["boot_timeout"]))
         except Exception as e:                                   # noqa: BLE001
-            log.log("error", "RUNNER", "cannot open %s: %s" % (cfg["port"], e))
-            return 1
+            log.log("error", "RUNNER", "cannot open %s: %s" % (port, e))
+            return None
         log.log("ok", "RUNNER", "device ready - it parses + evaluates + runs the NPU on-chip")
-    else:
-        if not cfg.get("model"):
-            log.log("error", "RUNNER", "model is required for host mode (--model or /set model <name>)")
-            return 1
-        if not grammar_file:
-            log.log("error", "RUNNER", "grammar is required for host mode (/set grammar <file> or config file)")
-            return 1
-        sys.path.insert(0, os.path.dirname(_HERE))
-        from classes.class_model_grammar import ModelGrammar, GrammarRunner   # lazy (pulls gguf chain)
-        gf = ModelGrammar.load_file(grammar_file, logger=log)
-        if not gf:
-            log.log("error", "RUNNER", "could not load grammar '%s'" % grammar_file)
-            return 1
-        gname = gf["name"]
-        tree = gf["tree"]
-        playbook = tree[gname] if isinstance(tree.get(gname), dict) else tree
-        rules = list(playbook.keys())
-        start_rule = rules[0] if rules else "expr"
-        qfn = ollama_query_fn(cfg["model"], cfg.get("host"))
+        return (device, None)
 
-        def make_runner():
-            return GrammarRunner(grammar_name=gname, query_fn=qfn,
-                                 fallback_playbook=playbook, logger=log)
+    if not cfg.get("model"):
+        log.log("error", "RUNNER", "model is required for host mode (/set model <name>)")
+        return None
+    if not grammar_file:
+        log.log("error", "RUNNER", "grammar is required for host mode (/set grammar <file>)")
+        return None
+    sys.path.insert(0, os.path.dirname(_HERE))
+    from classes.class_model_grammar import ModelGrammar, GrammarRunner   # lazy (pulls gguf chain)
+    gf = ModelGrammar.load_file(grammar_file, logger=log)
+    if not gf:
+        log.log("error", "RUNNER", "could not load grammar '%s'" % grammar_file)
+        return None
+    gname = gf["name"]
+    tree = gf["tree"]
+    playbook = tree[gname] if isinstance(tree.get(gname), dict) else tree
+    rules = list(playbook.keys())
+    start_rule = rules[0] if rules else "expr"
+    qfn = ollama_query_fn(cfg["model"], cfg.get("host"))
 
-        host_ctx = {"gname": gname, "playbook": playbook, "rules": rules,
-                    "start_rule": start_rule, "make_runner": make_runner,
-                    "GrammarRunner": GrammarRunner}
-        log.log("info", "RUNNER", "host mode - GrammarRunner local, oracle = Ollama '%s'" % cfg["model"])
+    def make_runner():
+        return GrammarRunner(grammar_name=gname, query_fn=qfn,
+                             fallback_playbook=playbook, logger=log)
 
+    host_ctx = {"gname": gname, "playbook": playbook, "rules": rules,
+                "start_rule": start_rule, "make_runner": make_runner,
+                "GrammarRunner": GrammarRunner}
+    log.log("info", "RUNNER", "host mode - GrammarRunner local, oracle = Ollama '%s'" % cfg["model"])
+    return (None, host_ctx)
+
+
+def _repl(current_mode, cfg, device, host_ctx, log):
+    """Run the REPL for one mode. Returns the mode to switch to, or None to quit."""
     base = ["/?", "/help", "/bye", "/mode", "/grammar", "/config", "/get", "/set",
             "/create", "/export", "/security", "exit", "quit"]
     if host_ctx:
@@ -496,14 +529,16 @@ def run(mode, config=None, logger=None):
                        config_keys=sorted(cfg.keys()),
                        security_subcmds=list(_SECURITY_SUBCMDS),
                        grammar_names=(host_ctx["rules"] if host_ctx else []))
-    log.log("info", "SYSTEM", "type an expression (e.g. 3 + 4), /? for help, /bye to quit")
+    grammar_file = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
+    log.log("info", "SYSTEM",
+            "mode=%s — type an expression (e.g. 3 + 4), /? for help, /bye to quit" % current_mode)
 
     while True:
         try:
             ui = input(">>> ").strip()
         except (EOFError, KeyboardInterrupt):
             print()
-            break
+            return None
         if not ui:
             continue
         parts = ui.split()
@@ -512,16 +547,28 @@ def run(mode, config=None, logger=None):
 
         if low in ("/bye", "exit", "quit"):
             log.log("ok", "SYSTEM", "closing runner"
-                    + (" - the device keeps running standalone" if mode == "device" else ""))
-            break
+                    + (" - the device keeps running standalone" if current_mode == "device" else ""))
+            return None
         if cmd in ("/?", "/help"):
-            _print_help(mode); continue
+            _print_help(current_mode); continue
         if cmd == "/mode":
-            _show_mode(log, mode, cfg); continue
+            if len(parts) >= 2 and parts[1].lower() in ("host", "device"):
+                new = parts[1].lower()
+                if new != current_mode:
+                    log.log("info", "SYSTEM", "switching mode: %s -> %s" % (current_mode, new))
+                    cfg["mode"] = new
+                    return new
+            _show_mode(log, current_mode, cfg)
+            continue
         if cmd in ("/config", "/get"):
-            _show_config(cfg, mode, parts[1:]); continue
+            _show_config(cfg, current_mode, parts[1:]); continue
         if cmd == "/set":
-            _set_config(log, cfg, parts[1:]); continue
+            _set_config(log, cfg, parts[1:])
+            if len(parts) >= 3 and parts[1].lower() == "mode" \
+                    and cfg.get("mode") in ("host", "device") and cfg["mode"] != current_mode:
+                log.log("info", "SYSTEM", "switching mode: %s -> %s" % (current_mode, cfg["mode"]))
+                return cfg["mode"]
+            continue
         if cmd == "/grammar":
             if host_ctx:
                 for r in host_ctx["rules"]:
@@ -545,7 +592,7 @@ def run(mode, config=None, logger=None):
             continue
 
         # bare input -> an expression for the active backend
-        if mode == "device":
+        if current_mode == "device":
             out = device.eval_expr(ui).strip("\r\n")
             if out:
                 print(out)
@@ -556,6 +603,40 @@ def run(mode, config=None, logger=None):
             else:
                 log.log("warning", "RUNNER",
                         "not a valid %s expression: '%s' (try: 3 + 4)" % (hc["gname"], ui))
+
+
+# ----------------------------------------------------------------------------
+# unified runner — one client; mode is live-switchable (/set mode | /mode <m>)
+# ----------------------------------------------------------------------------
+def run(mode=None, config=None, logger=None):
+    log = logger or _logger()
+    cfg = dict(DEFAULT_CONFIG)
+    if config:
+        cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
+    if mode:
+        cfg["mode"] = mode
+    if not cfg.get("mode"):
+        cfg["mode"] = "device"
+
+    prev_mode = None
+    while True:
+        current_mode = cfg["mode"]
+        backend = _setup_backend(current_mode, cfg, log)
+        if backend is None:
+            if prev_mode is None:
+                return 1
+            log.log("warning", "RUNNER",
+                    "could not enter %s mode — staying in %s" % (current_mode, prev_mode))
+            cfg["mode"] = prev_mode
+            continue
+        device, host_ctx = backend
+        prev_mode = current_mode
+        nxt = _repl(current_mode, cfg, device, host_ctx, log)
+        if device is not None:
+            device.close()
+        if nxt is None:
+            break
+        cfg["mode"] = nxt
     return 0
 
 

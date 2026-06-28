@@ -1,6 +1,7 @@
 {
   "_comment": "Single source of truth for runner/CLI-manageable default config (user values for model creation + management). These are read by the unified runner (class_model_runner.py) and the worker scripts, and overridable via CLI flags or /set. Values here are USER VALUES only (which grammar, model name, version, tokenizer, training, target, ...). Structural folder layout, naming patterns, script-calling logic and model architecture (embed_dim/seq_len/kernel) are NOT here — they stay in the scripts. Path atoms (grammar, tokenizer) are filenames/names composed with the structural folders inside the scripts.",
 
+  "mode": "device",
   "port": "/dev/ttyACM0",
   "baud": 115200,
   "boot_timeout": 12,
