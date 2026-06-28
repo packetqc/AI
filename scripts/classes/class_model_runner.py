@@ -157,6 +157,8 @@ _BUILDER_FLAGS = {
     "out_dir": "--out-dir", "npu_dir": "--npu-dir", "stedgeai": "--stedgeai",
 }
 _BUILDER_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_generation", "model_create_npu_tcn.py")
+_SECURITY_SCRIPT = os.path.join(os.path.dirname(_HERE), "model_security_re.py")
+_SECURITY_SUBCMDS = ("analyze", "reconstruct", "threat", "integrity")
 
 
 # ----------------------------------------------------------------------------
@@ -170,6 +172,7 @@ def _print_help(mode):
     print("  /grammar        print the BNF grammar")
     print("  /create         build: train + export the NPU-native TCN (model_create_npu_tcn.py)")
     print("  /export         build: re-export only   (--export-only)")
+    print("  /security [sub] blackbox model analysis (model_security_re.py: analyze|reconstruct|threat|integrity)")
     if mode == "host":
         print("  /rules          recall every grammar rule via the Ollama oracle   [host]")
     print("  /bye            quit the runner" + (" (device stays autonomous)" if mode == "device" else ""))
@@ -248,6 +251,39 @@ def _run_builder(log, cfg, export_only=False):
         log.log("error", "BUILD", "failed to run builder: %s" % e)
 
 
+def _run_security(log, cfg, args):
+    """Invoke model_security_re.py (blackbox model analysis). Subprocess keeps device
+    mode dependency-free (gguf-py / Ollama are only needed in the child process).
+
+    Usage:  /security [subcommand] [extra args...]
+      subcommand defaults to 'analyze' (analyze | reconstruct | threat | integrity).
+      Target defaults to the configured 'model' as --ollama unless --ollama/--gguf given.
+      Any extra tokens pass straight through (e.g. --dynamic, --gguf <path>, --out <dir>).
+    """
+    if not os.path.isfile(_SECURITY_SCRIPT):
+        log.log("error", "SECURITY", "tool not found: %s" % _SECURITY_SCRIPT)
+        return
+    args = list(args)
+    if args and not args[0].startswith("-") and args[0].lower() in _SECURITY_SUBCMDS:
+        subcmd = args.pop(0).lower()
+    else:
+        subcmd = "analyze"
+    if "--ollama" not in args and "--gguf" not in args:
+        if cfg.get("model"):
+            args = ["--ollama", cfg["model"]] + args
+        else:
+            log.log("warning", "SECURITY",
+                    "no target — set the Ollama model (/set model <name>) or pass --gguf <path> / --ollama <name>")
+            return
+    argv = [sys.executable, _SECURITY_SCRIPT, subcmd] + args
+    log.log("info", "SECURITY", "%s: %s" % (subcmd, " ".join(argv[1:])))
+    try:
+        rc = subprocess.run(argv).returncode
+        log.log("ok" if rc == 0 else "error", "SECURITY", "model_security_re exit code %d" % rc)
+    except Exception as e:                                       # noqa: BLE001
+        log.log("error", "SECURITY", "failed to run model_security_re: %s" % e)
+
+
 # ----------------------------------------------------------------------------
 # unified REPL — one client, commands gated by the active mode
 # ----------------------------------------------------------------------------
@@ -296,7 +332,7 @@ def run(mode, config=None, logger=None):
         log.log("info", "RUNNER", "host mode - GrammarRunner local, oracle = Ollama '%s'" % cfg["model"])
 
     base = ["/?", "/help", "/bye", "/mode", "/grammar", "/config", "/get", "/set",
-            "/create", "/export", "exit", "quit"]
+            "/create", "/export", "/security", "exit", "quit"]
     extra = (["/rules"] + host_ctx["rules"]) if host_ctx else []
     _install_completer(base + extra)
     log.log("info", "SYSTEM", "type an expression (e.g. 3 + 4), /? for help, /bye to quit")
@@ -334,6 +370,8 @@ def run(mode, config=None, logger=None):
             continue
         if cmd in ("/create", "/export"):
             _run_builder(log, cfg, export_only=(cmd == "/export")); continue
+        if cmd == "/security":
+            _run_security(log, cfg, parts[1:]); continue
         if cmd == "/rules":
             if not host_ctx:
                 log.log("warning", "SYSTEM", "/rules is available in host mode only")
