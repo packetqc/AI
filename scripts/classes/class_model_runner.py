@@ -44,10 +44,38 @@ def _logger():
     return TerminalLogger()
 
 
-def _install_completer(words):
+def _list_grammar_files():
+    try:
+        return [f for f in sorted(os.listdir(_GRAMMAR_DIR))
+                if f.startswith("playbook_") and f.endswith(".txt")]
+    except OSError:
+        return []
+
+
+def _complete_candidates(buf, commands, config_keys, security_subcmds, grammar_names):
+    """Context-aware Tab candidates from the current line buffer."""
+    toks = buf.split()
+    first_word = (not toks) or (len(toks) == 1 and not buf.endswith(" "))
+    if first_word:
+        return list(commands) + list(grammar_names)
+    head = toks[0].lower()
+    if head in ("/set", "/get"):
+        # /set grammar <TAB> -> grammar filenames; otherwise complete the config key
+        if len(toks) >= 2 and toks[1].lower() == "grammar" and (len(toks) > 2 or buf.endswith(" ")):
+            return _list_grammar_files()
+        return list(config_keys)
+    if head == "/security":
+        return list(security_subcmds)
+    return []
+
+
+def _install_completer(commands, config_keys=(), security_subcmds=(), grammar_names=()):
+    """In-depth Tab completion + persistent command history.
+       first token -> commands (+ grammar rule names in host mode); /set·/get -> config keys
+       (grammar filenames after 'grammar'); /security -> subcommands."""
     try:
         import readline, atexit
-        # persistent command history (restored across runner sessions) + up-arrow recall
+        readline.set_completer_delims(" \t\n")   # only whitespace breaks, so '/set' etc. complete
         histfile = os.path.join(os.path.expanduser("~"), ".model_runner_history")
         try:
             readline.read_history_file(histfile)
@@ -55,9 +83,13 @@ def _install_completer(words):
             pass
         readline.set_history_length(2000)
         atexit.register(readline.write_history_file, histfile)
+
         def _c(text, state):
-            opts = [w for w in words if w.startswith(text)]
+            cands = _complete_candidates(readline.get_line_buffer(), commands,
+                                         config_keys, security_subcmds, grammar_names)
+            opts = [c for c in cands if c.startswith(text)]
             return opts[state] if state < len(opts) else None
+
         readline.set_completer(_c)
         readline.parse_and_bind("tab: complete")
     except Exception:                                            # noqa: BLE001
@@ -412,8 +444,12 @@ def run(mode, config=None, logger=None):
 
     base = ["/?", "/help", "/bye", "/mode", "/grammar", "/config", "/get", "/set",
             "/create", "/export", "/security", "exit", "quit"]
-    extra = (["/rules"] + host_ctx["rules"]) if host_ctx else []
-    _install_completer(base + extra)
+    if host_ctx:
+        base = base + ["/rules"]
+    _install_completer(base,
+                       config_keys=sorted(cfg.keys()),
+                       security_subcmds=list(_SECURITY_SUBCMDS),
+                       grammar_names=(host_ctx["rules"] if host_ctx else []))
     log.log("info", "SYSTEM", "type an expression (e.g. 3 + 4), /? for help, /bye to quit")
 
     while True:

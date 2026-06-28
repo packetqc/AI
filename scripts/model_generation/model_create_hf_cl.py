@@ -508,6 +508,23 @@ def _reload_command_vocabularies():
                        + " (exec=" + _obj.get("_exec", "shell") + ")")
 
 
+TRAINING_DIR = "models/training"   # structural: command-vocabulary / training files live here
+
+
+def _grammar_training_files(grammar_result):
+    """Resolve the training file path(s) a grammar declares via its '# Training :' meta
+    (comma-separated list; 'none' = inline tokens, no external file). Bare filenames are
+    composed with the structural TRAINING_DIR; explicit paths are used as-is."""
+    raw = (grammar_result.get("meta") or {}).get("training", "") if grammar_result else ""
+    out = []
+    for tok in raw.split(","):
+        f = tok.strip()
+        if not f or f.lower() == "none":
+            continue
+        out.append(f if (os.path.isabs(f) or os.sep in f) else os.path.join(TRAINING_DIR, f))
+    return out
+
+
 def seed_from_file(path, knowledge_texts, playbook):
     """Read one start-up knowledge file and route it by extension: a grammar/playbook JSON is
     deep-merged into the ``playbook`` tree; plain JSON is flattened to prose; markdown/other is
@@ -554,6 +571,17 @@ def seed_from_file(path, knowledge_texts, playbook):
             logger.log("info", "SYSTEM",
                        "Seeded grammar '" + grammar_result["name"] + "' from " + path
                        + " (" + str(len(grammar_result["rules"])) + " rule(s)).")
+            # the grammar declares its training/command-vocabulary file(s) via meta
+            # ("# Training : a_commands.json, b_commands.json") — auto-load them here so the
+            # association lives in the grammar, not in scattered config.
+            for _tf in _grammar_training_files(grammar_result):
+                if os.path.isfile(_tf):
+                    logger.log("info", "SYSTEM",
+                               "Grammar '" + grammar_result["name"] + "' -> training file: " + _tf)
+                    seed_from_file(_tf, knowledge_texts, playbook)
+                else:
+                    logger.log("warning", "SYSTEM",
+                               "Grammar training file not found (from meta): " + _tf)
             return grammar_result["name"]
     if raw.strip():
         knowledge_texts.append(raw)
@@ -890,6 +918,13 @@ while True:
                     logger.log("ok", "SYSTEM", "Model augmented with grammar from '" + grammar_path + "'. Ask away!")
                 else:
                     logger.log("error", "SYSTEM", "Could not load grammar '" + grammar_path + "' (see errors above).")
+            # auto-load the training/command-vocabulary file(s) declared in the grammar meta
+            for _tf in _grammar_training_files(ModelGrammar.load_file(grammar_path, logger=None)):
+                if os.path.isfile(_tf):
+                    seed_from_file(_tf, knowledge_texts, assets.playbook)
+                    logger.log("info", "SYSTEM", "Loaded grammar training file (meta): " + _tf)
+                else:
+                    logger.log("warning", "SYSTEM", "Grammar training file not found (meta): " + _tf)
             continue
 
         # 3c. IN-FLIGHT LEARNING: /read <file> trains a markdown or JSON file into the model.
