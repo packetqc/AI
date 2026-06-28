@@ -8,9 +8,13 @@ It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar
 
 The result is **one grammar conceptualization, two runtimes** — a Qwen2 model served locally via Ollama and a Conv1D/TCN model running natively on the STM32N6570-DK NPU — exercised by **one unified runner** that either talks to the autonomous edge device (device mode) or runs the grammar engine locally against the chat model (host mode).
 
+---
+
+# Install & Info
+
 ## What it does
 
-The same grammar-and-training conceptualization drives two runtimes — a host model served via Ollama, and an NPU-native model running on the STM32N6 edge device. A separate, independent toolkit reverse-engineers and security-audits any ready-to-load model (see [Model Security RE](#model-security-re--blackbox-analysis-of-a-loadable-model)).
+The same grammar-and-training conceptualization drives two runtimes — a host model served via Ollama, and an NPU-native model running on the STM32N6 edge device. A separate, independent toolkit reverse-engineers and security-audits any ready-to-load model (see [Security](#security)).
 
 ### On the host — tiny Qwen2 served via Ollama
 
@@ -165,6 +169,20 @@ pip install -r requirements.txt
 ollama serve &
 ```
 
+---
+
+# Runner
+
+The **runner** is how you operate the system on the host and drive the edge device.
+There are two complementary entry points:
+
+- **Host runner** (`scripts/model_generation/model_create_hf_cl.py`) — trains/restores the
+  Qwen2 model and drops to an interactive `>>>` prompt where you run grammars, evaluate
+  expressions, chat, train knowledge in-flight, and export models for the device.
+- **Unified runner** (`scripts/model_runner.py`) — one interactive client with two modes:
+  `--mode host` (local `GrammarRunner` + Ollama oracle) and `--mode device` (thin serial
+  terminal to the autonomous STM32N6).
+
 ## Running
 
 ```bash
@@ -253,7 +271,7 @@ If the name is not found in Ollama and is not a `.gguf` file, the script lists a
 | `/read` markdown (in-flight learning) | ❌ requires trained model |
 | `/npu` export | ❌ requires trained model weights |
 
-## Runner interactive CLI
+## Interactive CLI
 
 Launching the host runner (`python scripts/model_generation/model_create_hf_cl.py`)
 trains/restores the model and then drops to a `>>>` prompt. From there you can run
@@ -511,8 +529,6 @@ python examples/test_grammar_tools.py --verbose
 python examples/test_grammar_tools.py --ai-model qwen2:7b   # also test AI path
 ```
 
----
-
 ## Adding a new grammar
 
 ### 1. Expression grammar (parse mode)
@@ -597,77 +613,6 @@ User types: pyhealthcheck py_system_status py_check_uptime
 
 The playbook is always authoritative: even if the tiny model mis-answers a rule query, the stored BNF body replaces the response. Left-recursive grammars (like the calculator's `expr ::= expr "+" term | term`) are handled via iterative extension.
 
-## NPU export for STM32N6570-DK
-
-The `/npu` command (or standalone `scripts/model_generation/model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK (Cortex-M55 CPU, INT8 weights).
-
-```bash
-# From the interactive session (requires locally trained model, not --model mode)
->>> /npu models/npu_export/
-
-# Or standalone (requires scripts/model_generation/model_create_hf_cl.py to have run at least once)
-python scripts/model_generation/model_export_npu.py [output_dir]
-```
-
-**Output files:**
-
-```
-models/npu_export/
-  model_npu.onnx           FP32 ONNX (opset 17)
-  model_npu_qdq.onnx       INT8 QDQ — use this in STM32Cube.AI Studio
-  model_npu_int8.onnx      INT8 dynamic-quantized (alternative)
-  model_info.json          arch, I/O specs, full import instructions
-  tokenizer/               tokenizer files for host-side pre/post-processing
-  generated_cpu/           ready-to-use network.c / network_data.c for STM32CubeIDE
-  validation_data/         validation.npz — valid token ID samples for Studio
-```
-
-**Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for the full end-to-end flow (host → ST Edge AI → on-device FSBL + interactive REPL). Quick summary:
-1. Import `models/npu_export/model_npu_qdq.onnx`
-2. **Disable** the Neural ART NPU toggle (use Cortex-M55 CPU path)
-3. Set validation dataset to `models/npu_export/validation_data/validation.npz`
-4. Click Generate Project
-
-> **Note — architecture matters more than the chip.** The Neural-ART NPU is a CNN/conv+GEMM
-> int8 engine; transformer ops (RoPE, GQA, RMSNorm, softmax) are unsupported, so this Qwen2
-> model runs on the Cortex-M55 CPU via SW-fallback (INT8 weights, 1.32 MiB) — which is
-> **slow** (minutes/token, weights read from external flash). The *same task* re-expressed as
-> a **Conv1D / TCN** compiles **100% onto the NPU** (`stedgeai analyze`: 5/5 pure-HW epochs,
-> 481 KiB, fits internal SRAM) — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md)
-> § *NPU-native architecture path*. The host export flow and the grammar runner are unchanged;
-> only the model architecture would change.
->
-> **Latest dev (2026-06-27):** `run-23` runs the grammar calculator **autonomously on the NPU,
-> end-to-end on hardware, in BOTH dev modes — including dev=0 (boot from flash, no debug probe).**
-> The `--st-neural-art` network executes as *epoch blobs* on the NPU epoch controller, which requires
-> `LL_ATON_RT_ASYNC` (polling is unsupported for epoch blobs) **and** the global `stai_runtime_init()`
-> that enables the ATON interrupt controller + `NPU0_IRQn` so completion wakes the runtime's `__WFE()`.
-> **Weights are deployed by flash-copy — not baked, not XIP:** flashed once to XSPI2 NOR `@0x70200000`
-> and copied to AXISRAM1 `@0x34064000` at boot (FSBL image **244 KB**, `.ai_weights` NOLOAD) — one
-> unified path for dev=0 and dev=1. (Baking leaves the SRAM-VMA blob out of the signed dev=0 image —
-> "assets not on the system"; XIP read-in-place **stalls** the Neural-ART epoch — both dead ends.)
-> **Device-validated:** `3 + 4 = 7` and `6 * 7 = 42` on UART, fully autonomous, in **dev=1 and dev=0**.
-> A host **unified runner** in device mode is a thin terminal — see
-> [run-23/README.md](STM32N6/AI_TO_NPU_1/run-23/README.md),
-> [Unified runner (host/device)](#unified-runner-hostdevice),
-> [models/npu_export/NPU_HW_GENERATE.md](models/npu_export/NPU_HW_GENERATE.md), and
-> [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
-
-**End-to-end inference flow (device mode — the device is autonomous):**
-```
-host (unified runner):  >>> 3 + 4              push the prompt over UART (thin terminal)
-device (STM32N6):       tokenize → parse        C++ GrammarRunner on the Cortex-M55
-                        per grammar rule: CPU int8 embed → NPU conv → CPU argmax (autoregressive)
-                        evaluate parse tree → "= 7"          (all on-chip, BPE vocab 374)
-host (unified runner):  collect + print the device's output
-```
-
-**On-device:** the Conv1D/TCN model + a C++ `GrammarRunner` run **autonomously** in the FSBL of
-`STM32N6/AI_TO_NPU_1/run-23` over the ST-Link VCP (`/dev/ttyACM0`); the host runner
-[`scripts/model_runner.py`](scripts/model_runner.py) in device mode is a
-thin terminal. See [Unified runner (host/device)](#unified-runner-hostdevice) below and
-[docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) § *On-device deployment*.
-
 ## Unified runner (host/device)
 
 [`scripts/model_runner.py`](scripts/model_runner.py) is the **official runner entry point** — a thin
@@ -728,7 +673,109 @@ In **device mode** the runner relays your line and prints the device's output; t
 NPU recall all happen **on-chip**. Full device flow:
 [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
 
-## Model Security RE — blackbox analysis of a loadable model
+---
+
+# Host Model to CPU Device
+
+Deploy the trained **host Qwen2 model** to the STM32N6570-DK so it runs on the
+**Cortex-M55 CPU** (INT8 weights, software inference). The Neural-ART NPU cannot
+execute transformer ops, so the transformer runs on the CPU via ST Edge AI's
+software-fallback path. For a model that runs *natively* on the NPU instead, see
+[Host Model to NPU Device](#host-model-to-npu-device).
+
+The `/npu` command (or standalone `scripts/model_generation/model_export_npu.py`) exports the trained model to ONNX format for use with STM32Cube.AI Studio targeting the STM32N6570-DK (Cortex-M55 CPU, INT8 weights).
+
+```bash
+# From the interactive session (requires locally trained model, not --model mode)
+>>> /npu models/npu_export/
+
+# Or standalone (requires scripts/model_generation/model_create_hf_cl.py to have run at least once)
+python scripts/model_generation/model_export_npu.py [output_dir]
+```
+
+**Output files:**
+
+```
+models/npu_export/
+  model_npu.onnx           FP32 ONNX (opset 17)
+  model_npu_qdq.onnx       INT8 QDQ — use this in STM32Cube.AI Studio
+  model_npu_int8.onnx      INT8 dynamic-quantized (alternative)
+  model_info.json          arch, I/O specs, full import instructions
+  tokenizer/               tokenizer files for host-side pre/post-processing
+  generated_cpu/           ready-to-use network.c / network_data.c for STM32CubeIDE
+  validation_data/         validation.npz — valid token ID samples for Studio
+```
+
+**Import into STM32Cube.AI Studio** — see [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) for the full end-to-end flow (host → ST Edge AI → on-device FSBL + interactive REPL). Quick summary:
+1. Import `models/npu_export/model_npu_qdq.onnx`
+2. **Disable** the Neural ART NPU toggle (use Cortex-M55 CPU path)
+3. Set validation dataset to `models/npu_export/validation_data/validation.npz`
+4. Click Generate Project
+
+> **Note — this path is slow; architecture matters more than the chip.** The Neural-ART NPU is a
+> CNN/conv+GEMM int8 engine; transformer ops (RoPE, GQA, RMSNorm, softmax) are unsupported, so this
+> Qwen2 model runs on the Cortex-M55 CPU via SW-fallback (INT8 weights, 1.32 MiB) — which is
+> **slow** (minutes/token, weights read from external flash). The *same task* re-expressed as a
+> **Conv1D / TCN** compiles **100% onto the NPU** — see [Host Model to NPU Device](#host-model-to-npu-device).
+> The host export flow and the grammar runner are unchanged; only the model architecture changes.
+
+---
+
+# Host Model to NPU Device
+
+Re-express the *same* grammar task as a causal **Conv1D / TCN** that compiles **100% onto the
+Neural-ART NPU** (`stedgeai analyze`: 5/5 pure-HW epochs, 481 KiB, fits internal SRAM). It reuses the
+*same* tokenizer and the *same* BNF grammar + (prompt → answer) pairs — only the architecture changes
+(no transformer ops the NPU can't run). The result runs **autonomously on-chip**: the Cortex-M55 does
+tokenize/embed/detokenize and the Neural-ART runs the convolution body.
+
+## Build pipeline
+
+| Step | Script / tool | Output |
+|---|---|---|
+| 1. Create + train the TCN | `scripts/model_generation/model_create_npu_tcn.py` | TCN weights + ONNX (fp32 + int8) → `models/generated/convolutional/<name>/` |
+| 2. Prove hardware mapping | `stedgeai analyze` | 100% NPU (no SW-fallback), report in `models/npu_export/<name>/` |
+| 3. Generate device C | `stedgeai generate` | `network.c` / `network_data.c` |
+| 4. CPU embed + token tables | `emit_npu_embed_header.py`, `export_embed.py`, `export_tokens.py` | `network_embed.c/.h`, `network_tokens.c/.h` for the FSBL |
+| 5. Build + flash the FSBL | `STM32N6/AI_TO_NPU_1/run-23` | autonomous on-chip calculator |
+| 6. Drive it | unified runner `--mode device` | thin serial terminal (see [Unified runner](#unified-runner-hostdevice)) |
+
+Full end-to-end walkthrough: [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
+
+> **Latest dev (2026-06-27):** `run-23` runs the grammar calculator **autonomously on the NPU,
+> end-to-end on hardware, in BOTH dev modes — including dev=0 (boot from flash, no debug probe).**
+> The `--st-neural-art` network executes as *epoch blobs* on the NPU epoch controller, which requires
+> `LL_ATON_RT_ASYNC` (polling is unsupported for epoch blobs) **and** the global `stai_runtime_init()`
+> that enables the ATON interrupt controller + `NPU0_IRQn` so completion wakes the runtime's `__WFE()`.
+> **Weights are deployed by flash-copy — not baked, not XIP:** flashed once to XSPI2 NOR `@0x70200000`
+> and copied to AXISRAM1 `@0x34064000` at boot (FSBL image **244 KB**, `.ai_weights` NOLOAD) — one
+> unified path for dev=0 and dev=1. (Baking leaves the SRAM-VMA blob out of the signed dev=0 image —
+> "assets not on the system"; XIP read-in-place **stalls** the Neural-ART epoch — both dead ends.)
+> **Device-validated:** `3 + 4 = 7` and `6 * 7 = 42` on UART, fully autonomous, in **dev=1 and dev=0**.
+> A host **unified runner** in device mode is a thin terminal — see
+> [run-23/README.md](STM32N6/AI_TO_NPU_1/run-23/README.md),
+> [Unified runner (host/device)](#unified-runner-hostdevice),
+> [models/npu_export/NPU_HW_GENERATE.md](models/npu_export/NPU_HW_GENERATE.md), and
+> [docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md).
+
+**End-to-end inference flow (device mode — the device is autonomous):**
+```
+host (unified runner):  >>> 3 + 4              push the prompt over UART (thin terminal)
+device (STM32N6):       tokenize → parse        C++ GrammarRunner on the Cortex-M55
+                        per grammar rule: CPU int8 embed → NPU conv → CPU argmax (autoregressive)
+                        evaluate parse tree → "= 7"          (all on-chip, BPE vocab 374)
+host (unified runner):  collect + print the device's output
+```
+
+**On-device:** the Conv1D/TCN model + a C++ `GrammarRunner` run **autonomously** in the FSBL of
+`STM32N6/AI_TO_NPU_1/run-23` over the ST-Link VCP (`/dev/ttyACM0`); the host runner
+[`scripts/model_runner.py`](scripts/model_runner.py) in device mode is a
+thin terminal. See [Unified runner (host/device)](#unified-runner-hostdevice) above and
+[docs/STM32_NPU_DEPLOYMENT.md](docs/STM32_NPU_DEPLOYMENT.md) § *On-device deployment*.
+
+---
+
+# Security
 
 `scripts/model_security_re.py` reverse-engineers a model that is **ready to load** (downloaded and
 served by Ollama, or a raw `.gguf`): it extracts the model's content, judges security issues from
@@ -741,7 +788,7 @@ the Ollama API. It generalises across GGUF model types (**qwen2 / llama / mistra
 query access. It never reads the client/app source, the training files, or the HF source — a real
 analyst auditing an unknown model has only the model.
 
-### Two tracks
+## Two tracks
 
 | Track | What it does | Runs the model? |
 |---|---|---|
@@ -751,14 +798,14 @@ analyst auditing an unknown model has only the model.
 The dynamic track is **opt-in and gated** (generative + static-safe models only) via the `--dynamic`
 flag. The composed verdict is one of `INERT` / `INCONCLUSIVE` / `EXECUTABLE-CAPABILITY`.
 
-### Prerequisites
+## Prerequisites
 
 ```bash
 pip install gguf            # GGUF parsing (GGUFReader)
 # Ollama must be running for --ollama acquisition and the dynamic track
 ```
 
-### Usage
+## Usage
 
 ```bash
 # Full master report (all 3 sections; add --dynamic to include live probing)
@@ -788,7 +835,7 @@ Acquisition is `--ollama <name>` (resolves the downloaded blob via `ollama show 
 the static path, `--gguf <path>` directly. Reports are written under `models/forensics/` (override
 with `--out`).
 
-### Worked example — `model_calculator_test_npu`
+## Worked example — `model_calculator_test_npu`
 
 - **Static:** format-safety OK (27 tensors, offsets in-bounds); alphabet = digits `0-9` + ops
   `( ) * + - / =`; BPE merges leak `expr/term/factor/number/digit`. One `[A/LOW] rm` (BPE fragment)
@@ -799,6 +846,8 @@ with `--out`).
 
 **Full methodology, tooling, and roadmap:** [docs/MODEL_SECURITY_RE.md](docs/MODEL_SECURITY_RE.md).
 
-## License
+---
+
+# License
 
 MIT — see [LICENSE](LICENSE).
