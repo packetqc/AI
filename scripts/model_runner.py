@@ -34,10 +34,16 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 # The runner class library is the single source of truth for the runner behaviour.
-from classes.class_model_runner import run
+from classes.class_model_runner import run, prompt_setup
 
 
 def main(argv=None):
+    raw = sys.argv[1:] if argv is None else list(argv)
+    # No arguments → interactively ask the essentials (mode, model/grammar, name) with listing.
+    if not raw:
+        mode, config = prompt_setup()
+        return run(mode, config)
+
     ap = argparse.ArgumentParser(
         prog="model_runner.py",
         description="Official unified grammar runner (autonomous device / host Ollama). "
@@ -84,7 +90,7 @@ def main(argv=None):
     sec.add_argument("--sec-dynamic", action="store_true", default=None, dest="sec_dynamic",
                      help="enable dynamic probing by default for /security")
 
-    a = ap.parse_args(argv)
+    a = ap.parse_args(raw)
     # only explicitly-set flags enter the config; everything else uses the library default
     config = {k: v for k, v in vars(a).items() if k != "mode" and v is not None}
     return run(a.mode, config)

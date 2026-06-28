@@ -137,6 +137,52 @@ class DeviceTerminal:
         return self._read_until_prompt(timeout)
 
 
+def _ollama_models():
+    """List locally available Ollama model names (listing assistance for host mode)."""
+    try:
+        out = subprocess.run(["ollama", "list"], capture_output=True, text=True, timeout=5)
+        return [ln.split()[0] for ln in out.stdout.splitlines()[1:] if ln.split()]
+    except Exception:                                           # noqa: BLE001
+        return []
+
+
+def _ask(prompt, options=None, default=None):
+    """Prompt for one value with optional listing assistance; Enter accepts the default."""
+    if options:
+        print("    available: " + ", ".join(options))
+    suffix = (" [%s]" % default) if default not in (None, "") else ""
+    try:
+        ans = input("    %s%s: " % (prompt, suffix)).strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    return ans or default
+
+
+def prompt_setup(config=None, logger=None):
+    """Interactive setup of the essential model-management values when the runner is started
+    with no arguments: mode, model-or-grammar, name — with listing assistance. Everything else
+    keeps its config-file default and stays settable later via /set · /get. Returns (mode, cfg)."""
+    cfg = dict(DEFAULT_CONFIG)
+    if config:
+        cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
+    print("== runner setup (no arguments) — Enter accepts [default]; all values are /set-able later ==")
+    mode = (_ask("mode", options=["device", "host"], default="device") or "device").lower()
+    if mode not in ("device", "host"):
+        mode = "device"
+    g = _ask("grammar", options=_list_grammar_files(), default=cfg.get("grammar"))
+    if g:
+        cfg["grammar"] = g
+    if mode == "host":
+        m = _ask("model (Ollama)", options=(_ollama_models() or None), default=cfg.get("model"))
+        if m:
+            cfg["model"] = m
+    n = _ask("name", default=cfg.get("name"))
+    if n:
+        cfg["name"] = n
+    return mode, cfg
+
+
 def _print_grammar(grammar_file):
     try:
         with open(grammar_file, "r", encoding="utf-8") as fh:
