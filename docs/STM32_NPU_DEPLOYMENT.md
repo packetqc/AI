@@ -296,8 +296,14 @@ creates a **causal Conv1D / TCN** grammar model on the host and exports it ready
 reusing the existing tokenizer + grammar, no transformer.
 
 ```bash
-python3 scripts/model_generation/model_create_npu_tcn.py    # calculator grammar (default)
+python3 scripts/model_generation/model_create_npu_tcn.py    # uses defaults from model_runner_config.json
 ```
+
+All user-managed values (name, version, grammar, tokenizer, epochs, lr, target, opset, …) come from the
+single config file [`scripts/model_runner_config.json`](../scripts/model_runner_config.json) — the
+scripts hardcode only structural folders + the model architecture (`embed_dim`/`seq_len`/`kernel`).
+Override per-run with CLI flags (`--name`, `--epochs`, …) or drive it from the unified runner:
+`/set name … ; /set epochs … ; /create` (re-export only: `/export`).
 
 Pipeline: reuse 374-vocab tokenizer + parse the BNF grammar → build the TCN
 (`Embedding(374→256)` + 2× causal `Conv1d(256,256,k=3)` + `Conv1d(256,374,1)` head) → train to
@@ -401,6 +407,12 @@ a thin CLI over the runner library [`scripts/classes/class_model_runner.py`](../
 is **autonomous** and the runner is a thin serial terminal (push prompt, collect output); in
 `--mode host` the runner runs `GrammarRunner` locally and queries an Ollama chat model as the grammar
 oracle.
+
+The runner is also the **management hub**: all manageable defaults live in one file
+([`scripts/model_runner_config.json`](../scripts/model_runner_config.json)) and are settable live with
+`/set` · `/get` · `/config`; from the same REPL `/create` + `/export` build the NPU model and
+`/security` runs the blackbox analyzer (`model_security_re.py`). All three run as subprocesses, so
+device mode stays dependency-free.
 
 ```mermaid
 %%{init: {'theme':'neutral'}}%%
