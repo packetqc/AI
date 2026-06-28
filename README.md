@@ -1,12 +1,16 @@
-# Local AI Model with Grammar-Driven Knowledge
+# Grammar-Driven Tiny LLMs — Local (Ollama) and On-NPU (STM32N6 Neural-ART)
+
+Train tiny language models on your own knowledge, teach them BNF/EBNF grammars, and run them two ways from one grammar conceptualization: a Qwen2 model served locally via Ollama, and a Conv1D/TCN model running natively on the STM32N6570-DK Neural-ART NPU — plus a blackbox toolkit to reverse-engineer and security-audit any loadable model.
 
 A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
 
-It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, proves it compiles **100% to NPU hardware** (`stedgeai analyze`), and generates the device C — so the trained grammar runs on-chip on the Neural-ART, with the CPU doing tokenize/embed/detokenize and the NPU running the convolution body. One grammar conceptualization, two runtimes — a Qwen2 model served locally via Ollama and a Conv1D/TCN model running natively on the STM32N6570-DK NPU — exercised by **one unified runner** that either talks to the autonomous edge device (device mode) or runs the grammar engine locally against the chat model (host mode).
+It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, and proves it compiles **100% to NPU hardware** (`stedgeai analyze`). It then generates the device C, so the trained grammar runs on-chip on the Neural-ART — the CPU doing tokenize/embed/detokenize and the NPU running the convolution body.
+
+The result is **one grammar conceptualization, two runtimes** — a Qwen2 model served locally via Ollama and a Conv1D/TCN model running natively on the STM32N6570-DK NPU — exercised by **one unified runner** that either talks to the autonomous edge device (device mode) or runs the grammar engine locally against the chat model (host mode).
 
 ## What it does
 
-The same grammar-and-training conceptualization drives two runtimes — a host model served via Ollama, and an NPU-native model running on the STM32N6 edge device.
+The same grammar-and-training conceptualization drives two runtimes — a host model served via Ollama, and an NPU-native model running on the STM32N6 edge device. A separate, independent toolkit reverse-engineers and security-audits any ready-to-load model (see [Model Security RE](#model-security-re--blackbox-analysis-of-a-loadable-model)).
 
 ### On the host — tiny Qwen2 served via Ollama
 
