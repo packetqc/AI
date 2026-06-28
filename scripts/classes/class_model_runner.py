@@ -32,8 +32,8 @@ import subprocess
 import urllib.request
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-_DEFAULT_GRAMMAR = os.path.join(os.path.dirname(_HERE), "..",
-                                "models", "grammars", "playbook_model_calculator.txt")
+_REPO = os.path.dirname(os.path.dirname(_HERE))            # scripts/classes -> scripts -> repo root
+_GRAMMAR_DIR = os.path.join(_REPO, "models", "grammars")  # structural; the grammar filename is user-managed
 
 
 def _logger():
@@ -122,39 +122,37 @@ def ollama_query_fn(model, host=None):
 # Runtime keys drive the runner itself; builder keys (None = use the sub-script's
 # own default) are forwarded as argv to model_create_npu_tcn.py by /create | /export.
 # ----------------------------------------------------------------------------
-DEFAULT_CONFIG = {
-    # runtime — used by the runner itself
-    "grammar":      _DEFAULT_GRAMMAR,   # also forwarded to the builder as --grammar
-    "port":         "/dev/ttyACM0",     # device mode
-    "baud":         115200,             # device mode
-    "boot_timeout": 12,                 # device mode
-    "model":        None,               # host mode (Ollama model name)
-    "host":         None,               # host mode (Ollama URL)
-    # builder — model_create_npu_tcn.py (None = the sub-script's own default)
-    "name":      None,
-    "version":   None,
-    "tokenizer": None,
-    "embed_dim": None,
-    "seq_len":   None,
-    "kernel":    None,
-    "epochs":    None,
-    "lr":        None,
-    "out_dir":   None,
-    "npu_dir":   None,
-    "stedgeai":  None,
-    "target":    None,
-    "net_name":  None,
-    "c_api":     None,
-    "opset":     None,
-}
+# Default VALUES for runner/CLI-manageable keys live in the external config file
+# (scripts/model_runner_config.json) — the single source of truth, shared with the
+# worker scripts. NOTHING user-managed is hardcoded here. Architecture keys
+# (embed_dim/seq_len/kernel) are intentionally left without a default — their value
+# lives in the worker (model_create_npu_tcn.py); /set still overrides them.
+_CONFIG_FILE = os.path.join(_REPO, "scripts", "model_runner_config.json")
+
+_RUNTIME_KEYS = ("grammar", "port", "baud", "boot_timeout", "model", "host")
+_ARCH_KEYS = ("embed_dim", "seq_len", "kernel")           # value lives in the worker, override-only
+_BUILDER_OPS_KEYS = ("name", "version", "tokenizer", "epochs", "lr", "out_dir",
+                     "npu_dir", "stedgeai", "target", "net_name", "c_api", "opset")
+_BUILDER_DISPLAY = _BUILDER_OPS_KEYS + _ARCH_KEYS
+_ALL_KEYS = _RUNTIME_KEYS + _BUILDER_OPS_KEYS + _ARCH_KEYS
+
+
+def _load_defaults():
+    """Load manageable default VALUES from the config file (single source of truth)."""
+    cfg = {k: None for k in _ALL_KEYS}
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as fh:
+            cfg.update({k: v for k, v in json.load(fh).items() if k in cfg})
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+
+DEFAULT_CONFIG = _load_defaults()
 
 _CFG_TYPES = {"baud": int, "boot_timeout": int, "embed_dim": int, "seq_len": int,
               "kernel": int, "epochs": int, "lr": float, "opset": int}
 _MODE_KEYS = {"device": ("port", "baud", "boot_timeout"), "host": ("model", "host")}
-_RUNTIME_KEYS = ("grammar", "port", "baud", "boot_timeout", "model", "host")
-_BUILDER_DISPLAY = ("name", "version", "tokenizer", "embed_dim", "seq_len", "kernel",
-                    "epochs", "lr", "out_dir", "npu_dir", "stedgeai",
-                    "target", "net_name", "c_api", "opset")
 _BUILDER_FLAGS = {
     "name": "--name", "version": "--version", "tokenizer": "--tokenizer",
     "grammar": "--grammar", "embed_dim": "--embed-dim", "seq_len": "--seq-len",
@@ -210,10 +208,16 @@ def _show_config(cfg, mode, args):
             if k in keys and m != mode:
                 tag = "   (%s mode)" % m
         print("    %-13s %s%s" % (k, cfg.get(k), tag))
-    print("  -- builder (model_create_npu_tcn.py; unset = script default) --")
+    print("  -- builder (model_create_npu_tcn.py) --")
     for k in _BUILDER_DISPLAY:
         v = cfg.get(k)
-        print("    %-13s %s" % (k, v if v is not None else "(default)"))
+        if v is not None:
+            shown = v
+        elif k in _ARCH_KEYS:
+            shown = "(architecture default — in worker)"
+        else:
+            shown = "(from config file)"
+        print("    %-13s %s" % (k, shown))
 
 
 def _set_config(log, cfg, args):
@@ -298,7 +302,8 @@ def run(mode, config=None, logger=None):
     cfg = dict(DEFAULT_CONFIG)
     if config:
         cfg.update({k: v for k, v in config.items() if k in cfg and v is not None})
-    grammar_file = cfg.get("grammar") or _DEFAULT_GRAMMAR
+    # the grammar filename is a user-managed atom; compose it with the structural folder
+    grammar_file = os.path.join(_GRAMMAR_DIR, cfg["grammar"]) if cfg.get("grammar") else None
 
     device = None
     host_ctx = None
@@ -314,6 +319,9 @@ def run(mode, config=None, logger=None):
     else:
         if not cfg.get("model"):
             log.log("error", "RUNNER", "model is required for host mode (--model or /set model <name>)")
+            return 1
+        if not grammar_file:
+            log.log("error", "RUNNER", "grammar is required for host mode (/set grammar <file> or config file)")
             return 1
         sys.path.insert(0, os.path.dirname(_HERE))
         from classes.class_model_grammar import ModelGrammar, GrammarRunner   # lazy (pulls gguf chain)
@@ -371,8 +379,10 @@ def run(mode, config=None, logger=None):
             if host_ctx:
                 for r in host_ctx["rules"]:
                     print("  <%s> ::= %s" % (r, host_ctx["playbook"][r]))
+            elif grammar_file:
+                _print_grammar(grammar_file)
             else:
-                _print_grammar(cfg.get("grammar") or grammar_file)
+                print("(no grammar configured)")
             continue
         if cmd in ("/create", "/export"):
             _run_builder(log, cfg, export_only=(cmd == "/export")); continue
@@ -405,12 +415,12 @@ def run(mode, config=None, logger=None):
 # ----------------------------------------------------------------------------
 # backward-compatible thin wrappers (older callers / direct imports)
 # ----------------------------------------------------------------------------
-def run_device(port="/dev/ttyACM0", grammar_file=_DEFAULT_GRAMMAR):
-    return run("device", {"port": port, "grammar": grammar_file})
+def run_device(port=None, grammar=None):
+    return run("device", {"port": port, "grammar": grammar})
 
 
-def run_host(grammar_file=_DEFAULT_GRAMMAR, model=None, host=None):
-    return run("host", {"grammar": grammar_file, "model": model, "host": host})
+def run_host(grammar=None, model=None, host=None):
+    return run("host", {"grammar": grammar, "model": model, "host": host})
 
 
 if __name__ == "__main__":

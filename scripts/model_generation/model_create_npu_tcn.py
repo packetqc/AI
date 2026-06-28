@@ -30,24 +30,44 @@ import torch
 import torch.nn as nn
 from transformers import AutoTokenizer
 
-# ── config ──────────────────────────────────────────────────────────────────────
-VERSION       = "1"
-NAME          = "model_calculator_tcn_version_" + VERSION
-TOKENIZER_DIR = "models/generated/transformer/" + NAME   # reuse 374-vocab tokenizer
-GRAMMAR_FILE  = "models/grammars/playbook_model_calculator.txt"
-OUT_DIR       = os.path.join("models", "generated", "convolutional", NAME)
-NPU_DIR       = os.path.join("models", "npu_export", NAME)
-EMBED_DIM     = 256     # C — embedding channels = NPU conv channels
-SEQ_LEN       = 32      # L — fixed window (NPU needs static shapes)
-KERNEL        = 3
-EPOCHS        = 600
-LR            = 3e-3
-OPSET         = 17          # ONNX opset for the exported body
-TARGET        = "stm32n6"   # stedgeai target
-NET_NAME      = "network"   # stedgeai network name -> network.c/.h (FSBL-coupled; change with care)
-C_API         = "st-ai"     # stedgeai C API
-STEDGEAI      = next((p for p in ("/opt/ST/STEdgeAI/4.0/Utilities/linux/stedgeai",
-                                  shutil.which("stedgeai") or "") if p and os.path.exists(p)), None)
+# ── structural layout & architecture (NOT user-managed values) ───────────────────
+# Folder layout + the model architecture stay here. Every user-managed value (which
+# grammar, model name, version, tokenizer, epochs, lr, target, ...) is read from the
+# shared config file (scripts/model_runner_config.json) so the unified runner / CLI is
+# the single source of truth — nothing user-managed is hardcoded in this script. Path
+# atoms (grammar filename, tokenizer name) compose with the structural folders below.
+GRAMMAR_DIR       = "models/grammars"                 # structural: where grammars live
+TRANSFORMER_DIR   = "models/generated/transformer"    # structural: tokenizer source root
+CONVOLUTIONAL_DIR = "models/generated/convolutional"  # structural: TCN output root
+NPU_EXPORT_DIR    = "models/npu_export"               # structural: stedgeai export root
+
+EMBED_DIM = 256     # C — embedding channels = NPU conv channels   (architecture)
+SEQ_LEN   = 32      # L — fixed window (NPU needs static shapes)    (architecture)
+KERNEL    = 3       # causal conv kernel size                       (architecture)
+
+_SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # scripts/
+_CONFIG_FILE = os.path.join(_SCRIPTS_DIR, "model_runner_config.json")
+
+
+def _load_cfg():
+    """User-managed defaults (grammar/name/version/tokenizer/epochs/lr/target/...) come
+    from the shared config file — the single source of truth, also used by the runner."""
+    try:
+        with open(_CONFIG_FILE, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+_CFG = _load_cfg()
+
+
+def _discover_stedgeai(path=None):
+    """Locate the stedgeai CLI (environment discovery, not a model config value)."""
+    if path:
+        return path
+    return next((p for p in ("/opt/ST/STEdgeAI/4.0/Utilities/linux/stedgeai",
+                             shutil.which("stedgeai") or "") if p and os.path.exists(p)), None)
 
 
 def log(tag, msg):
@@ -131,27 +151,29 @@ def main():
                     "the Neural-ART runs in hardware (the transformer path in model_create_hf_cl.py "
                     "/ model_export_npu.py exports CPU-only ONNX). Every config value below is "
                     "overridable from the CLI or from the unified runner (/set + /create | /export).")
-    ap.add_argument("--name",      default=NAME,          help="model name (output dir + file stem)")
-    ap.add_argument("--version",   default=VERSION,       help="version tag (recorded in meta.json)")
-    ap.add_argument("--tokenizer", default=TOKENIZER_DIR, help="tokenizer dir to reuse for the vocab")
-    ap.add_argument("--grammar",   default=GRAMMAR_FILE,  help="BNF/EBNF playbook grammar file")
+    ap.add_argument("--name",      default=_CFG.get("name"),      help="model name (output dir + file stem)")
+    ap.add_argument("--version",   default=_CFG.get("version"),   help="version tag (recorded in meta.json)")
+    ap.add_argument("--tokenizer", default=_CFG.get("tokenizer"),
+                    help="tokenizer name under %s/ to reuse for the vocab" % TRANSFORMER_DIR)
+    ap.add_argument("--grammar",   default=_CFG.get("grammar"),
+                    help="grammar filename under %s/" % GRAMMAR_DIR)
     ap.add_argument("--embed-dim", type=int, default=EMBED_DIM, dest="embed_dim",
-                    help="C — embedding channels = NPU conv channels")
+                    help="C — embedding channels = NPU conv channels (architecture)")
     ap.add_argument("--seq-len",   type=int, default=SEQ_LEN, dest="seq_len",
-                    help="L — fixed NPU window (static shapes)")
-    ap.add_argument("--kernel",    type=int, default=KERNEL, help="causal conv kernel size")
-    ap.add_argument("--epochs",    type=int, default=EPOCHS, help="training epochs")
-    ap.add_argument("--lr",        type=float, default=LR,   help="learning rate")
-    ap.add_argument("--out-dir",   default=None, dest="out_dir",
-                    help="output dir (default: models/generated/convolutional/<name>)")
-    ap.add_argument("--npu-dir",   default=None, dest="npu_dir",
-                    help="NPU export dir (default: models/npu_export/<name>)")
-    ap.add_argument("--stedgeai",  default=STEDGEAI, help="path to the stedgeai CLI")
-    ap.add_argument("--target",    default=TARGET,   help="stedgeai target")
-    ap.add_argument("--net-name",  default=NET_NAME, dest="net_name",
-                    help="stedgeai network name -> network.c/.h (FSBL-coupled; change with care)")
-    ap.add_argument("--c-api",     default=C_API, dest="c_api", help="stedgeai C API")
-    ap.add_argument("--opset",     type=int, default=OPSET, help="ONNX opset for the exported body")
+                    help="L — fixed NPU window, static shapes (architecture)")
+    ap.add_argument("--kernel",    type=int, default=KERNEL, help="causal conv kernel size (architecture)")
+    ap.add_argument("--epochs",    type=int, default=_CFG.get("epochs"), help="training epochs")
+    ap.add_argument("--lr",        type=float, default=_CFG.get("lr"),   help="learning rate")
+    ap.add_argument("--out-dir",   default=_CFG.get("out_dir"), dest="out_dir",
+                    help="output dir (default: %s/<name>)" % CONVOLUTIONAL_DIR)
+    ap.add_argument("--npu-dir",   default=_CFG.get("npu_dir"), dest="npu_dir",
+                    help="NPU export dir (default: %s/<name>)" % NPU_EXPORT_DIR)
+    ap.add_argument("--stedgeai",  default=_CFG.get("stedgeai"), help="path to the stedgeai CLI")
+    ap.add_argument("--target",    default=_CFG.get("target"),   help="stedgeai target")
+    ap.add_argument("--net-name",  default=_CFG.get("net_name"), dest="net_name",
+                    help="stedgeai network name -> network.c/.h (FSBL-coupled)")
+    ap.add_argument("--c-api",     default=_CFG.get("c_api"), dest="c_api", help="stedgeai C API")
+    ap.add_argument("--opset",     type=int, default=_CFG.get("opset"), help="ONNX opset for the exported body")
     ap.add_argument("--export-only", action="store_true",
                     help="export when ready: skip training, load the already-trained <name>.pt and "
                          "re-run export (ONNX + INT8) -> stedgeai analyze -> generate.")
@@ -159,20 +181,30 @@ def main():
 
     name      = args.name
     version   = args.version
-    tokenizer = args.tokenizer
-    grammar   = args.grammar
     embed_dim = args.embed_dim
     seq_len   = args.seq_len
     kernel    = args.kernel
     epochs    = args.epochs
     lr        = args.lr
-    out_dir   = args.out_dir or os.path.join("models", "generated", "convolutional", name)
-    npu_dir   = args.npu_dir or os.path.join("models", "npu_export", name)
-    stedgeai  = args.stedgeai
     target    = args.target
     net_name  = args.net_name
     c_api     = args.c_api
     opset     = args.opset
+    stedgeai  = _discover_stedgeai(args.stedgeai)
+
+    # user-managed atoms (supplied by the runner / CLI / config file) — required
+    missing = [n for n, v in (("name", name), ("grammar", args.grammar),
+                              ("tokenizer", args.tokenizer)) if not v]
+    if missing:
+        log("TCN", "missing user config (set via runner/CLI or %s): %s"
+            % (os.path.basename(_CONFIG_FILE), ", ".join(missing)))
+        return
+
+    # compose paths: structural folder (here) + user-managed atom (from config/CLI)
+    grammar   = os.path.join(GRAMMAR_DIR, args.grammar)
+    tokenizer = os.path.join(TRANSFORMER_DIR, args.tokenizer)
+    out_dir   = args.out_dir or os.path.join(CONVOLUTIONAL_DIR, name)
+    npu_dir   = args.npu_dir or os.path.join(NPU_EXPORT_DIR, name)
 
     os.makedirs(out_dir, exist_ok=True)
     os.makedirs(npu_dir, exist_ok=True)
