@@ -144,9 +144,10 @@ def _complete_candidates(buf, commands, cfg, security_subcmds, grammar_names):
     if head == "/grammar":
         return _list_grammar_files()
     if head in ("/set", "/get"):
-        # /set <key> <value> : per-key value assistance; otherwise the config key list
-        if head == "/set" and len(toks) >= 2 and (len(toks) > 2 or buf.endswith(" ")):
-            return _value_candidates(toks[1], cfg)
+        completing_value = len(toks) >= 2 and (len(toks) > 2 or buf.endswith(" "))
+        if completing_value:
+            # Tab on a value = intention to SET (value assistance); GET is a read command.
+            return _value_candidates(toks[1], cfg) if head == "/set" else []
         return sorted(cfg)
     if head == "/security":
         return list(security_subcmds)
