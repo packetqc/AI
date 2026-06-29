@@ -17,6 +17,67 @@ nocode:     grammar ──> model carries the logic ──> model emits body ─
 
 ---
 
+## Architecture & the automata model
+
+**No Turing machine had to be built.** The execution substrate already exists — Python's `exec()` is a
+universal (Turing-complete) machine. The nocode design simply makes the **model the program source**
+for it, gated by the exec policy. Mapping the runner onto automata theory:
+
+| Layer | Machine class | In the runner |
+|---|---|---|
+| Tokenize input | Finite automaton (regular) | `_tokenize_input` (regex) |
+| Parse structure | **Pushdown automaton** (context-free / BNF) | recursive-descent `_parse_rule` (left-recursion via iterative extension) |
+| Execute logic | **Turing-complete** (stored program) | `exec(body)` — the body is supplied **by the model at runtime** |
+
+So the grammar/parse is a PDA over a context-free grammar; the *logic* is a stored program the model
+emits into a universal interpreter. That stored-program-from-the-model idea is the Post-Turing flavour
+the design leans on — the runner is the universal machine, the model is the program store.
+
+### Baseline vs nocode (the inversion)
+
+```mermaid
+flowchart LR
+    G[Grammar] --> B{which path?}
+    B -->|baseline| CPU["hand-written CPU code<br/>hardcoded evaluate / side-car dict"] --> R1[result]
+    B -->|nocode| M["model carries the logic"] --> E["model emits body"] --> RUN["nocode_runner executes"] --> R2[result]
+```
+
+### Runtime flow (parse = PDA, execute = universal machine)
+
+```mermaid
+flowchart TD
+    IN["user input<br/>3 + 4  |  fibonacci"] --> LEX["tokenize<br/>(finite automaton)"]
+    LEX --> DET{auto-detect}
+    DET -->|expression| PARSE["recursive-descent parse<br/>(pushdown automaton / CFG)"]
+    DET -->|command name| WALK["walk procedure tree"]
+    PARSE --> TREE["parse tree"]
+    TREE --> NODE["per node: which op?"]
+    WALK --> TOK["per terminal: which token?"]
+    NODE --> SRC{"source body<br/>(exec policy)"}
+    TOK --> SRC
+    SRC -->|generative| ASK["query model: 'grammar token'"]
+    ASK --> OLL[("Ollama model<br/>carries the code")]
+    OLL --> BODY["emitted body"]
+    SRC -->|token_select| VOC["carried vocab"]
+    BODY --> EXEC["exec(body)<br/>(Turing-complete)"]
+    VOC --> EXEC
+    EXEC --> RES["result / side-effects"]
+```
+
+### Build pipeline (transpose → review → train)
+
+```mermaid
+flowchart LR
+    L["CPU logic<br/>class methods / command bodies"] --> TR["LogicTransposer<br/>(AST, no import)"]
+    TR --> REV{"code review<br/>240ch / 6ln"}
+    REV -->|within budget| FV["function_vocabulary"]
+    REV -->|factorable| DEC["decompose → small op tokens"] --> FV
+    REV -->|atomic big| CH["chunk [[CONT]]/[[END]]"] --> FV
+    FV --> HOOK["train hook<br/>+ dynamic capacity"] --> MODEL[("model in Ollama")]
+```
+
+---
+
 ## Pieces
 
 | Component | File | Role |
