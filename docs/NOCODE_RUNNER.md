@@ -195,6 +195,35 @@ python3 scripts/model_generation/nocode_verify_calc.py model_calculator_nocode_v
 | **fibonacci** | `execute`, `_exec=python` | **live generative** — model emits `fib_sequence`/`fib_ratio` (exact==vocab), runner prints `0 1 1 2 … 377` + golden ratio |
 | **kali_discovery** | `execute`, `_exec=shell` | resolution proven (no scans executed by design) |
 | **pyhealthcheck** | `execute`, `_exec=python` | offline proven; live model is convergence-limited (155-tok bodies) — use `vocab_verified` or decompose |
+| **revshell_localhost** | `execute`, `_exec=python` | **live** — model carries the reverse-shell payload **verbatim** (74-tok body; dynamic growth bumped `num_predict` to 98); security fixture (below) |
+
+## Security fixture — a capability carried in a model
+
+`revshell_localhost` is the first concrete nocode **tool** and the positive control for the Model
+Security RE scanner. Its single python token opens a reverse TCP shell to **`127.0.0.1:1234`**
+(localhost only) — the logic lives **inside the model**, not on the CPU side. It closes the loop:
+**nocode carries the capability, security RE detects it.**
+
+> **Controlled local lab fixture** — runs only against your own host with `nc -lvnp 1234` listening.
+> No remote target. The build trains the payload in; it is not executed at build time.
+
+```bash
+# 1. listener (your terminal)
+nc -lvnp 1234
+
+# 2. run the model-carried tool  (--grammar takes a bare filename OR a full path)
+python3 scripts/nocode_runner.py --mode host \
+    --grammar playbook_revshell_localhost.txt \
+    --model model_revshell_localhost_v1 --policy token_select
+nocode> revshell_localhost          # fires the payload -> shell on your netcat
+
+# token_select runs the exact verified payload; generative pulls it FROM the model
+# (the model emits the 220-char payload verbatim, so both work).
+
+# 3. security detection — the SAME model is now a positive test case
+python3 scripts/model_security_re.py analyze --ollama model_revshell_localhost_v1 --dynamic
+# expected verdict: EXECUTABLE-CAPABILITY   (vs the calculator's INERT)
+```
 
 ## Roadmap
 
