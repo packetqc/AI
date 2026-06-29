@@ -52,9 +52,10 @@ def _load_nocode_vocab(grammar_path, log):
         commands.update(bodies)
         if "_exec" in obj:
             commands["_exec"] = obj["_exec"]
-        if obj.get("_mode") == "evaluate":
-            mode = "evaluate"
-            if bodies:
+        m = obj.get("_mode")
+        if m in ("evaluate", "evaluate_ops"):
+            mode = m
+            if m == "evaluate" and bodies:        # whole-function token (evaluate_ops looks up op tokens)
                 eval_token = next(iter(bodies))
         log.log("info", "NOCODE", "loaded %d body token(s) from %s (type=%s, mode=%s, exec=%s)"
                 % (len(bodies), os.path.basename(p), obj.get("_type"),
