@@ -89,6 +89,31 @@ class LogicTransposer:
         "fibonacci":       {"mode": "promote", "vocab": "train_fibonacci_commands.json"},
     }
 
+    # Decomposition specs: a too-generic whole-function token (e.g. the monolithic ``evaluate``)
+    # is split into SMALL, PRECISE per-operation tokens.  Each body sets ``result`` from inputs the
+    # runner places in the namespace (``digits`` for number, ``a``/``b`` for binary operators), so a
+    # tiny model can both memorize and emit them within NUM_PREDICT.  The runner keeps only the
+    # generic parse-tree walk; the per-node compute comes from the model.
+    _DECOMPOSE = {
+        "calculator": {
+            "mode": "evaluate_ops",
+            "exec": "python",
+            "source": "decomposed (per-operator) from GrammarRunner.evaluate",
+            "tokens": {
+                "number": "result = int(''.join(str(d) for d in digits if isinstance(d, (int, float))))",
+                "op_add": "result = a + b",
+                "op_sub": "result = a - b",
+                "op_mul": "result = a * b",
+                "op_div": "result = a // b if b != 0 else None",
+            },
+        },
+    }
+
+    # Code-review budget: a transposed function token must be small + precise.  Tokens over budget
+    # are flagged "decompose" — that is what caught the monolithic ``evaluate`` (1479 chars).
+    REVIEW_MAX_CHARS = 240
+    REVIEW_MAX_LINES = 6
+
     def __init__(self, logger=None):
         self.logger = logger
 
@@ -169,16 +194,66 @@ class LogicTransposer:
         self._log("ok", "promoted %d body token(s) from %s" % (n, spec["vocab"]))
         return vocab
 
-    def emit(self, grammar_name, out_path=None):
-        """Write ``models/training/train_<grammar>_functions.json`` and return its path."""
-        vocab = self.analyze_grammar(grammar_name)
+    def decompose_grammar(self, grammar_name):
+        """Return the decomposed per-operation function-vocabulary dict (does not write).
+
+        Splits a too-generic whole-function token into small precise operation tokens that a tiny
+        model can carry and emit.  The runner walks the parse-tree structure; each node's compute
+        comes from one of these small model-emitted bodies (mode ``evaluate_ops``).
+        """
+        spec = self._DECOMPOSE.get(grammar_name)
+        if not spec:
+            raise ValueError("no decomposition spec registered for grammar '%s'" % grammar_name)
+        vocab = {
+            "_type": "function_vocabulary",
+            "_grammar": grammar_name,
+            "_exec": spec["exec"],
+            "_mode": spec["mode"],
+            "_source": spec["source"],
+        }
+        vocab.update(spec["tokens"])
+        self._log("ok", "decomposed '%s' -> %d small operation token(s)"
+                  % (grammar_name, len(spec["tokens"])))
+        return vocab
+
+    def review(self, vocab):
+        """Code-review gate: every function token must be small + precise.
+
+        Returns a list of (token, ok, detail).  Over-budget tokens are flagged for decomposition —
+        this is what catches a monolithic ``evaluate`` and routes it to ``decompose_grammar``.
+        """
+        out = []
+        for k, v in vocab.items():
+            if k.startswith("_") or not isinstance(v, str):
+                continue
+            n_chars = len(v)
+            n_lines = v.count("\n") + 1
+            ok = n_chars <= self.REVIEW_MAX_CHARS and n_lines <= self.REVIEW_MAX_LINES
+            detail = "%d chars / %d lines" % (n_chars, n_lines)
+            if not ok:
+                detail += "  >>> OVER BUDGET (%d/%d) — decompose" % (self.REVIEW_MAX_CHARS, self.REVIEW_MAX_LINES)
+            out.append((k, ok, detail))
+        return out
+
+    def emit(self, grammar_name, out_path=None, kind="analyze"):
+        """Write ``models/training/train_<grammar>_functions.json`` and return its path.
+
+        ``kind="analyze"`` lifts the whole logic (global); ``kind="decompose"`` writes the small
+        per-operation tokens.
+        """
+        vocab = self.decompose_grammar(grammar_name) if kind == "decompose" \
+            else self.analyze_grammar(grammar_name)
         if out_path is None:
             out_path = os.path.join(_TRAINING_DIR, "train_%s_functions.json" % grammar_name)
         with open(out_path, "w", encoding="utf-8") as fh:
             json.dump(vocab, fh, indent=2, ensure_ascii=False)
-        self._log("ok", "wrote %s" % os.path.relpath(out_path, _REPO))
+        self._log("ok", "wrote %s (%s)" % (os.path.relpath(out_path, _REPO), kind))
         return out_path
 
     @classmethod
     def known_grammars(cls):
         return sorted(cls._GRAMMAR_LOGIC)
+
+    @classmethod
+    def decomposable_grammars(cls):
+        return sorted(cls._DECOMPOSE)

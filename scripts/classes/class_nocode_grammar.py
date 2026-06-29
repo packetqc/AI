@@ -108,6 +108,8 @@ class NoCodeGrammarRunner(GrammarRunner):
         For non-evaluate grammars, defer to the inherited arithmetic/string evaluator so the
         subclass is safe to use everywhere.
         """
+        if self.mode == "evaluate_ops":
+            return self._evaluate_ops(node)
         if self.mode != "evaluate":
             return super().evaluate(node)
 
@@ -141,6 +143,68 @@ class NoCodeGrammarRunner(GrammarRunner):
         except Exception as exc:                                      # noqa: BLE001
             self._log("error", "emitted evaluator raised (%s) — falling back" % exc)
             return super().evaluate(node)
+
+    # --------------------------------------------------- evaluate_ops (decomposed expression grammars)
+
+    _OP_TOKEN = {"+": "op_add", "-": "op_sub", "*": "op_mul", "/": "op_div"}
+
+    def _apply(self, token, inputs):
+        """Source ``token``'s small body from the model (per policy), run it with ``inputs`` in the
+        namespace, and return the ``result`` it sets.  Falls back to the verified body on failure."""
+        body, src = self._resolve_body(token)
+        if not body:
+            self._log("error", "no body for op token '%s' (policy=%s)" % (token, self.policy))
+            return None
+        ns = self._make_ns()
+        ns.update(inputs)
+        try:
+            exec(compile(body, "<emitted:%s.%s>" % (self.grammar_name, token), "exec"), ns)  # noqa: S102
+            return ns.get("result")
+        except Exception as exc:                                      # noqa: BLE001
+            self._log("warning", "op '%s' emitted body failed (%s) — trying verified" % (token, exc))
+            vb = self.commands.get(token)
+            if vb and vb != body:
+                ns2 = self._make_ns()
+                ns2.update(inputs)
+                try:
+                    exec(compile(vb, "<verified:%s>" % token, "exec"), ns2)  # noqa: S102
+                    return ns2.get("result")
+                except Exception:                                     # noqa: BLE001
+                    pass
+            return None
+
+    def _evaluate_ops(self, node):
+        """Walk the parse tree (generic structure) and compute each node via a small model-emitted
+        operation token.  The runner owns only the tree recursion; the arithmetic lives in the model."""
+        if node is None:
+            return None
+        if "terminal" in node:
+            try:
+                return int(node["terminal"])
+            except (ValueError, TypeError):
+                return node["terminal"]
+
+        rule = node.get("rule", "")
+        cvals = [self._evaluate_ops(c) for c in node.get("children", [])]
+        nums = [v for v in cvals if isinstance(v, (int, float))]
+        ops = [v for v in cvals if isinstance(v, str) and v in "+-*/"]
+
+        if rule == "number":
+            digits = [v for v in cvals if isinstance(v, (int, float))]
+            if digits:
+                r = self._apply("number", {"digits": digits})
+                if r is not None:
+                    return r
+
+        if len(nums) == 2 and ops:
+            token = self._OP_TOKEN.get(ops[0])
+            if token:
+                return self._apply(token, {"a": nums[0], "b": nums[1]})
+
+        if len(nums) == 1:
+            return nums[0]
+
+        return "(" + " ".join(str(v) for v in cvals if v is not None) + ")"
 
     # --------------------------------------------------- execute-mode (procedure grammars)
 

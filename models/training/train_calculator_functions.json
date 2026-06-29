@@ -2,7 +2,11 @@
   "_type": "function_vocabulary",
   "_grammar": "calculator",
   "_exec": "python",
-  "_mode": "evaluate",
-  "_source": "scripts/classes/class_model_grammar.py::GrammarRunner.evaluate",
-  "evaluate": "def evaluate(node):\n    \"\"\"Walk a parse tree to a result value.\n\n        For arithmetic expression grammars: computes the numeric result.\n        For other grammars: returns a nested string representation.\n        Override this method for grammar-specific evaluation.\n        \"\"\"\n    if node is None:\n        return None\n    if 'terminal' in node:\n        try:\n            return int(node['terminal'])\n        except (ValueError, TypeError):\n            return node['terminal']\n    rule = node.get('rule', '')\n    children_vals = [evaluate(c) for c in node.get('children', [])]\n    if rule == 'number':\n        digit_strs = [str(v) for v in children_vals if isinstance(v, (int, float))]\n        if digit_strs:\n            try:\n                return int(''.join(digit_strs))\n            except ValueError:\n                pass\n    nums = [v for v in children_vals if isinstance(v, (int, float))]\n    ops = [v for v in children_vals if isinstance(v, str) and v in '+-*/']\n    if len(nums) == 2 and ops:\n        a, b, op = (nums[0], nums[1], ops[0])\n        if op == '+':\n            return a + b\n        if op == '-':\n            return a - b\n        if op == '*':\n            return a * b\n        if op == '/' and b != 0:\n            return a // b\n        if op == '/' and b == 0:\n            _log('error', 'Division by zero.')\n            return None\n    if len(nums) == 1:\n        return nums[0]\n    return '(' + ' '.join((str(v) for v in children_vals if v is not None)) + ')'"
+  "_mode": "evaluate_ops",
+  "_source": "decomposed (per-operator) from GrammarRunner.evaluate",
+  "number": "result = int(''.join(str(d) for d in digits if isinstance(d, (int, float))))",
+  "op_add": "result = a + b",
+  "op_sub": "result = a - b",
+  "op_mul": "result = a * b",
+  "op_div": "result = a // b if b != 0 else None"
 }

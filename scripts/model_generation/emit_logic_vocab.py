@@ -70,14 +70,19 @@ def main():
     ap.add_argument("--list", action="store_true", help="list grammars with a transposition spec")
     ap.add_argument("--print", dest="show", action="store_true",
                     help="print the emitted vocabulary instead of writing it")
+    ap.add_argument("--decompose", action="store_true",
+                    help="emit the SMALL per-operation tokens (decomposed) instead of the whole function")
+    ap.add_argument("--review", action="store_true",
+                    help="code-review the vocabulary: flag tokens that are too big to be precise")
     args = ap.parse_args()
 
     transposer = LogicTransposer()
+    kind = "decompose" if args.decompose else "analyze"
 
     if args.list:
         print("Grammars with a transposition spec:")
         for g in LogicTransposer.known_grammars():
-            print("  - " + g)
+            print("  - " + g + ("  [decomposable]" if g in LogicTransposer.decomposable_grammars() else ""))
         return 0
 
     if not args.grammar:
@@ -93,12 +98,27 @@ def main():
         if not ok:
             return 1
 
+    vocab = transposer.decompose_grammar(args.grammar) if kind == "decompose" \
+        else transposer.analyze_grammar(args.grammar)
+
+    if args.review:
+        print("=== code review (%s, budget %d chars / %d lines) ===" %
+              (kind, LogicTransposer.REVIEW_MAX_CHARS, LogicTransposer.REVIEW_MAX_LINES))
+        all_ok = True
+        for token, ok, detail in transposer.review(vocab):
+            all_ok = all_ok and ok
+            print("  [%s] %-10s %s" % ("OK " if ok else "BIG", token, detail))
+        print("=== review %s ===" % ("PASSED" if all_ok else "FLAGGED — decompose oversized tokens"))
+
     if args.show:
         import json
-        print(json.dumps(transposer.analyze_grammar(args.grammar), indent=2, ensure_ascii=False))
+        print(json.dumps(vocab, indent=2, ensure_ascii=False))
         return 0
 
-    path = transposer.emit(args.grammar, out_path=args.out)
+    if args.review and not args.decompose and not args.out:
+        return 0   # review-only on the analyze form: don't overwrite the trained file
+
+    path = transposer.emit(args.grammar, out_path=args.out, kind=kind)
     print("wrote: " + os.path.relpath(path, _REPO))
     return 0
 
