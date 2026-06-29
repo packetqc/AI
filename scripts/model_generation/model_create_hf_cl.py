@@ -506,13 +506,13 @@ def _reload_command_vocabularies():
                 _obj = json.load(_f)
         except Exception:
             continue
-        if isinstance(_obj, dict) and _obj.get("_type") == "command_vocabulary":
+        if isinstance(_obj, dict) and _obj.get("_type") in ("command_vocabulary", "function_vocabulary"):
             _gn = _obj.get("_grammar", "unknown")
             _cmds = {k: v for k, v in _obj.items()
                      if not k.startswith("_") and isinstance(v, str)}
             if "_exec" in _obj:                      # preserve execution mode (shell / python)
                 _cmds["_exec"] = _obj["_exec"]
-            _grammar_commands[_gn] = _cmds
+            _grammar_commands[_gn] = {**_grammar_commands.get(_gn, {}), **_cmds}
             logger.log("info", "SYSTEM",
                        "Loaded " + str(len(_cmds)) + " command(s) for '"
                        + _gn + "' grammar from " + _path
@@ -552,6 +552,28 @@ def seed_from_file(path, knowledge_texts, playbook):
         except Exception as e:
             logger.log("error", "SYSTEM", "Invalid JSON in " + path + ": " + str(e))
             return None
+        # Function vocabulary JSON (nocode): {"_type": "function_vocabulary", "_grammar": "name",
+        # "_mode": "evaluate|execute", token: body}.  UNLIKE command vocabularies, the bodies ARE
+        # trained as (prompt -> body) anchors (merged into the playbook tree) so the model carries
+        # and can EMIT the logic — nocode_runner then executes what the model pushed.  They are
+        # ALSO registered as side-car commands so the token_select / vocab-verified policies have a
+        # verified body to fall back to.  Trained prompt is "<grammar> <token>".
+        if isinstance(obj, dict) and obj.get("_type") == "function_vocabulary":
+            gname = obj.get("_grammar", "unknown")
+            bodies = {k: v for k, v in obj.items()
+                      if not k.startswith("_") and isinstance(v, str)}
+            cmds = dict(bodies)
+            if "_exec" in obj:
+                cmds["_exec"] = obj["_exec"]
+            _grammar_commands[gname] = {**_grammar_commands.get(gname, {}), **cmds}
+            ModelAssets.merge_tree(playbook, {gname: dict(bodies)})   # <- trains the bodies
+            logger.log("info", "SYSTEM",
+                       "Transposed " + str(len(bodies)) + " function token(s) for '"
+                       + gname + "' grammar from " + path
+                       + " (mode=" + obj.get("_mode", "execute")
+                       + ", exec=" + obj.get("_exec", "python") + ") -> trained + side-car")
+            return gname
+
         # Command vocabulary JSON: {"_type": "command_vocabulary", "_grammar": "name", token: cmd}
         if isinstance(obj, dict) and obj.get("_type") == "command_vocabulary":
             gname = obj.get("_grammar", "unknown")
