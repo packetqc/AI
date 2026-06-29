@@ -72,7 +72,14 @@ def _setup_host(cfg, log):
     if not cfg.get("grammar"):
         log.log("error", "NOCODE", "grammar is required — /set grammar <file>")
         return None
-    grammar_file = os.path.join(base._GRAMMAR_DIR, cfg["grammar"])
+    # Accept either a bare filename (composed with models/grammars/) or a full/relative path —
+    # so '--grammar playbook_x.txt' and '--grammar models/grammars/playbook_x.txt' both work.
+    g = cfg["grammar"]
+    grammar_file = next(
+        (c for c in (g, os.path.join(base._GRAMMAR_DIR, g),
+                     os.path.join(base._GRAMMAR_DIR, os.path.basename(g))) if os.path.isfile(c)),
+        os.path.join(base._GRAMMAR_DIR, g),
+    )
     from classes.class_model_grammar import ModelGrammar          # lazy (ML chain)
     gf = ModelGrammar.load_file(grammar_file, logger=log)
     if not gf:
