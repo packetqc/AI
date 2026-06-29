@@ -1,0 +1,7 @@
+FROM /opt/DEV/AI/models/generated/transformer/model_calculator_nocode_v1/model_calculator_nocode_v1.gguf
+
+TEMPLATE """<|endoftext|>{{ .Prompt }}"""
+
+PARAMETER stop "<|endoftext|>"
+PARAMETER temperature 0.0
+PARAMETER num_predict 64

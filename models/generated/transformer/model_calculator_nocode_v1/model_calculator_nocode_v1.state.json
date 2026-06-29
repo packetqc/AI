@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "ollama_name": "model_calculator_nocode_v1",
+  "arch": {
+    "hidden_size": 256,
+    "intermediate_size": 512,
+    "num_hidden_layers": 2,
+    "num_attention_heads": 4,
+    "num_key_value_heads": 2,
+    "max_position_embeddings": 256
+  },
+  "vocab_cap": 4096,
+  "vocab_size": 433,
+  "knowledge_texts": [
+    "The calculator grammar defines rules: expr, term, factor, number, digit.\nA expr can be expr \"+\" term, expr \"-\" term, or term.\nA term can be term \"*\" factor, term \"/\" factor, or factor.\nA factor can be \"(\" expr \")\" or number.\nA number can be digit number or digit.\nA digit can be \"0\", \"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", or \"9\"."
+  ],
+  "playbook": {
+    "calculator": {
+      "expr": "expr \"+\" term | expr \"-\" term | term",
+      "term": "term \"*\" factor | term \"/\" factor | factor",
+      "factor": "\"(\" expr \")\" | number",
+      "number": "result = int(''.join(str(d) for d in digits if isinstance(d, (int, float))))",
+      "digit": "\"0\" | \"1\" | \"2\" | \"3\" | \"4\" | \"5\" | \"6\" | \"7\" | \"8\" | \"9\"",
+      "op_add": "result = a + b",
+      "op_sub": "result = a - b",
+      "op_mul": "result = a * b",
+      "op_div": "result = a // b if b != 0 else None"
+    }
+  },
+  "grammar_name": "calculator"
+}
