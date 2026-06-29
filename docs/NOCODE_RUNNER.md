@@ -180,6 +180,42 @@ nocode> fibonacci             # command name → execute-mode → runs the proce
 In `generative` policy the logs show each body fetched from the model, e.g.
 `[model body] calculator op_add -> 14 char(s)` then executed.
 
+## Composition — grammars calling grammars (multi-grammar model)
+
+Grammars are composable: one can **call others** by referencing their root rules, and a single model
+can carry **many** grammars at once. `nocode_runner --grammar` takes multiple files; their rules +
+bodies merge into one playbook with an **owner map**, so each body is emitted under the namespace it
+was trained with.
+
+```bnf
+# playbook_combo.txt — a grammar that orchestrates two others (no tokens of its own)
+<combo> ::= <fibonacci> <greeting>
+```
+
+```bash
+# one model carrying combo + fibonacci + greeting
+python3 scripts/model_generation/model_create_hf_cl.py --build-only --name model_combo_nocode_v1 \
+    --grammar models/grammars/playbook_combo.txt \
+              models/grammars/playbook_fibonacci.txt \
+              models/grammars/playbook_greeting.txt
+
+# run all three from ONE runner + ONE model; type any grammar name (auto-detected)
+python3 scripts/nocode_runner.py --mode host --model model_combo_nocode_v1 --policy generative \
+    --grammar playbook_combo.txt playbook_fibonacci.txt playbook_greeting.txt
+nocode> combo        # descends: fibonacci (sequence + ratio) then greeting — each body FROM the model
+```
+
+**Proven live**: `model_combo_nocode_v1` emits `fibonacci fib_sequence`, `fibonacci fib_ratio`,
+`greeting say_hello` verbatim; `nocode> combo` under `generative` descends through both child grammars,
+sourcing each body from the model under its **owner namespace** (`fibonacci fib_sequence`, not
+`combo fib_sequence`).
+
+**Caveats (designed for)**: rule-name collisions across grammars → namespacing; `evaluate_ops` vs
+`execute` mode is per-grammar; deep recursion needs a call-depth guard.
+
+**TAB + history**: the runner provides readline TAB completion (commands, grammar/rule/token names,
+one level deeper, `/policy` values, `/set` keys) and persistent history (`~/.nocode_runner_history`).
+
 ## Verification
 
 ```bash
@@ -196,6 +232,7 @@ python3 scripts/model_generation/nocode_verify_calc.py model_calculator_nocode_v
 | **kali_discovery** | `execute`, `_exec=shell` | resolution proven (no scans executed by design) |
 | **pyhealthcheck** | `execute`, `_exec=python` | offline proven; live model is convergence-limited (155-tok bodies) — use `vocab_verified` or decompose |
 | **revshell_localhost** | `execute`, `_exec=python` | **live** — model carries the reverse-shell payload **verbatim** (74-tok body; dynamic growth bumped `num_predict` to 98); security fixture (below) |
+| **combo** (→ fibonacci, greeting) | `execute`, composition | **live** — one model carries 3 grammars; `nocode> combo` generatively descends into both child grammars (each body emitted under its owner namespace) |
 
 ## Security fixture — a capability carried in a model
 
@@ -227,8 +264,8 @@ python3 scripts/model_security_re.py analyze --ollama model_revshell_localhost_v
 
 ## Roadmap
 
-- **Multi-grammar model + auto-routing** — one model carrying several grammars; the runner detects
-  expression-vs-command across all loaded grammars (per-grammar lean models stay the option for
-  constrained host/NPU).
+- **Multi-grammar model + composition** — ✅ done: one model carries several grammars, the runner
+  loads + merges them, auto-detects expression-vs-command, and grammars call other grammars (see
+  Composition above). Per-grammar lean models remain the option for constrained host/NPU.
 - **NPU path** — embed/train the function bodies into the TCN model so the device emits logic too.
 - **More target languages** — Go / bash / CLI via the same `_exec` mechanism.
