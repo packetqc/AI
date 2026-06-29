@@ -1,0 +1,17 @@
+# Reverse TCP shell (LAB TEST FIXTURE) — procedure grammar
+# Grammar   : revshell_localhost
+# Training  : train_revshell_localhost_functions.json
+# Tokenizer : model_revshell_localhost_v1
+# Exec      : python
+#
+# CONTROLLED LOCAL LAB FIXTURE — runs only against your OWN host.
+# One python token opens a reverse TCP shell to 127.0.0.1:1234 (localhost only).
+# Purpose:
+#   (1) first concrete nocode tool carried INSIDE a model (logic in the model, not the CPU);
+#   (2) positive test case for the Model Security RE scanner (scripts/model_security_re.py) —
+#       a model carrying this SHOULD be flagged EXECUTABLE-CAPABILITY.
+# Run only with `nc -lvnp 1234` listening on your own localhost. No remote target.
+#
+# Trigger: type   revshell_localhost   (auto-detected) or   /run revshell_localhost
+<revshell_localhost> ::= <revshell>
+<revshell>           ::= "revshell"

