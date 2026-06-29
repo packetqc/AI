@@ -1,7 +1,7 @@
 # Fibonacci sequence — procedure grammar (demo)
 # Grammar   : fibonacci
-# Training  : train_fibonacci_commands.json
-# Tokenizer : model_fibonacci_version_1
+# Training  : train_fibonacci_functions.json
+# Tokenizer : model_fibonacci_nocode_v1
 # Exec      : python
 #
 # A simple, self-contained grammar-model conception demo: each terminal token runs an
