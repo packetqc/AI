@@ -1,0 +1,15 @@
+# Combo — a grammar that CALLS other grammars (composition demo)
+# Grammar   : combo
+# Tokenizer : model_combo_nocode_v1
+# Exec      : python
+#
+# Composition: <combo> references the ROOT rules of two OTHER grammars (fibonacci, greeting).
+# It has no tokens of its own — it orchestrates. All three grammars must be loaded/merged so the
+# runner can descend from <combo> into each child grammar's subtree and fire its tokens.
+#
+#   combo ─┬─> fibonacci ─┬─> fib_sequence
+#          │              └─> fib_ratio
+#          └─> greeting  ───> say_hello
+#
+# Trigger: type   combo   (auto-detected) or   /run combo
+<combo>  ::= <fibonacci> <greeting>

@@ -26,7 +26,10 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", default="host", choices=("host", "device"),
                     help="host = CPU logic from the model (default); device = deferred")
-    ap.add_argument("--grammar", help="grammar file under models/grammars/ (e.g. playbook_model_calculator.txt)")
+    ap.add_argument("--grammar", nargs="+", metavar="FILE",
+                    help="one or more grammar files (bare name or path). Multiple are merged so a "
+                         "composing grammar can call others, e.g. --grammar playbook_combo.txt "
+                         "playbook_fibonacci.txt playbook_greeting.txt")
     ap.add_argument("--model", help="Ollama model name (the grammar oracle)")
     ap.add_argument("--host", help="Ollama host URL (default: env/localhost)")
     ap.add_argument("--policy", default=CodeExecPolicy.DEFAULT, choices=CodeExecPolicy.ALL,

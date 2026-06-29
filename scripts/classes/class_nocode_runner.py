@@ -64,45 +64,66 @@ def _load_nocode_vocab(grammar_path, log):
 
 
 # --------------------------------------------------------------------------- backend
-def _setup_host(cfg, log):
-    """Build the host backend context for the active grammar. Returns host_ctx or None."""
-    if not cfg.get("model"):
-        log.log("error", "NOCODE", "model is required (host path) — /set model <name>")
-        return None
-    if not cfg.get("grammar"):
-        log.log("error", "NOCODE", "grammar is required — /set grammar <file>")
-        return None
-    # Accept either a bare filename (composed with models/grammars/) or a full/relative path —
-    # so '--grammar playbook_x.txt' and '--grammar models/grammars/playbook_x.txt' both work.
-    g = cfg["grammar"]
-    grammar_file = next(
+def _resolve_grammar(g):
+    """Resolve a grammar arg: bare filename (composed with models/grammars/) OR a full/relative path."""
+    return next(
         (c for c in (g, os.path.join(base._GRAMMAR_DIR, g),
                      os.path.join(base._GRAMMAR_DIR, os.path.basename(g))) if os.path.isfile(c)),
         os.path.join(base._GRAMMAR_DIR, g),
     )
-    from classes.class_model_grammar import ModelGrammar          # lazy (ML chain)
-    gf = ModelGrammar.load_file(grammar_file, logger=log)
-    if not gf:
-        log.log("error", "NOCODE", "could not load grammar '%s'" % grammar_file)
+
+
+def _setup_host(cfg, log):
+    """Build the host backend for one OR MORE grammars. Multiple grammars are merged into one
+    playbook + command set (and an owner map) so a composing grammar — e.g.
+    ``<combo> ::= <fibonacci> <greeting>`` — can descend into its child grammars and source each
+    body under the namespace it was trained with. Returns host_ctx or None."""
+    if not cfg.get("model"):
+        log.log("error", "NOCODE", "model is required (host path) — /set model <name>")
         return None
-    gname = gf["name"]
-    tree = gf["tree"]
-    playbook = tree[gname] if isinstance(tree.get(gname), dict) else tree
-    rules = list(playbook.keys())
-    start_rule = rules[0] if rules else "expr"
+    if not cfg.get("grammar"):
+        log.log("error", "NOCODE", "grammar is required — /set grammar <file> [file ...]")
+        return None
+    grammars = cfg["grammar"] if isinstance(cfg["grammar"], (list, tuple)) else [cfg["grammar"]]
+    from classes.class_model_grammar import ModelGrammar          # lazy (ML chain)
+    from classes.class_model_assets import ModelAssets
+
+    merged, names, owners, commands = {}, [], {}, {}
+    mode, eval_token = "execute", "evaluate"
+    for g in grammars:
+        gp = _resolve_grammar(g)
+        gf = ModelGrammar.load_file(gp, logger=log)
+        if not gf:
+            log.log("error", "NOCODE", "could not load grammar '%s'" % gp)
+            continue
+        names.append(gf["name"])
+        sub = gf["tree"].get(gf["name"]) if isinstance(gf["tree"].get(gf["name"]), dict) else gf["tree"]
+        for rule in sub:
+            owners.setdefault(rule, gf["name"])          # rule/token -> owning grammar (first wins)
+        ModelAssets.merge_tree(merged, sub)
+        c, m, et = _load_nocode_vocab(gp, log)
+        commands.update(c)
+        if m in ("evaluate", "evaluate_ops"):
+            mode, eval_token = m, et
+    if not names:
+        log.log("error", "NOCODE", "no grammar loaded")
+        return None
+
+    rules = list(merged.keys())
+    gname = names[0]
+    start_rule = gname if gname in merged else (rules[0] if rules else "expr")
     qfn = base.ollama_query_fn(cfg["model"], cfg.get("host"))
-    commands, mode, eval_token = _load_nocode_vocab(grammar_file, log)
 
     def make_runner():
         return NoCodeGrammarRunner(
-            grammar_name=gname, query_fn=qfn, fallback_playbook=playbook, logger=log,
-            commands=commands, policy=cfg["policy"], mode=mode, eval_token=eval_token,
+            grammar_name=gname, query_fn=qfn, fallback_playbook=merged, logger=log,
+            commands=commands, policy=cfg["policy"], mode=mode, eval_token=eval_token, owners=owners,
         )
 
-    log.log("ok", "NOCODE", "host ready — grammar='%s' mode=%s policy=%s oracle='%s'"
-            % (gname, mode, cfg["policy"], cfg["model"]))
-    return {"gname": gname, "playbook": playbook, "rules": rules, "start_rule": start_rule,
-            "mode": mode, "make_runner": make_runner}
+    log.log("ok", "NOCODE", "host ready — grammar(s)=%s mode=%s policy=%s oracle='%s'"
+            % (",".join(names), mode, cfg["policy"], cfg["model"]))
+    return {"gname": gname, "names": names, "playbook": merged, "rules": rules,
+            "start_rule": start_rule, "mode": mode, "make_runner": make_runner}
 
 
 # --------------------------------------------------------------------------- REPL
@@ -117,8 +138,58 @@ def _print_help():
     print("  <input>         expression (evaluate-mode) or procedure trigger (execute-mode)")
 
 
+def _install_nocode_completer(host_ctx):
+    """TAB completion + persistent prompt history (readline). Completes nocode commands, grammar /
+    rule / token names, /policy values, /set keys, and one level deeper into a rule's references."""
+    try:
+        import readline, atexit, re
+        rules = host_ctx["rules"]
+        playbook = host_ctx["playbook"]
+        cmds = ["/?", "/help", "/policy", "/grammar", "/set", "/create", "/export", "/bye", "exit", "quit"]
+
+        def candidates(buf):
+            toks = buf.split()
+            if (not toks) or (len(toks) == 1 and not buf.endswith(" ")):
+                return cmds + rules
+            head = toks[0].lower()
+            if head == "/policy":
+                return list(CodeExecPolicy.ALL)
+            if head == "/set":
+                if len(toks) == 1 or (len(toks) == 2 and not buf.endswith(" ")):
+                    return ["model", "grammar", "host", "policy"]
+                if len(toks) >= 2 and toks[1].lower() == "policy":
+                    return list(CodeExecPolicy.ALL)
+                if len(toks) >= 2 and toks[1].lower() == "grammar":
+                    return base._list_grammar_files()
+                return []
+            if head == "/grammar":
+                return base._list_grammar_files()
+            if toks[0] in playbook:                              # one level deeper: rule's references
+                return re.findall(r"[a-zA-Z_]\w*", str(playbook[toks[0]]))
+            return []
+
+        readline.set_completer_delims(" \t\n")
+        histfile = os.path.join(os.path.expanduser("~"), ".nocode_runner_history")
+        try:
+            readline.read_history_file(histfile)
+        except OSError:
+            pass
+        readline.set_history_length(2000)
+        atexit.register(readline.write_history_file, histfile)
+
+        def _c(text, state):
+            opts = [c for c in candidates(readline.get_line_buffer()) if c.startswith(text)]
+            return opts[state] if state < len(opts) else None
+
+        readline.set_completer(_c)
+        readline.parse_and_bind("tab: complete")
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
 def _repl(cfg, host_ctx, log):
-    log.log("info", "NOCODE", "mode=%s policy=%s — type input, /? for help, /bye to quit"
+    _install_nocode_completer(host_ctx)
+    log.log("info", "NOCODE", "mode=%s policy=%s — type input (TAB completes, up/down history), /? help, /bye quit"
             % (host_ctx["mode"], cfg["policy"]))
     gname = host_ctx["gname"]
     rules = host_ctx["rules"]
@@ -150,8 +221,9 @@ def _repl(cfg, host_ctx, log):
             continue
         if cmd == "/grammar":
             if len(parts) >= 2 and parts[1].strip():
-                cfg["grammar"] = parts[1].strip()
+                cfg["grammar"] = parts[1:]              # one or more grammar files (merged/composed)
                 return "reload"
+            print("  loaded: %s" % ", ".join(host_ctx.get("names", [gname])))
             for r in rules:
                 print("  <%s> ::= %s" % (r, host_ctx["playbook"][r]))
             continue

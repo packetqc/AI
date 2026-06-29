@@ -38,11 +38,12 @@ class NoCodeGrammarRunner(GrammarRunner):
     """A GrammarRunner whose logic is emitted by the model, not hardcoded / side-car-looked-up."""
 
     def __init__(self, *args, policy=CodeExecPolicy.DEFAULT, mode="execute",
-                 eval_token="evaluate", **kwargs):
+                 eval_token="evaluate", owners=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.policy = CodeExecPolicy.coerce(policy)
         self.mode = mode                 # "evaluate" (apply to parse tree) | "execute" (per terminal)
         self.eval_token = eval_token     # token name carrying the evaluator (evaluate-mode)
+        self.owners = owners or {}       # token/rule -> owning grammar (for cross-grammar model queries)
         self._eval_fn = None             # cached emitted evaluator for this run
 
     # --------------------------------------------------- body sourcing (the policy)
@@ -90,18 +91,22 @@ class NoCodeGrammarRunner(GrammarRunner):
         return body
 
     def _query_body(self, token):
-        """Ask the model for a token's body (continuity-aware) via prompt '<grammar> <token>'."""
+        """Ask the model for a token's body (continuity-aware) via prompt '<owner-grammar> <token>'.
+
+        ``owners`` maps a token to the grammar that defined it, so a composed grammar (combo calling
+        fibonacci/greeting) queries each body under the namespace it was trained with."""
         if self.query_fn is None:
             return None
+        ns = self.owners.get(token, self.grammar_name)
 
         def get(name):
-            r = self.query_fn(self.grammar_name + " " + name)
+            r = self.query_fn(ns + " " + name)
             self._interaction_count += 1
             return r.strip() if r is not None else None
 
         body = self._assemble(token, get)
         if body is not None:
-            self._log("info", "[model body] %s %s -> %d char(s)" % (self.grammar_name, token, len(body)))
+            self._log("info", "[model body] %s %s -> %d char(s)" % (ns, token, len(body)))
         return body
 
     def _resolve_body(self, token):

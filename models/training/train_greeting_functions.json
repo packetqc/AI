@@ -1,0 +1,8 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "greeting",
+  "_exec": "python",
+  "_mode": "execute",
+  "_description": "Trivial safe child grammar for the composition demo.",
+  "say_hello": "print('--- greeting ---')\nprint('hello from a composed grammar')"
+}

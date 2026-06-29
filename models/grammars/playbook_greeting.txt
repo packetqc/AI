@@ -1,0 +1,10 @@
+# Greeting — trivial safe procedure grammar (composition demo child)
+# Grammar   : greeting
+# Training  : train_greeting_functions.json
+# Tokenizer : model_combo_nocode_v1
+# Exec      : python
+#
+# A minimal, side-effect-free child grammar used to demonstrate grammar composition:
+# <combo> (see playbook_combo.txt) calls <greeting> as a sub-grammar.
+<greeting>   ::= <say_hello>
+<say_hello>  ::= "say_hello"
