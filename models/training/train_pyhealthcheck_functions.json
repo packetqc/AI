@@ -1,0 +1,15 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "pyhealthcheck",
+  "_exec": "python",
+  "_mode": "execute",
+  "_source": "models/training/train_python_healthcheck_commands.json",
+  "py_check_kernel": "import platform, sys\nprint('--- kernel / runtime ---')\nprint('Kernel :', platform.release())\nprint('OS     :', platform.system(), platform.machine())\nprint('Python :', sys.version.split()[0])",
+  "py_check_uptime": "import os\ndata = open('/proc/uptime').read().split()\nu = float(data[0])\nh, r = divmod(int(u), 3600)\nm, s = divmod(r, 60)\nld = os.getloadavg()\nprint('--- uptime / load ---')\nprint(f'Uptime : {h}h {m}m {s}s')\nprint(f'Load   : {ld[0]:.2f}  {ld[1]:.2f}  {ld[2]:.2f}  (1 / 5 / 15 min)')",
+  "py_check_cpu": "import os\nprint('--- cpu ---')\nprint('CPUs :', os.cpu_count())\nfor line in open('/proc/cpuinfo'):\n    if 'model name' in line or 'cpu MHz' in line:\n        print(line.rstrip())\n        break",
+  "py_check_memory": "print('--- memory ---')\nmem = {}\nfor line in open('/proc/meminfo'):\n    parts = line.split()\n    if len(parts) >= 2:\n        mem[parts[0].rstrip(':')] = int(parts[1])\ntotal = mem.get('MemTotal', 0) // 1024\navail = mem.get('MemAvailable', 0) // 1024\nswap  = mem.get('SwapTotal', 0) // 1024\nsfree = mem.get('SwapFree', 0) // 1024\nprint(f'RAM  : total={total} MB   used={total - avail} MB   avail={avail} MB')\nprint(f'Swap : total={swap} MB   free={sfree} MB')",
+  "py_check_disk": "import shutil\nprint('--- disk usage ---')\nfor mp in ['/', '/tmp']:\n    u = shutil.disk_usage(mp)\n    pct = u.used / u.total * 100\n    print(f'{mp:<6}  {u.total // 1073741824:4d} GB total   {u.used // 1073741824:4d} GB used   {u.free // 1073741824:4d} GB free   ({pct:.1f}%)')",
+  "py_check_processes": "import subprocess\nprint('--- top 8 processes by memory ---')\nr = subprocess.run(\n    ['ps', 'aux', '--sort=-%mem', '--no-headers'],\n    capture_output=True, text=True\n)\nfor line in r.stdout.splitlines()[:8]:\n    print(line)",
+  "py_check_services": "import subprocess\nprint('--- failed systemd services ---')\nr = subprocess.run(\n    ['systemctl', 'list-units', '--state=failed', '--no-pager'],\n    capture_output=True, text=True\n)\nprint(r.stdout.strip() or 'None')",
+  "py_check_ports": "import subprocess\nprint('--- open ports ---')\nr = subprocess.run(['ss', '-tuln'], capture_output=True, text=True)\nprint(r.stdout[:600])"
+}
