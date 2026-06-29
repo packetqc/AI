@@ -262,6 +262,14 @@ MAX_KNOWLEDGE_TOKENS = 2048  # per-document safety cap so a huge file can't stal
 MAX_EPOCHS = 800
 TARGET_LOSS = 5e-4
 
+# Dynamic capacity (nocode "grow the model as per the grammars/functions included"): the emission
+# window, depth and context are sized to the LONGEST body the model must carry + emit, so a build
+# that pulls in bigger function logic gets a bigger model — and small grammars (e.g. calculator
+# ops) stay at the lean defaults (no regression).
+PREDICT_MARGIN = 24           # head-room over the longest answer for the emission window
+TOKENS_PER_EXTRA_LAYER = 64   # +1 hidden layer per this many tokens in the longest body
+MAX_DYN_LAYERS = 8            # cap so a huge body can't explode training time
+
 # Default architecture dims (persisted in the state file; an old state can override these).
 ARCH_DEFAULTS = {
     "hidden_size": HIDDEN_SIZE,
@@ -320,6 +328,32 @@ def split_segments(text: str):
             if part:
                 segments.append(part)
     return segments
+
+
+def dynamic_capacity(anchor_pairs, tokenizer, arch):
+    """Return (arch_overrides, num_predict) sized to the longest body the model must carry/emit.
+
+    Driven by the grammars/functions included in this build: a model that has to memorize and emit
+    bigger logic gets more depth, a wider context, and a larger emission window. Small grammars keep
+    the lean defaults (the calculator ops stay at 2 layers / num_predict 64 — no regression)."""
+    if not anchor_pairs:
+        return {}, NUM_PREDICT
+    ans_toks = [len(tokenizer.encode(a)) for _, a in anchor_pairs]
+    full_toks = [len(tokenizer.encode(format_example(p, a))) for p, a in anchor_pairs]
+    max_ans, max_full = max(ans_toks), max(full_toks)
+
+    ctx = max(arch["max_position_embeddings"], max_full + PREDICT_MARGIN)
+    num_predict = min(ctx, max(NUM_PREDICT, max_ans + PREDICT_MARGIN))
+    base_layers = arch["num_hidden_layers"]
+    dyn_layers = min(MAX_DYN_LAYERS, max(base_layers, base_layers + max_ans // TOKENS_PER_EXTRA_LAYER))
+
+    grew = "(grown)" if (dyn_layers != base_layers or num_predict != NUM_PREDICT) else "(lean — no growth needed)"
+    logger.log("info", "SYSTEM",
+               "Dynamic capacity %s: longest body=%d tok, longest example=%d tok -> layers %d->%d, "
+               "ctx %d->%d, num_predict %d->%d"
+               % (grew, max_ans, max_full, base_layers, dyn_layers,
+                  arch["max_position_embeddings"], ctx, NUM_PREDICT, num_predict))
+    return {"num_hidden_layers": dyn_layers, "max_position_embeddings": ctx}, num_predict
 
 
 def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=None):
@@ -386,6 +420,11 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
     token_types[eos_id] = 3   # control token
     logger.log("ok", "SYSTEM", "Vocabulary: " + str(len(tokens)) + " tokens, "
                + str(len(merges)) + " merges.")
+
+    # ADAPT: grow depth / context / emission window to the longest body trained in (no-op for
+    # small grammars). Uses exact token counts now that the tokenizer exists.
+    _arch_over, eff_num_predict = dynamic_capacity(anchor_pairs, tokenizer, arch)
+    arch = dict(arch, **_arch_over)
 
     # ---- config + fresh model (architecture dims come from `arch`) ----
     config = Qwen2Config(
@@ -466,7 +505,7 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
         "model": model, "tokenizer": tokenizer, "config": config,
         "tokens": tokens, "scores": scores, "token_types": token_types,
         "merges": merges, "eos_id": eos_id,
-        "vocab_cap": eff_vocab_cap, "arch": arch,
+        "vocab_cap": eff_vocab_cap, "arch": arch, "num_predict": eff_num_predict,
     }
 
 
@@ -678,7 +717,7 @@ if not _EXTERNAL_MODEL:
         ollama_name=NAME,
         ollama_host=os.environ["OLLAMA_HOST"],
         modelfile_template=MODELFILE_TEMPLATE,
-        num_predict=NUM_PREDICT,
+        num_predict=artifacts.get("num_predict", NUM_PREDICT),
         state_path=STATE_PATH,
         logger=logger,
     )
