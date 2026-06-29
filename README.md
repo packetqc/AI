@@ -8,10 +8,13 @@ It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar
 
 The result is **one grammar conceptualization, two device paths** — the Qwen2 transformer deployed to the Cortex-M55 **CPU**, and a Conv1D/TCN deployed natively to the Neural-ART **NPU** — each exercised by **one unified runner** (`scripts/model_runner.py`) in the mode that fits the path.
 
+It also has a **nocode** evolution: instead of running a grammar's logic from hand-written CPU code, the working logic is *transposed into trainable tokens, carried inside the model, emitted at inference, and executed by a grammar-agnostic runner* (`scripts/nocode_runner.py`) — so a new or changed grammar needs **no per-grammar CPU code**. See [Nocode — Model-Carried Logic](#nocode--model-carried-logic) and [docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md).
+
 # TOC
 
 - [Install & Info](#install--info)
 - [Runner](#runner)
+- [Nocode — Model-Carried Logic](#nocode--model-carried-logic)
 - [Host Model to CPU Device](#host-model-to-cpu-device)
 - [Host Model to NPU Device](#host-model-to-npu-device)
 - [Security](#security)
@@ -284,6 +287,69 @@ From the same REPL, with config supplied by `/set` (or the config file / CLI):
 > The **host model** itself (the Qwen2 grammar model and its interactive training CLI,
 > `model_create_hf_cl.py`) is documented under [Host Model to CPU Device](#host-model-to-cpu-device);
 > the unified runner above is the operational hub that drives, builds and audits models.
+
+---
+
+# Nocode — Model-Carried Logic
+
+**The model carries the code.** The baseline runs a grammar's logic from hand-written CPU code — the
+hardcoded `GrammarRunner.evaluate()` (expression grammars) or a side-car command vocabulary
+(procedure grammars). The **nocode** track inverts that coupling: the working logic is *transposed
+into trainable tokens*, trained into the model as `("<grammar> <token>" → body)` anchors, **emitted by
+the model** at inference, and executed by a **grammar-agnostic runner** — so a new or changed grammar
+needs **no per-grammar CPU code**. Runtime infrastructure: the runner, Ollama, and the model.
+
+```
+baseline:  grammar ──> CPU code (hardcoded / side-car) ──> result
+nocode:    grammar ──> model carries logic ──> model emits body ──> nocode_runner runs it ──> result
+```
+
+The proven `model_runner.py` baseline is untouched; nocode is an additive parallel track
+(`NoCodeGrammarRunner` subclasses `GrammarRunner`).
+
+## How the model emits runnable code
+
+| Piece | File |
+|---|---|
+| Transpose CPU logic → `function_vocabulary` | `scripts/classes/class_logic_transposer.py` + `scripts/model_generation/emit_logic_vocab.py` |
+| Train the bodies as anchors (+ dynamic capacity) | `scripts/model_generation/model_create_hf_cl.py` |
+| Source each body from the model + run it | `scripts/classes/class_nocode_grammar.py` |
+| Host runner (auto-detect, `--policy`) | `scripts/nocode_runner.py` |
+| Live regression (3 policies) | `scripts/model_generation/nocode_verify_calc.py` |
+
+**Exec policy ladder** (`--policy` / `/policy`): `token_select` (vocab only) → `vocab_verified` (model
+emits, verified fallback — default) → `generative` (run the model-emitted body — the destiny).
+
+**Keeping bodies small enough to carry** (routed by the code-review gate, 240 chars / 6 lines):
+within budget → as-is · over budget & factorable → **decompose** into small per-operation tokens ·
+over budget & atomic → **continuity** `[[CONT]]`/`[[END]]` chunking (runner reassembles the whole body).
+Dynamic capacity grows depth / `num_predict` with the longest body trained in (calculator stays lean
+2 layers / 64; pyhealthcheck grows to 4 layers / 179).
+
+## Run it
+
+```bash
+source venv/bin/activate
+
+# transpose + review + train
+python3 scripts/model_generation/emit_logic_vocab.py --grammar calculator --decompose --review
+python3 scripts/model_generation/model_create_hf_cl.py --build-only \
+    --name model_calculator_nocode_v1 --grammar models/grammars/playbook_model_calculator.txt
+
+# run — the model supplies the logic; nocode_runner executes it
+python3 scripts/nocode_runner.py --mode host \
+    --grammar models/grammars/playbook_model_calculator.txt \
+    --model model_calculator_nocode_v1 --policy generative
+```
+
+```
+nocode> 3 + 4         # expression  → evaluate-mode  → Result: 7   (op bodies fetched from the model)
+nocode> fibonacci     # command name → execute-mode  → runs the procedure (model-emitted python)
+```
+
+**Proven live:** calculator (all 3 policies 6/6 incl. `generative`), fibonacci (execute-mode
+generative — model emits the python bodies, runner prints `0 1 1 2 … 377`). kali (`_exec=shell`)
+proven by resolution (no scans run). Full reference: **[docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md)**.
 
 ---
 
