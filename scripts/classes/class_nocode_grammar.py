@@ -52,20 +52,61 @@ class NoCodeGrammarRunner(GrammarRunner):
         """Whitespace-normalized form for verified comparison (the tiny model rarely matches byte-for-byte)."""
         return "\n".join(line.rstrip() for line in (s or "").strip().splitlines())
 
+    # Continuity protocol: an over-budget ATOMIC body the transposer couldn't decompose is emitted
+    # in ordered chunks ending with these markers; the runner reassembles the COMPLETE body before
+    # executing. Prompt chain: "<grammar> <token>", "<grammar> <token> §1", "<grammar> <token> §2"...
+    CONT_MARK = "[[CONT]]"
+    END_MARK = "[[END]]"
+    MAX_CHUNKS = 16
+
+    def _assemble(self, token, getter):
+        """Fetch ``token``'s body via ``getter(name) -> str|None``, following [[CONT]] continuation
+        chunks until [[END]] (or a chunk with no marker). Returns the reassembled body with markers
+        stripped. A non-chunked token returns its single body unchanged (backward compatible)."""
+        parts = []
+        name = token
+        for i in range(self.MAX_CHUNKS):
+            raw = getter(name)
+            if raw is None:
+                break
+            raw = raw.rstrip()
+            cont = raw.endswith(self.CONT_MARK)
+            end = raw.endswith(self.END_MARK)
+            if cont:
+                raw = raw[:-len(self.CONT_MARK)].rstrip("\n")
+            elif end:
+                raw = raw[:-len(self.END_MARK)].rstrip("\n")
+            parts.append(raw)
+            if cont:
+                name = "%s §%d" % (token, i + 1)
+                continue
+            break
+        if not parts:
+            return None
+        body = "\n".join(parts)
+        if len(parts) > 1:
+            self._log("info", "[continuity] reassembled '%s' from %d chunk(s) -> %d char(s)"
+                      % (token, len(parts), len(body)))
+        return body
+
     def _query_body(self, token):
-        """Ask the model for a token's body using the trained prompt '<grammar> <token>'."""
+        """Ask the model for a token's body (continuity-aware) via prompt '<grammar> <token>'."""
         if self.query_fn is None:
             return None
-        prompt = self.grammar_name + " " + token
-        emitted = (self.query_fn(prompt) or "").strip()
-        self._interaction_count += 1
-        self._log("info", "[model body #%d] %s -> %d char(s)"
-                  % (self._interaction_count, prompt, len(emitted)))
-        return emitted
+
+        def get(name):
+            r = self.query_fn(self.grammar_name + " " + name)
+            self._interaction_count += 1
+            return r.strip() if r is not None else None
+
+        body = self._assemble(token, get)
+        if body is not None:
+            self._log("info", "[model body] %s %s -> %d char(s)" % (self.grammar_name, token, len(body)))
+        return body
 
     def _resolve_body(self, token):
         """Return (body, source_label) for ``token`` per the active exec policy."""
-        vocab_body = self.commands.get(token)
+        vocab_body = self._assemble(token, lambda n: self.commands.get(n))
 
         if self.policy == CodeExecPolicy.TOKEN_SELECT:
             return vocab_body, "vocab"

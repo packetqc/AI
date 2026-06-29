@@ -216,6 +216,44 @@ class LogicTransposer:
                   % (grammar_name, len(spec["tokens"])))
         return vocab
 
+    CONT_MARK = "[[CONT]]"
+    END_MARK = "[[END]]"
+
+    @staticmethod
+    def chunk_body(body, max_chars=200):
+        """Split a body into ordered chunks at line boundaries, each <= max_chars (best effort)."""
+        chunks, cur, cur_len = [], [], 0
+        for ln in body.split("\n"):
+            if cur and cur_len + len(ln) + 1 > max_chars:
+                chunks.append("\n".join(cur))
+                cur, cur_len = [], 0
+            cur.append(ln)
+            cur_len += len(ln) + 1
+        if cur:
+            chunks.append("\n".join(cur))
+        return chunks or [body]
+
+    def chunk_grammar(self, grammar_name, max_chars=200):
+        """Continuity path: emit a whole (atomic, over-budget) function token as ordered
+        [[CONT]]/[[END]] chunks the model learns to chain, so the runner can reassemble the COMPLETE
+        body before executing. For bodies that should NOT be semantically decomposed."""
+        whole = self.analyze_grammar(grammar_name)              # whole-function token (mode=evaluate)
+        token = next(k for k in whole if not k.startswith("_"))
+        chunks = self.chunk_body(whole[token], max_chars)
+        vocab = {
+            "_type": "function_vocabulary", "_grammar": grammar_name,
+            "_exec": whole.get("_exec", "python"), "_mode": whole.get("_mode", "evaluate"),
+            "_continuity": True,
+            "_source": whole.get("_source", "") + " (continuity-chunked)",
+        }
+        for i, ch in enumerate(chunks):
+            key = token if i == 0 else "%s §%d" % (token, i)
+            mark = self.END_MARK if i == len(chunks) - 1 else self.CONT_MARK
+            vocab[key] = ch + "\n" + mark
+        self._log("ok", "chunked '%s' token '%s' -> %d continuity chunk(s)"
+                  % (grammar_name, token, len(chunks)))
+        return vocab
+
     def review(self, vocab):
         """Code-review gate: every function token must be small + precise.
 
