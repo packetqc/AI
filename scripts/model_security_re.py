@@ -123,7 +123,9 @@ def _section3(ctx, integral=False, dyn=None):
     # a CRITICAL binary/YARA signature must veto a CLEAN verdict (no CLEAN-with-critical-hit)
     yara_critical = bool(bf and any(str(y.get("severity", "")).lower() == "critical" for y in bf.get("yara", [])))
     v = threat.threat_verdict(f, yara_critical=yara_critical)
-    md = threat.render_threat(ctx["name"], f, v, bf)
+    # EVIDENCE LINE: surface the recovered/decoded payload (the actual shell) under the verdict
+    evidence = threat.select_evidence_payload(recon_bodies, f)
+    md = threat.render_threat(ctx["name"], f, v, bf, evidence_payload=evidence)
     return md, threat.threat_incident(ctx["name"], f, v, integral)
 
 

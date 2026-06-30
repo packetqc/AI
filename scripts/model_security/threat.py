@@ -176,8 +176,32 @@ def binary_forensics(path, yar_path=None):
     return res
 
 
+def select_evidence_payload(recon_bodies, findings):
+    """Pick the single most incriminating RECOVERED body to show the auditor as the
+    decoded payload. A body that carries an exec/C2 signature outranks one that does not;
+    among equals the longest (most complete) wins. Returns (key, body) or (None, None)."""
+    if not recon_bodies:
+        return None, None
+    items = list(recon_bodies.items()) if isinstance(recon_bodies, dict) \
+        else [("payload", recon_bodies)]
+
+    def _danger(body):
+        if any(re.search(pat, body, re.I) for pat in _DIRECT_SIGNATURES.values()):
+            return True
+        lb = body.lower()
+        return ("socket" in lb and "connect" in lb and any(
+            k in lb for k in ("/bin/sh", "/bin/bash", "os.dup2", "pty.spawn", "subprocess")))
+
+    cand = [(k, b) for k, b in items if isinstance(b, str) and b.strip()]
+    if not cand:
+        return None, None
+    # rank: (carries a signature, length); the most-complete dangerous body wins
+    best_key, best_body = max(cand, key=lambda kv: (_danger(kv[1]), len(kv[1])))
+    return best_key, best_body
+
+
 # ---- Section 3 render ------------------------------------------------------
-def render_threat(name, findings, verdict, bf=None):
+def render_threat(name, findings, verdict, bf=None, evidence_payload=None):
     L = ["# 3 · Security risks (generic, model-type-aware)"]
     L.append("\n## Exec-capability findings (L1 direct · L2 obfuscation · L3 agency)")
     if findings:
@@ -196,4 +220,12 @@ def render_threat(name, findings, verdict, bf=None):
         elif bf.get("yara_error"):
             L.append(f"- YARA error: {bf['yara_error']}")
     L.append(f"\n**RISK VERDICT:** {verdict}")
+    # EVIDENCE: surface the recovered/decoded payload directly under the verdict so the
+    # auditor sees the actual shell carried in the weights — not just a signature name.
+    if evidence_payload and evidence_payload[1] and not verdict.startswith("CLEAN"):
+        key, body = evidence_payload
+        L.append(f"\n**EVIDENCE — recovered payload** (decoded from the weights, `{key}`):")
+        L.append("```python")
+        L += [ln for ln in body.strip().splitlines()]
+        L.append("```")
     return "\n".join(L) + "\n"
