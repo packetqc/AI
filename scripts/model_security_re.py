@@ -127,11 +127,15 @@ def _section3(ctx, integral=False, dyn=None):
     return md, threat.threat_incident(ctx["name"], f, v, integral)
 
 
-def _section2(ctx, recon_syms, registry, assets):
+def _section2(ctx, recon_syms, registry, assets, dyn=None):
     if not registry and not assets:
         return None, None, False
     approved = integrity.load_registry(registry) if registry else integrity.load_assets_dir(assets)
-    result = integrity.check_integrity(recon_syms, approved, gguf_sha256=ctx["sha"])
+    # nocode: feed the RECONSTRUCTED bodies so integrity can flag an ADDED CAPABILITY
+    # (a new exec-capable body) even when the grammar symbols still match the approved set.
+    recon_bodies = dyn["rule_body"] if dyn else None
+    result = integrity.check_integrity(recon_syms, approved, gguf_sha256=ctx["sha"],
+                                       recon_bodies=recon_bodies)
     resolved = integrity.resolve_commands(result.get("approved")) if result["verdict"] == "INTEGRAL" else {}
     md = integrity.render_integrity(ctx["name"], result, resolved)
     return md, integrity.integrity_incident(ctx["name"], result), result["verdict"] == "INTEGRAL"
@@ -140,7 +144,7 @@ def _section2(ctx, recon_syms, registry, assets):
 def cmd_analyze(args):
     ctx = _acquire(args)
     s1, recon_syms, dyn = _section1(ctx)
-    s2, inc2, integral = _section2(ctx, recon_syms, args.registry, args.assets)
+    s2, inc2, integral = _section2(ctx, recon_syms, args.registry, args.assets, dyn)
     s3, inc3 = _section3(ctx, integral, dyn)
     ident = report.identity_block(ctx["name"], ctx["gguf"], ctx["sha"], ctx["ana"],
                                   ctx["mtype"], ctx["mode"], ctx["reason"])
@@ -179,8 +183,8 @@ def cmd_integrity(args):
     ctx = _acquire(args)
     if not args.registry and not args.assets:
         sys.exit("integrity needs --registry models/approved_models.json or --assets <dir>")
-    _, recon_syms, _ = _section1(ctx)
-    s2, inc, _ = _section2(ctx, recon_syms, args.registry, args.assets)
+    _, recon_syms, dyn = _section1(ctx)
+    s2, inc, _ = _section2(ctx, recon_syms, args.registry, args.assets, dyn)
     open(os.path.join(ctx["case"], "section2_integrity.md"), "w").write(s2)
     report.write_incidents(ctx["case"], [inc])
     print(s2)
