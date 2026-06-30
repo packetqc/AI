@@ -61,17 +61,32 @@ def _acquire(args):
 
 
 def _section1(ctx):
-    """Reconstitution: static tier always; dynamic tier only if mode permits."""
+    """Reconstitution: static tier always; dynamic tier only if mode permits.
+
+    For a NOCODE/grammar model (carries logic in the weights, trained on
+    "<grammar> <token>" anchors) the legacy vocab-seeded `reconstruct_dynamic` probes
+    the wrong namespace and recovers garbled head fragments. We detect that case from
+    BLACKBOX signals (small vocab + generative) and switch to the nocode path: discover
+    grammar roots from the model's own "routes:" manifest, then recover FULL bodies from
+    the trained namespace at num_predict=128."""
     ana = ctx["ana"]
     syms = reconstruct.discover_symbols(ana.tokenizer()["decoded"], top=40)
     dyn = None
     if ctx["mode"] == "static+dynamic":
-        dyn = reconstruct.reconstruct_dynamic(ctx["name"], syms[:12])
+        # blackbox nocode signal: a tiny grammar-built vocab (general LLMs are 30k–150k)
+        if ana.vocab_size() < 4000:
+            dyn = reconstruct.reconstruct_nocode(ctx["name"], syms[:12])
+        if not dyn or not dyn.get("rule_body"):
+            # legacy / general-model path (graceful degrade)
+            dyn = reconstruct.reconstruct_dynamic(ctx["name"], syms[:12])
     md = reconstruct.render_reconstitution(ctx["name"], ana, dyn, ctx["reason"])
     # integrity matches on the CLEAN static-discovered symbols (vocab-derived) plus the
     # underscore alias forms the dynamic probes leaked — but NOT free-text probe noise,
     # which would wreck precision and falsely flag a genuine model as TAMPERED.
     recon_syms = set(syms)
+    # nocode grammar roots are first-class symbols (blackbox-discovered, not host files)
+    for r in (dyn or {}).get("roots", []):
+        recon_syms.add(r)
     if dyn:
         _noise = {"defined", "routes", "rules", "color", "green", "red", "good", "bad", "always"}
         for body in dyn["rule_body"].values():

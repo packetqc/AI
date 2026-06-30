@@ -143,6 +143,178 @@ def reconstruct_dynamic(name, seeds):
     return {"seeds": seeds, "rule_body": rule_body, "recovered": recovered, "transcript": transcript}
 
 
+# ---- DYNAMIC tier · NOCODE namespace --------------------------------------
+# A nocode/grammar model is trained on "<grammar> <token>" anchors: the prompt is a
+# grammar name + a route token, the completion is the BODY (a code payload, a BNF rule,
+# or a sub-route list). When probed bare it self-describes — it emits a "routes: A, B, C"
+# manifest. We use that emission (blackbox-safe — only the model + live queries) to
+# discover the grammar roots, then probe the TRAINED namespace to recover full bodies.
+
+# the model self-describes when nudged — these blackbox probes elicit a "routes:" manifest
+_ROUTE_PROBES = ("routes", "routes:", "rules", "list", "grammars")
+# a recovered body that LOOKS like a payload (code / BNF) rather than another route list
+_BODY_HINT = re.compile(
+    r"""import\s|def\s|socket\.|subprocess|os\.(system|dup2)|/bin/|\bprint\s*\(|"""
+    r"""\beval\s*\(|\bexec\s*\(|::=|\|\s|=\s*\d|range\s*\(""", re.I)
+
+
+def _is_manifest(resp):
+    """A route MANIFEST (`routes: a, b, c` or a short comma-list of identifiers) vs a
+    recovered BODY (code / BNF). We only mine routes from manifests — a code body parsed
+    as routes would inject payload fragments (socket, import, dup2) into the root list."""
+    s = resp.strip()
+    if _BODY_HINT.search(s):
+        return False
+    if re.match(r"\s*routes?\s*:", s, re.I):
+        return True
+    # bare comma list of <=6 identifier atoms, no code punctuation
+    atoms = [a for a in re.split(r"[,\s]+", s) if a]
+    return bool(atoms) and len(atoms) <= 6 and all(
+        re.fullmatch(r"[<\"]?_?[A-Za-z][A-Za-z0-9_]*[>\"]?[.:,]?", a) for a in atoms)
+
+
+def _parse_routes(resp):
+    """Pull route names out of a route MANIFEST emission. Handles `routes: a, b, c`,
+    a bare `a, b, c` comma list, and `expr term factor ...` head. Returns clean
+    identifier tokens (the grammar root tends to be first).
+
+    Leading-underscore atoms (`_localhost`) are a quirk of the trained anchor format
+    `"<grammar> <token>"` where the grammar name is `<token>_<suffix>` (e.g.
+    `revshell_localhost`). We emit BOTH the bare core (`localhost`) AND, when a prior
+    atom exists, the compound `<prev>_<core>` (`revshell_localhost`) so the canonical
+    grammar root is among the candidates."""
+    s = resp.strip()
+    m = re.search(r"routes?\s*:?\s*(.+)", s, re.I)
+    payload = m.group(1) if m else s
+    atoms = re.split(r"[,\s|]+", payload)
+    out, prev_core, had_uscore, uscore_suffixes = [], None, False, []
+    for a in atoms:
+        a = a.strip().strip("\"'<>.:;()")
+        uscore = a.startswith("_")
+        core = a.lstrip("_")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{1,}", core) or core.lower() == "routes":
+            continue
+        if core not in out:
+            out.append(core)
+        if uscore:
+            had_uscore = True
+            if core not in uscore_suffixes:
+                uscore_suffixes.append(core)
+            # `_localhost` after `revshell` → also offer the compound `revshell_localhost`
+            if prev_core and "_" not in core:
+                comp = f"{prev_core}_{core}"
+                if comp not in out:
+                    out.append(comp)
+        prev_core = core
+    # if any underscore-suffix appeared, also offer every <root>_<suffix> combination
+    if had_uscore:
+        for b in list(out):
+            for suf in uscore_suffixes:
+                comp = f"{b}_{suf}"
+                if "_" not in b and b != suf and comp not in out:
+                    out.append(comp)
+    return out
+
+
+def discover_grammar_roots(name, seed_syms=(), max_probe=16):
+    """BLACKBOX discovery: probe the model and parse its self-described "routes: ..."
+    manifests to recover grammar roots + their route tokens. Returns
+    (roots_in_order, transcript). Never reads host grammar/training files.
+
+    Roots are mined ONLY from responses that look like a route manifest (see
+    _is_manifest) — code bodies are never parsed as routes, so payload fragments don't
+    pollute the root set. Static vocab symbols are a LAST-RESORT seed (only when the
+    model emits no manifest at all)."""
+    transcript, seen, queue, order = [], set(), [], []
+
+    def _push(tok):
+        t = tok.strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower()); queue.append(t); order.append(t)
+
+    for p in _ROUTE_PROBES:
+        resp = _ollama_generate(name, p, n=64).strip().replace("\n", " ")
+        kind = "manifest" if _is_manifest(resp) else "body/other"
+        transcript.append(f"  {p!r:14} [{kind}] -> {resp[:90]}")
+        if _is_manifest(resp):
+            for tok in _parse_routes(resp):
+                _push(tok)
+    # only fall back to vocab seeds if the model printed no manifest at all
+    if not order:
+        for s in list(seed_syms)[:8]:
+            _push(s)
+    # BFS: re-probe each discovered name; expand ONLY when the response is a manifest
+    probed, i = 0, 0
+    while i < len(queue) and probed < max_probe:
+        root = queue[i]; i += 1; probed += 1
+        resp = _ollama_generate(name, root, n=64).strip().replace("\n", " ")
+        if _is_manifest(resp):
+            transcript.append(f"  expand {root!r:12} -> {resp[:80]}")
+            for tok in _parse_routes(resp):
+                _push(tok)
+    return order, transcript
+
+
+def _body_score(resp):
+    """Rank a recovered completion: a clean code/BNF body beats a route-manifest echo;
+    more lines and length break ties (the full payload outscores a head fragment)."""
+    hint = 2 if _BODY_HINT.search(resp) else 0
+    route_echo = -1 if re.match(r"\s*routes?\s*:", resp, re.I) else 0
+    # penalise obviously corrupted fragments (digit-glued tokens like `SOCK12`, `s0.0.1`)
+    garble = -1 if re.search(r"[A-Za-z]\d{2,}|\b\w\d\.\d", resp) else 0
+    return (hint + route_echo + garble, resp.count("\n"), len(resp))
+
+
+def recover_nocode_bodies(name, roots, n=128, max_pairs=48):
+    """Probe the TRAINED "<grammar> <token>" namespace over the discovered roots and
+    keep, PER GRAMMAR ROOT, the single cleanest payload-like completion. Returns a
+    rule_body dict keyed by "grammar token" + the full raw transcript.
+
+    Larger `num_predict` (≈128) recovers the FULL body — the previous vocab-seeded
+    probes at n=48 only caught garbled head fragments. Bodies are deduped (canonical
+    per root) so the threat scan still sees every distinct payload while the report
+    stays readable."""
+    transcript, raw, best_per_root = [], {}, {}
+    pairs, seen = [], set()
+    for g in roots:
+        for t in roots:
+            key = f"{g} {t}"
+            if key not in seen:
+                seen.add(key); pairs.append((g, t, key))
+    for g, t, key in pairs[:max_pairs]:
+        resp = _ollama_generate(name, key, n=n).strip()
+        if not resp:
+            continue
+        raw[key] = resp
+        transcript.append(f"  {key!r:32} -> {resp[:80].replace(chr(10),' / ')}")
+        sc = _body_score(resp)
+        # only meaningful completions are candidates for a recovered body
+        if (_BODY_HINT.search(resp) or resp.count("\n") >= 1):
+            cur = best_per_root.get(g)
+            if cur is None or sc > cur[1]:
+                best_per_root[g] = (key, sc, resp)
+    rule_body = {v[0]: v[2] for v in best_per_root.values()}
+    return {"rule_body": rule_body, "raw": raw, "transcript": transcript}
+
+
+def reconstruct_nocode(name, seed_syms=()):
+    """NOCODE reconstruction entry point: discover grammar roots blackbox, then recover
+    full bodies from the trained "<grammar> <token>" namespace. Returns a dyn dict shape-
+    compatible with reconstruct_dynamic (seeds / rule_body / recovered / transcript) so
+    the downstream threat scan (_section3) and Section-1 render consume it unchanged."""
+    roots, disc_tr = discover_grammar_roots(name, seed_syms)
+    bodies = recover_nocode_bodies(name, roots) if roots else {"rule_body": {}, "raw": {}, "transcript": []}
+    transcript = ["# grammar-root discovery (blackbox 'routes:' manifest)"] + disc_tr
+    transcript += ["", "# trained-namespace body recovery (<grammar> <token>, num_predict=128)"]
+    transcript += bodies["transcript"]
+    return {"seeds": list(bodies["rule_body"].keys()) or roots,
+            "roots": roots,
+            "rule_body": bodies["rule_body"],
+            "recovered": bodies["raw"],
+            "transcript": transcript,
+            "nocode": True}
+
+
 def _decode_sym(s):
     return RECON_LEXICON.get(re.sub(r"[^a-z0-9]", "", s.lower()))
 
@@ -195,7 +367,20 @@ def render_reconstitution(name, ana, dyn=None, mode_reason=""):
         L.append(f"- recon tool tokens carried directly: {inv['tools']}")
     L.append(f"- digit terminals: {digits}  ·  operator terminals: {ops}")
     # dynamic tier
-    if dyn:
+    if dyn and dyn.get("nocode"):
+        rb = dyn["rule_body"]
+        roots = dyn.get("roots", [])
+        L.append("\n## Reconstructed bodies (nocode — trained `<grammar> <token>` namespace)")
+        L.append(f"_grammar roots discovered blackbox: {roots};_ "
+                 f"_{len(rb)} body(ies) recovered verbatim from the weights (num_predict=128):_")
+        L.append("```")
+        for key, body in rb.items():
+            L.append(f"  {key} ::=")
+            for ln in (body or "").splitlines() or [""]:
+                L.append(f"      {ln}")
+            L.append("")
+        L.append("```")
+    elif dyn:
         rb = dyn["rule_body"]
         recon = sum(1 for b in rb.values() if b)
         L.append("\n## Reconstructed grammar (decoded — leaves shown as their meaning)")
