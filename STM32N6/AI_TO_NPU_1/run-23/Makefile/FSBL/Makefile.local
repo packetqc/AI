@@ -108,6 +108,32 @@ $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/nocode_dispatch.o
 $(BUILD_DIR)/nocode_dispatch.o: ../../FSBL/Core/Src/nocode_dispatch.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+# --- LCD/LTDC display: enable the LTDC HAL module (regen-proof, via -D not hal_conf.h) + build the
+#     LTDC HAL driver (copied into run-23) + MX_LTDC_Init (ltdc.c) + panel bring-up (lcd.c) ---
+C_DEFS  += -DHAL_LTDC_MODULE_ENABLED
+OBJECTS += $(BUILD_DIR)/ltdc.o $(BUILD_DIR)/lcd.o $(BUILD_DIR)/stm32n6xx_hal_ltdc.o $(BUILD_DIR)/stm32n6xx_hal_ltdc_ex.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/ltdc.o $(BUILD_DIR)/lcd.o $(BUILD_DIR)/stm32n6xx_hal_ltdc.o $(BUILD_DIR)/stm32n6xx_hal_ltdc_ex.o
+$(BUILD_DIR)/ltdc.o: ../../FSBL/Core/Src/ltdc.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+$(BUILD_DIR)/lcd.o: ../../FSBL/Core/Src/lcd.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+$(BUILD_DIR)/stm32n6xx_hal_ltdc.o: ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_ltdc.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+$(BUILD_DIR)/stm32n6xx_hal_ltdc_ex.o: ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_ltdc_ex.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
+# --- PSRAM (XSPI1): map @0x90000000 via the board BSP + self-test (framebuffer + app data) ---
+OBJECTS += $(BUILD_DIR)/psram.o $(BUILD_DIR)/stm32n6570_discovery_xspi.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/psram.o $(BUILD_DIR)/stm32n6570_discovery_xspi.o
+$(BUILD_DIR)/psram.o: ../../FSBL/Core/Src/psram.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+$(BUILD_DIR)/stm32n6570_discovery_xspi.o: ../../Drivers/BSP/STM32N6570-DK/stm32n6570_discovery_xspi.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+OBJECTS += $(BUILD_DIR)/aps256xx.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/aps256xx.o
+$(BUILD_DIR)/aps256xx.o: ../../Drivers/BSP/Components/aps256xx/aps256xx.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 # the generated link rule doesn't list the linker script as a prereq, so .ld edits

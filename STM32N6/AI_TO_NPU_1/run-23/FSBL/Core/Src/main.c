@@ -30,6 +30,8 @@
 #include "network_tokens.h"          /* device tokenizer support (rule prompts + decode) */
 #include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
 #include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
+#include "lcd.h"                     /* LTDC + panel bring-up (display) */
+#include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
 // #include "llm_fsbl.h"
@@ -349,6 +351,11 @@ int main(void)
       else    printf("\r\nNPU self-test: %s -> parse failed\r\n", expr);
     }
   }
+
+  /* LCD: prove the LTDC -> panel path with a solid background colour (no framebuffer, no PSRAM).
+   * PSRAM mapping (for the LVGL framebuffer) is deferred — run-23's MX_XSPI1_Init conflicts with the
+   * BSP RAM init and resets; revisit with a non-conflicting sequence. */
+  LCD_Init();
 
   /* Autonomous on-chip calculator over the ST-Link VCP (USART1 / huart1). The device does
    * ALL the work — this proves edge autonomy. The host unified runner in `--mode device` is a
@@ -704,6 +711,10 @@ static void MX_RAMCFG_Init(void)
   RIMC_master.MasterCID = RIF_CID_1;
   RIMC_master.SecPriv = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_NPRIV;
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_ETH1, &RIMC_master);
+
+  /* LTDC masters (display) — grant PSRAM access so the framebuffer DMA can read it (else black). */
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC1, &RIMC_master);
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC2, &RIMC_master);
 
   RIMC_master.MasterCID = RIF_CID_0;
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_SDMMC2, &RIMC_master);
