@@ -283,7 +283,11 @@ class ModelAssets:
     def export_gguf(self):
         """Write the current model weights + fixed tokenizer to ``self.gguf_path``."""
         self._log("info", "Exporting current model weights to GGUF...")
-        writer = GGUFWriter(self.gguf_path, arch=self.config.model_type)
+        # The GGUF/llama.cpp arch name is not always the HF model_type. Mistral is architecturally
+        # identical to Llama here (same tensor layout — no qk-norm, no qkv-bias) and the legacy
+        # llama.cpp engine has no separate 'mistral' loader, so it ships under the 'llama' arch.
+        gguf_arch = {"mistral": "llama"}.get(self.config.model_type, self.config.model_type)
+        writer = GGUFWriter(self.gguf_path, arch=gguf_arch)
 
         writer.add_name(self.ollama_name)
         writer.add_context_length(self.config.max_position_embeddings)
@@ -293,6 +297,13 @@ class ModelAssets:
         writer.add_head_count(self.config.num_attention_heads)
         writer.add_head_count_kv(self.config.num_key_value_heads)
         writer.add_layer_norm_rms_eps(self.config.rms_norm_eps)
+        # Architectures that decouple head_dim from hidden_size/n_head (e.g. qwen3: head_dim=128 while
+        # hidden//heads=64) MUST declare key/value length, or llama.cpp derives the wrong head_dim
+        # from n_embd/n_head and the load fails. Harmless to write when they coincide.
+        _head_dim = getattr(self.config, "head_dim", None)
+        if _head_dim and _head_dim != self.config.hidden_size // self.config.num_attention_heads:
+            writer.add_key_length(_head_dim)
+            writer.add_value_length(_head_dim)
 
         # Tokenizer block (must match the Qwen2 regex the tokenizer was trained with).
         writer.add_tokenizer_model("gpt2")
@@ -319,6 +330,8 @@ class ModelAssets:
                 f"model.layers.{i}.self_attn.v_proj.weight":         f"blk.{i}.attn_v.weight",
                 f"model.layers.{i}.self_attn.v_proj.bias":           f"blk.{i}.attn_v.bias",
                 f"model.layers.{i}.self_attn.o_proj.weight":         f"blk.{i}.attn_output.weight",
+                f"model.layers.{i}.self_attn.q_norm.weight":         f"blk.{i}.attn_q_norm.weight",   # qwen3 qk-norm
+                f"model.layers.{i}.self_attn.k_norm.weight":         f"blk.{i}.attn_k_norm.weight",   # qwen3 qk-norm
                 f"model.layers.{i}.post_attention_layernorm.weight": f"blk.{i}.ffn_norm.weight",
                 f"model.layers.{i}.mlp.gate_proj.weight":            f"blk.{i}.ffn_gate.weight",
                 f"model.layers.{i}.mlp.up_proj.weight":              f"blk.{i}.ffn_up.weight",

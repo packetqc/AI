@@ -245,6 +245,7 @@ python3 scripts/model_generation/model_create_hf_cl.py --build-only --name <mode
 | `--max-epochs N` | cap training epochs (default 800) — register a usable model fast on a slow CPU / heavy corpus (pairs with `--warm`) |
 | `--target-loss L` | stop at loss < L (default `5e-4`) — loosen for a faster, good-enough model |
 | `--build-only` | train → export GGUF → register with Ollama → exit (no REPL) |
+| `--arch <family>` | base architecture for an **empty** build: `qwen2` (default) · `qwen3` · `llama` · `mistral`. Inherited automatically by `--from`/`--warm` (the source model's `model_type`). |
 
 Re-run with the same `--name` + new `--grammar` to **upgrade in place** (restores state, trains the union).
 
@@ -356,8 +357,11 @@ default, `nocode_runner` then loads all four grammars on a plain `python3 script
 
 ## Model creation: sources & architectures
 
-> **Status (branch `multimodel-arch`):** ① empty + ② existing-ours are live today; ③ external-open
-> and multi-arch profiles are the in-progress evolution. This section is the design contract.
+> **Status (branch `multimodel-arch`):** ① empty (`--arch`) and ② existing-ours (`--from`/`--warm`,
+> arch inherited) are **live with multi-arch** — `qwen2` (default) · `qwen3` · `llama` · `mistral`,
+> via the `ARCH_PROFILES` registry below. ③ external-open (`--from-external`) is the remaining step.
+> Verified host→CPU end-to-end: `llama` (fibonacci) converged + GGUF-tagged + registered; the
+> `revshell_param` × {qwen2, qwen3, llama, mistral} matrix is the full check.
 
 A model is created from one of **three sources** — the source decides how much the user must specify,
 because the architecture + template (the "essential information") is either chosen, inherited, or

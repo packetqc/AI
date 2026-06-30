@@ -14,7 +14,8 @@ import numpy as np
 from gguf import GGUFWriter
 
 from transformers import Qwen2Config, Qwen2TokenizerFast, Qwen2ForCausalLM
-from transformers import AutoTokenizer
+from transformers import Qwen3Config, Qwen3ForCausalLM, LlamaConfig, LlamaForCausalLM, MistralConfig, MistralForCausalLM
+from transformers import AutoTokenizer, AutoConfig, AutoModelForCausalLM
 from tokenizers import Tokenizer, models, trainers, pre_tokenizers, decoders, processors, Regex
 
 #################################################################################################
@@ -84,6 +85,12 @@ _parser.add_argument(
     "--build-only", action="store_true",
     help="Train, export GGUF, register with Ollama, then exit — no interactive session "
          "(used by the unified runner's /create in host mode).",
+)
+_parser.add_argument(
+    "--arch", metavar="NAME", default="qwen2",
+    choices=["qwen2", "qwen3", "llama", "mistral"],
+    help="Base architecture for an EMPTY (from-scratch) build: qwen2 (default) | qwen3 | llama | "
+         "mistral. Ignored by --from/--warm (the arch is inherited from the source model).",
 )
 _args = _parser.parse_args()
 # Ordered: user training → user grammars → built-in defaults
@@ -319,6 +326,31 @@ ARCH_DEFAULTS = {
     "max_position_embeddings": CONTEXT_LENGTH,
 }
 
+# Architecture profiles (nocode multi-arch). The tokenizer, boundary token (<|endoftext|>) and the
+# Modelfile TEMPLATE stay CONSTANT across archs because we train our OWN byte-level BPE — only the HF
+# Config/Model classes and the attention bias differ. ``model_type`` comes from the Config class, so
+# the GGUF arch tag (GGUFWriter arch=config.model_type) follows automatically; the GGUF tensor map
+# skips absent tensors (qwen2 qkv-bias) and includes qwen3 qk-norm when present.
+ARCH_PROFILES = {
+    "qwen2":   {"config_cls": Qwen2Config,   "model_cls": Qwen2ForCausalLM,   "attention_bias": True},
+    "qwen3":   {"config_cls": Qwen3Config,   "model_cls": Qwen3ForCausalLM,   "attention_bias": False},
+    "llama":   {"config_cls": LlamaConfig,   "model_cls": LlamaForCausalLM,   "attention_bias": False},
+    "mistral": {"config_cls": MistralConfig, "model_cls": MistralForCausalLM, "attention_bias": False},
+}
+
+
+def resolve_arch_name(warm_from):
+    """① empty -> --arch ; ② from/warm -> inherit the source model's arch (its config.json
+    ``model_type``), so an upgrade keeps the family it was built with."""
+    if warm_from:
+        try:
+            mt = AutoConfig.from_pretrained(warm_from).model_type
+            if mt in ARCH_PROFILES:
+                return mt
+        except Exception:                                    # noqa: BLE001
+            pass
+    return _args.arch if _args.arch in ARCH_PROFILES else "qwen2"
+
 
 def required_vocab_cap(corpus_texts, floor):
     """How big the BPE vocabulary should be to give the corpus' words first-class tokens.
@@ -403,8 +435,8 @@ def _warm_start(model, tokenizer, warm_from, logger):
     STRING (robust to vocab/ID changes) + every vocab-independent layer tensor whose shape matches.
     New tokens / new layers keep their fresh init — so an upgrade converges from what the source knew."""
     import torch as _torch
-    src_model = Qwen2ForCausalLM.from_pretrained(warm_from)
-    src_tok = Qwen2TokenizerFast.from_pretrained(warm_from)
+    src_model = AutoModelForCausalLM.from_pretrained(warm_from)   # any family (qwen2/qwen3/llama/mistral)
+    src_tok = AutoTokenizer.from_pretrained(warm_from)
     src_vocab = src_tok.get_vocab()
     with _torch.no_grad():
         src_embed = src_model.get_input_embeddings().weight.data
@@ -497,17 +529,22 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
     _arch_over, eff_num_predict = dynamic_capacity(anchor_pairs, tokenizer, arch)
     arch = dict(arch, **_arch_over)
 
-    # ---- config + fresh model (architecture dims come from `arch`) ----
-    config = Qwen2Config(
+    # ---- config + fresh model (architecture dims from `arch`, family from the ARCH profile) ----
+    _arch_name = resolve_arch_name(warm_from)
+    _prof = ARCH_PROFILES[_arch_name]
+    config = _prof["config_cls"](
         vocab_size=len(tokens),
         hidden_size=arch["hidden_size"], intermediate_size=arch["intermediate_size"],
         num_hidden_layers=arch["num_hidden_layers"], num_attention_heads=arch["num_attention_heads"],
         num_key_value_heads=arch["num_key_value_heads"], max_position_embeddings=arch["max_position_embeddings"],
-        architectures=["Qwen2ForCausalLM"], model_type="qwen2",
+        architectures=[_prof["model_cls"].__name__],
     )
-    config.attention_bias = True
+    if _prof.get("attention_bias"):
+        config.attention_bias = True
     config.save_pretrained("./" + model_path)
-    model = Qwen2ForCausalLM(config).to(DEVICE)
+    logger.log("ok", "SYSTEM", "Architecture: %s (%s, attention_bias=%s)"
+               % (_arch_name, _prof["model_cls"].__name__, bool(_prof.get("attention_bias"))))
+    model = _prof["model_cls"](config).to(DEVICE)
     model.resize_token_embeddings(len(tokens), mean_resizing=False)
     if warm_from:
         try:
