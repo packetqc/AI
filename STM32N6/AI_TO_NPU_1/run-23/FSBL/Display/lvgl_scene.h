@@ -9,7 +9,9 @@ extern "C" {
 #endif
 
 void lvgl_scene_build(void);                              /* build_scene_cb for lvgl_port_n6_init */
-void lvgl_scene_tick(unsigned long frame, unsigned long hb);  /* update the live status label */
+void lvgl_scene_tick(unsigned long frame, unsigned long hb);  /* per-frame: SW-LED blink + full repaint */
+void lvgl_scene_set_prompt(const char *s);                /* L2 content top: the inference request  */
+void lvgl_scene_set_answer(const char *s);                /* L2 content bottom: the inference response */
 
 #ifdef __cplusplus
 }

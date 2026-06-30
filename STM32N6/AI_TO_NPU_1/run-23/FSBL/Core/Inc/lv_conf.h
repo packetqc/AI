@@ -56,24 +56,22 @@
 
 #if LV_USE_STDLIB_MALLOC == LV_STDLIB_BUILTIN
     /*Size of the memory available for `lv_malloc()` in bytes (>= 2kB)*/
-    #define LV_MEM_SIZE (256 * 1024U)         /*[bytes] — reduced from 512K
-                                                 to free RAM for the FFT-trace
-                                                 lv_image buffer (700×320 RGB565
-                                                 in .late_buf, 437 KB) added
-                                                 alongside the waterfall buffer.
-                                                 Per-row/per-column invalidates
-                                                 keep SW renderer tmp_buf allocs
-                                                 small (1400-640 B per dirty
-                                                 strip) so 256K heap is plenty. */
+    #define LV_MEM_SIZE (256 * 1024U)         /*[bytes] — run-23: 256K in free PSRAM. The 64K AXISRAM
+                                                 tail was both too small AND inside WEIGHTS_RAM (the
+                                                 ll_aton pool), so inference scratch stomped the LVGL
+                                                 object tree -> widgets vanished. PSRAM has room. */
 
     /*Size of the memory expand for `lv_malloc()` in bytes*/
     #define LV_MEM_POOL_EXPAND_SIZE 0
 
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
-    #define LV_MEM_ADR 0x90400000U   /* run-23: LVGL heap in cacheable PSRAM beyond the 4MB FB/MPU
-                                       * region. (Non-cacheable @0x90200000 was tried — it just made
-                                       * the slow heap blank the screen, and didn't fix the glitch, so
-                                       * the cacheable-heap-vs-ATON-full-invalidate theory was wrong.) */
+    #define LV_MEM_ADR 0x90400000U   /* run-23: LVGL heap in PSRAM at 0x90400000 — 4MB into the 32MB
+                                       * APS256, PAST both framebuffers (0x90000000..0x901C0000) and
+                                       * OUTSIDE every NPU region (WEIGHTS_RAM 0x34064000-0x34100000,
+                                       * AI_RAM 0x34200000-0x34280000). The earlier 0x340F0000 spot was
+                                       * inside WEIGHTS_RAM (ll_aton's pool) so inference scratch
+                                       * corrupted the object tree. ISR=0 proved there is no LTDC
+                                       * underrun, so "heap must leave PSRAM" was a false lead. */
     /*Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc*/
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE
@@ -505,7 +503,7 @@
 #define LV_FONT_MONTSERRAT_22 0
 #define LV_FONT_MONTSERRAT_24 0
 #define LV_FONT_MONTSERRAT_26 0
-#define LV_FONT_MONTSERRAT_28 0
+#define LV_FONT_MONTSERRAT_28 0   /* run-23: AXISRAM2 ROM region too tight (~4K free) for 28px glyphs */
 #define LV_FONT_MONTSERRAT_30 0
 #define LV_FONT_MONTSERRAT_32 0
 #define LV_FONT_MONTSERRAT_34 0

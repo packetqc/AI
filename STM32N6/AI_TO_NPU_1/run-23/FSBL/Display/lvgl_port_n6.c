@@ -52,11 +52,23 @@ static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px
      * next VERTICAL BLANKING (SRCR.VBR) — an atomic swap, so the LTDC never DMA-reads a buffer being
      * drawn. This is the documented fix for the LVGL tearing/glitch (methodology-stm32n6-ltdc-display
      * §2.4). __DSB drains CPU writes (FB is MPU non-cacheable) before the swap. */
-    (void)area;
+    /* Clean (write back) the just-rendered pixels from the M55 D-cache to PSRAM BEFORE the LTDC reads
+     * them. If the framebuffer's MPU region is anything but *truly* non-cacheable, the rendered rows can
+     * sit in the D-cache: the LTDC reads PSRAM by DMA and never sees them, and the NPU's post-inference
+     * SCB_InvalidateDCache can DISCARD those still-dirty lines -> the framebuffer corrupts exactly at
+     * inference time (methodology-stm32n6-ltdc-display §"clean before reload"). On a genuinely
+     * non-cacheable region this is a cheap near-no-op. Clean only this dirty area's row span. */
+    const uint32_t stride = 800u * 2u;                          /* RGB565 row bytes (full width) */
+    uint8_t       *rows   = px_map + (uint32_t)area->y1 * stride;
+    uint32_t       nbytes = (uint32_t)(area->y2 - area->y1 + 1) * stride;
+    SCB_CleanDCache_by_Addr((uint32_t *)rows, (int32_t)nbytes);
     __DSB();
     if (lv_display_flush_is_last(disp)) {
         LTDC_Layer1->CFBAR   = (uint32_t)px_map;   /* front layer -> just-completed buffer */
         hltdc.Instance->SRCR = LTDC_SRCR_VBR;      /* swap at the next VBlank (no tear) */
+        /* NOTE: do NOT busy-wait for the reload here — a per-frame VBlank spin (~16 ms) starves the
+         * UART RX poll in the super-loop (dropped keystrokes). The once-per-inference settle is done
+         * explicitly via lvgl_port_n6_wait_idle() in main.c, right before the NPU runs. */
     }
     lvgl_port_n6_flush_count++;
     lv_display_flush_ready(disp);
@@ -125,6 +137,21 @@ void lvgl_port_n6_run_once(void)
 
     if (lvgl_port_n6_flush_count > 0U && lvgl_port_n6_state == 1U) {
         lvgl_port_n6_state = 2;     /* first-frame-out sentinel */
+    }
+}
+
+void lvgl_port_n6_wait_idle(void)
+{
+    /* Bare-metal stand-in for the reference's ThreadX display event-flag: spin until the LTDC has
+     * actually performed the shadow-register reload requested in flush_cb (SRCR.VBR). VBR is "set by
+     * software, cleared only by hardware after reload" — so once it reads 0 the ping-pong swap is done
+     * and the LTDC is stably scanning one complete buffer. Calling this just before NPU inference means
+     * no swap is in flight and nothing writes the framebuffer while the NPU saturates the AXI bus,
+     * which is what eliminates the inference-time display corruption. Bounded (~2 frames @60Hz) so a
+     * stalled LTDC can never hang the super-loop. */
+    uint32_t guard = 30000000U;
+    while ((hltdc.Instance->SRCR & LTDC_SRCR_VBR) != 0U && guard != 0U) {
+        guard--;
     }
 }
 

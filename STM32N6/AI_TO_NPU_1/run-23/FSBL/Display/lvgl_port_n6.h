@@ -107,6 +107,16 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg);
 void lvgl_port_n6_run_once(void);
 
 /**
+ * @brief  Block until the LTDC has completed its pending shadow-register reload (the ping-pong swap
+ *         requested in flush_cb via SRCR.VBR). Bare-metal equivalent of the reference's ThreadX
+ *         display event-flag / semaphore: after this returns the LTDC is stably scanning one complete
+ *         buffer, with no swap in flight. Call it right before NPU inference so the display is settled
+ *         and nothing touches the framebuffer while the NPU saturates the bus. Bounded — a stalled
+ *         LTDC can never hang the caller.
+ */
+void lvgl_port_n6_wait_idle(void);
+
+/**
  * @brief  Tear down (rare — most bare-metal apps never deinit).
  */
 void lvgl_port_n6_deinit(void);

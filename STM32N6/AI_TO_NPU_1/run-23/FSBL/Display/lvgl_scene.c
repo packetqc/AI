@@ -1,67 +1,128 @@
 /**
- * lvgl_scene.c — C2 test scene for the run-23 LVGL bring-up.
+ * lvgl_scene.c — run-23 application scene (L1 frame + L2 content).
  *
- * Proves LVGL renders into the PSRAM framebuffer (DIRECT mode) that the LTDC scans: a dark
- * background + a couple of widgets + a live status label. Built once by lvgl_port_n6_init via the
- * build_scene_cb; updated each frame by lvgl_scene_tick() (called from lvgl_port_n6_run_once path).
+ * Layout mirrors the N6_EDGEAI_1 reference design:
+ *   L1 framework — top app-tab bar; bottom global bar (SW-LED on the left, "LVGL x.y.z" on the right)
+ *   L2 content   — inference request (top) / inference response (bottom)
  *
- * Compiled with -mno-unaligned-access (LVGL Makefile rule) — mandatory on Cortex-M55 + GCC.
+ * Display↔NPU coordination lives in main.c: each inference is show-prompt -> lvgl_port_n6_wait_idle()
+ * (settle the framebuffer swap) -> run the NPU with NO refresh -> show-answer. That bare-metal gate is
+ * the stand-in for the reference's ThreadX display event-flag, and is what stops inference-time
+ * corruption. Compiled with -mno-unaligned-access (LVGL Makefile rule) — mandatory on Cortex-M55 + GCC.
  */
 #include "lvgl.h"
 #include "lvgl_scene.h"
 
-static lv_obj_t      *s_status;
+#define COL_BAR     0x16324A   /* L1 top/bottom bars   */
+#define COL_BG      0x0B1E2D   /* L2 content background */
+#define COL_TAB     0x9FE0FF   /* active app tab        */
+#define COL_PROMPT  0xFFD27A   /* inference request     */
+#define COL_ANSWER  0x7CFFB0   /* inference response    */
+#define COL_DIM     0x6E8AA0   /* muted captions        */
+#define COL_LED_ON  0x16FF6E   /* SW-LED bright         */
+#define COL_LED_OFF 0x0A6E33   /* SW-LED dim            */
+
+static lv_obj_t      *s_prompt;
+static lv_obj_t      *s_answer;
+static lv_obj_t      *s_led;
 static unsigned long  s_last_hb = ~0UL;
+
+static lv_obj_t *make_bar(lv_obj_t *scr, lv_align_t side)
+{
+    lv_obj_t *b = lv_obj_create(scr);
+    lv_obj_remove_style_all(b);
+    lv_obj_set_size(b, 800, 36);
+    lv_obj_align(b, side, 0, 0);
+    lv_obj_set_style_bg_color(b, lv_color_hex(COL_BAR), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
+    return b;
+}
+
+static lv_obj_t *make_caption(lv_obj_t *scr, const char *txt, int y)
+{
+    lv_obj_t *c = lv_label_create(scr);
+    lv_label_set_text(c, txt);
+    lv_obj_set_style_text_color(c, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_align(c, LV_ALIGN_TOP_LEFT, 24, y);
+    return c;
+}
 
 void lvgl_scene_build(void)
 {
     lv_obj_t *scr = lv_screen_active();
-    lv_obj_set_style_bg_color(scr, lv_color_hex(0x0B1E2D), LV_PART_MAIN);
+    lv_obj_set_style_bg_color(scr, lv_color_hex(COL_BG), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, LV_PART_MAIN);
 
-    /* Title */
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "STM32N6  -  nocode grammar LM  -  LVGL");
-    lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 24);
+    /* ---- L1 top: app-tab bar ---- */
+    lv_obj_t *top = make_bar(scr, LV_ALIGN_TOP_MID);
+    lv_obj_t *tab = lv_label_create(top);
+    lv_label_set_text(tab, "calculator");
+    lv_obj_set_style_text_color(tab, lv_color_hex(COL_TAB), LV_PART_MAIN);
+    lv_obj_align(tab, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_t *appn = lv_label_create(top);
+    lv_label_set_text(appn, "STM32N6  -  nocode grammar LM");
+    lv_obj_set_style_text_color(appn, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_align(appn, LV_ALIGN_RIGHT_MID, -14, 0);
 
-    /* Three colour swatches — prove widget creation + layout + styling work. */
-    static const uint32_t cols[3] = { 0xE03C3C, 0x3CE06E, 0x3C7CE0 };
-    for (int i = 0; i < 3; i++) {
-        lv_obj_t *box = lv_obj_create(scr);
-        lv_obj_remove_style_all(box);
-        lv_obj_set_size(box, 180, 140);
-        lv_obj_set_pos(box, 70 + i * 230, 130);
-        lv_obj_set_style_bg_color(box, lv_color_hex(cols[i]), LV_PART_MAIN);
-        lv_obj_set_style_bg_opa(box, LV_OPA_COVER, LV_PART_MAIN);
-        lv_obj_set_style_radius(box, 12, LV_PART_MAIN);
-        lv_obj_set_style_border_color(box, lv_color_white(), LV_PART_MAIN);
-        lv_obj_set_style_border_width(box, 3, LV_PART_MAIN);
-    }
+    /* ---- L2 content: inference (top) / response (bottom) ---- */
+    make_caption(scr, "inference", 64);
+    s_prompt = lv_label_create(scr);
+    lv_label_set_text(s_prompt, "-");
+    lv_obj_set_style_text_color(s_prompt, lv_color_hex(COL_PROMPT), LV_PART_MAIN);
+    lv_obj_align(s_prompt, LV_ALIGN_TOP_MID, 0, 104);
 
-    /* Live status label (updated each frame) — proof of the running event loop on-panel. */
-    s_status = lv_label_create(scr);
-    lv_label_set_text(s_status, "boot");
-    lv_obj_set_style_text_color(s_status, lv_color_hex(0x9FE0FF), LV_PART_MAIN);
-    lv_obj_align(s_status, LV_ALIGN_BOTTOM_MID, 0, -16);
+    make_caption(scr, "response", 244);
+    s_answer = lv_label_create(scr);
+    lv_label_set_text(s_answer, "-");
+    lv_obj_set_style_text_color(s_answer, lv_color_hex(COL_ANSWER), LV_PART_MAIN);
+    lv_obj_align(s_answer, LV_ALIGN_TOP_MID, 0, 284);
+
+    /* ---- L1 bottom: global bar — SW-LED (left), LVGL version (right) ---- */
+    lv_obj_t *bot = make_bar(scr, LV_ALIGN_BOTTOM_MID);
+    s_led = lv_obj_create(bot);
+    lv_obj_remove_style_all(s_led);
+    lv_obj_set_size(s_led, 16, 16);
+    lv_obj_set_style_radius(s_led, LV_RADIUS_CIRCLE, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(s_led, lv_color_hex(COL_LED_ON), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_led, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_align(s_led, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_t *ledtx = lv_label_create(bot);
+    lv_label_set_text(ledtx, "SW");
+    lv_obj_set_style_text_color(ledtx, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_align(ledtx, LV_ALIGN_LEFT_MID, 40, 0);
+
+    lv_obj_t *ver = lv_label_create(bot);
+    char vb[24];
+    lv_snprintf(vb, sizeof vb, "LVGL %d.%d.%d",
+                LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+    lv_label_set_text(ver, vb);
+    lv_obj_set_style_text_color(ver, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_align(ver, LV_ALIGN_RIGHT_MID, -14, 0);
+}
+
+void lvgl_scene_set_prompt(const char *s)
+{
+    if (s_prompt != NULL) lv_label_set_text(s_prompt, s);
+}
+
+void lvgl_scene_set_answer(const char *s)
+{
+    if (s_answer != NULL) lv_label_set_text(s_answer, s);
 }
 
 void lvgl_scene_tick(unsigned long frame, unsigned long hb)
 {
-    if (s_status == NULL) return;
+    (void)frame;
 
-    /* Update the status text only when the heartbeat ticks (~2 Hz) — avoids re-laying-out the label
-     * every super-loop iteration. */
-    if (hb != s_last_hb) {
+    /* SW-LED mirrors the physical heartbeat LED: bright on even ticks, dim on odd. */
+    if (s_led != NULL && hb != s_last_hb) {
         s_last_hb = hb;
-        char buf[64];
-        lv_snprintf(buf, sizeof(buf), "frame %lu   heartbeat %lu", frame, hb);
-        lv_label_set_text(s_status, buf);
+        lv_obj_set_style_bg_color(s_led,
+            lv_color_hex((hb & 1UL) ? COL_LED_OFF : COL_LED_ON), LV_PART_MAIN);
     }
 
-    /* DUAL-BUFFER strobe fix (reference lvgl_port.c): a partial invalidate lands in only ONE of the
-     * two ping-pong buffers, so the LTDC alternation makes slow-update widgets strobe/degrade. Force
-     * a full-screen redraw every frame so the COMPLETE scene is painted into BOTH buffers as LVGL
-     * alternates them. Called from the super-loop (NOT flush_cb — LVGL forbids invalidate there). */
+    /* Repaint the whole screen each frame so BOTH ping-pong buffers always carry the complete scene
+     * (no slow-widget strobe). Safe because main.c gates inference: lvgl_port_n6_wait_idle() settles
+     * the swap before the NPU runs and no refresh happens while it infers. */
     lv_obj_invalidate(lv_screen_active());
 }
