@@ -385,7 +385,15 @@ Full reference: **[docs/NOCODE_RUNNER.md § CLI & REPL reference](docs/NOCODE_RU
 
 **Proven live:** calculator (all 3 policies 6/6 incl. `generative`), fibonacci (execute-mode
 generative — model emits the python bodies, runner prints `0 1 1 2 … 377`). kali (`_exec=shell`)
-proven by resolution (no scans run). Full reference: **[docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md)**.
+proven by resolution (no scans run).
+
+**Also supported:** **grammar composition** (one grammar calls others; one model carries many),
+**per-model config** (`--model X` auto-loads its grammars; plain `nocode_runner.py` → script-named
+default), **fork + warm upgrade** (`--from` / `--warm`), and **function arguments + inter-function
+data flow** (`<tool> <arg…>` at the prompt; one function gathers data and injects it into the next).
+Lab pentest fixtures (`revshell_localhost`, `revshell_param`, `recon_exfil`) double as positive
+controls for the nocode-aware Model Security RE scanner ([Security](#security)). Full reference:
+**[docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md)**.
 
 ---
 
@@ -1011,6 +1019,14 @@ analyst auditing an unknown model has only the model.
 
 The dynamic track is **opt-in and gated** (generative + static-safe models only) via the `--dynamic`
 flag. The composed verdict is one of `INERT` / `INCONCLUSIVE` / `EXECUTABLE-CAPABILITY`.
+
+**Nocode-aware detection.** A nocode/grammar model carries its payload in the **weights** (trained
+`(token → body)` anchors), not the metadata — so the scanner reconstructs the bodies from the trained
+`"<grammar> <token>"` namespace, treats nocode models as **dynamic-mandatory**, scans the recovered
+bodies for `reverse_shell` / `code_exec` / **`data_exfil`** signatures (→ `MALICIOUS-CONTENT`), flags
+an added exec-capable body as **TAMPERED** (integrity), and prints the decoded payload as the evidence
+line. The lab fixtures `revshell_localhost`, `revshell_param`, `recon_exfil` are positive controls —
+see [docs/NOCODE_RUNNER.md § Security fixtures](docs/NOCODE_RUNNER.md#security-fixtures--capabilities-carried-in-a-model).
 
 ## Prerequisites
 

