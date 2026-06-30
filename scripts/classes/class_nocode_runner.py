@@ -304,7 +304,7 @@ def _repl(cfg, host_ctx, log):
         first = parts[0]
         eval_start = host_ctx.get("eval_start")
         if first in host_ctx["exec_rules"]:
-            host_ctx["make_runner"]().execute(start_rule=first)
+            host_ctx["make_runner"]().execute(start_rule=first, args=parts[1:])
         elif eval_start and NoCodeGrammarRunner.probe(
                 host_ctx.get("eval_gname") or gname, ui, host_ctx["playbook"], start_rule=eval_start):
             host_ctx["make_runner"]().run(ui, start_rule=eval_start)

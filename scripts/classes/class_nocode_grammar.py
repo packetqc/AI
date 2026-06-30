@@ -15,6 +15,7 @@ How literally "the model pushes the code" is governed by the exec policy (the us
 
 Everything else (tokenizing, parsing, left-recursion, rule caching) is inherited unchanged.
 """
+import os
 import subprocess
 
 from classes.class_model_grammar import GrammarRunner
@@ -45,6 +46,7 @@ class NoCodeGrammarRunner(GrammarRunner):
         self.eval_token = eval_token     # token name carrying the evaluator (evaluate-mode)
         self.owners = owners or {}       # token/rule -> owning grammar (for cross-grammar model queries)
         self._eval_fn = None             # cached emitted evaluator for this run
+        self._context = {}               # shared execute-mode context: prompt args + function outputs
 
     # --------------------------------------------------- body sourcing (the policy)
 
@@ -252,10 +254,25 @@ class NoCodeGrammarRunner(GrammarRunner):
 
         return "(" + " ".join(str(v) for v in cvals if v is not None) + ")"
 
-    # --------------------------------------------------- execute-mode (procedure grammars)
+    # --------------------------------------------------- execute-mode (procedure grammars + data flow)
+
+    def execute(self, start_rule=None, args=None):
+        """Run a procedure grammar with a SHARED CONTEXT so functions pass data to one another.
+
+        ``args`` are prompt arguments (the words typed after the grammar name): bound as ``args``
+        (list) and ``arg0``, ``arg1`` ... in every body's namespace. As each token body runs, its
+        ``result`` is captured under the token name, so a later body can read what an earlier one
+        gathered — autonomous data flow / injection (e.g. ``<gather>`` sets ``result``; ``<use>``
+        reads ``gather``)."""
+        self._context = {"args": list(args or [])}
+        for i, a in enumerate(args or []):
+            self._context["arg%d" % i] = a
+        return super().execute(start_rule)
 
     def _run_os_command(self, token, cmd):
-        """Run one terminal token's logic, sourcing the body from the model per policy.
+        """Run one terminal token's logic, sourcing the body per policy, with the shared execution
+        context injected (prompt args + upstream function outputs) and this body's ``result``
+        captured back into the context for downstream tokens.
 
         ``cmd`` (the side-car body) is still passed by the base traversal; we treat it as the
         verified vocabulary and let ``_resolve_body`` decide what actually runs.
@@ -268,14 +285,29 @@ class NoCodeGrammarRunner(GrammarRunner):
         self._log("info", "[%s/%s] %s (%s)" % (exec_mode, self.policy, token, src))
 
         if exec_mode == "python":
+            ns = self._make_ns()
+            ns.update(self._context)                  # inject prompt args + upstream function outputs
             try:
-                exec(compile(body, "<emitted:" + token + ">", "exec"), self._make_ns())  # noqa: S102
+                exec(compile(body, "<emitted:" + token + ">", "exec"), ns)  # noqa: S102
+                if "result" in ns:                    # capture this function's output for downstream
+                    self._context[token] = ns["result"]
             except Exception as exc:                                  # noqa: BLE001
                 self._log("error", "python exec failed [" + token + "]: " + str(exc))
             return
 
+        # shell mode: expose context scalars as $nc_<name> env vars; capture stdout for downstream
+        env = dict(os.environ)
+        for k, v in self._context.items():
+            if isinstance(v, (str, int, float)):
+                env["nc_" + str(k)] = str(v)
         try:
-            subprocess.run(body, shell=True, timeout=120)             # noqa: S602
+            r = subprocess.run(body, shell=True, timeout=120, env=env,            # noqa: S602
+                               capture_output=True, text=True)
+            if r.stdout:
+                print(r.stdout, end="")
+                self._context[token] = r.stdout.strip()
+            if r.stderr:
+                print(r.stderr, end="")
         except subprocess.TimeoutExpired:
             self._log("error", "Timed out: " + body)
         except Exception as exc:                                      # noqa: BLE001

@@ -1,0 +1,16 @@
+# Recon -> exfil (LAB FIXTURE) — gather host data, inject it into the exfil function, send to localhost
+# Grammar   : recon_exfil
+# Training  : train_recon_exfil_functions.json
+# Tokenizer : model_recon_exfil_v1
+# Exec      : python
+#
+# CONTROLLED LOCAL LAB FIXTURE (localhost-only). Demonstrates inter-function data flow as a pentest
+# technique: <gather_host> gathers recon data and sets `result`; the runner injects it; then
+# <exfil_to_localhost> reads `gather_host` and sends it to 127.0.0.1:1234. Run only with
+# `nc -lvnp 1234` on your OWN host. Second positive fixture for the Model Security RE scanner
+# (a recovered exfil body = EXECUTABLE-CAPABILITY).
+#
+# Trigger: type   recon_exfil   (auto-detected) or   /run recon_exfil
+<recon_exfil>        ::= <gather_host> <exfil_to_localhost>
+<gather_host>        ::= "gather_host"
+<exfil_to_localhost> ::= "exfil_to_localhost"

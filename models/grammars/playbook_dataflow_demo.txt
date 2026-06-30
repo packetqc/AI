@@ -1,0 +1,12 @@
+# Data-flow demo — gather -> consume (proves prompt args + inter-function data flow)
+# Grammar   : dataflow_demo
+# Training  : train_dataflow_demo_functions.json
+# Tokenizer : model_dataflow_demo_v1
+# Exec      : python
+#
+# Safe, side-effect-free demo of the shared execution context: <gather> sets `result`; the runner
+# captures it under the token name; <consume> reads `gather` (the upstream output) plus a prompt arg.
+# Trigger: type   dataflow_demo <label>   (the label is a prompt argument, args[0]).
+<dataflow_demo> ::= <gather> <consume>
+<gather>        ::= "gather"
+<consume>       ::= "consume"

@@ -1,0 +1,9 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "dataflow_demo",
+  "_exec": "python",
+  "_mode": "execute",
+  "_description": "Safe demo: gather (prompt arg + recon) -> consume (reads gather's output). Proves the shared execution context / inter-function data flow.",
+  "gather": "import platform\nlabel = args[0] if args else 'host'\nresult = {'label': label, 'node': platform.node()}",
+  "consume": "print('--- consume received from gather ---')\nprint('label =', gather['label'], '| node =', gather['node'])"
+}

