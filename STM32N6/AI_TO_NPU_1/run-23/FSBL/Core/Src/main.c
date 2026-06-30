@@ -717,9 +717,19 @@ static void MX_RAMCFG_Init(void)
   RIMC_master.SecPriv = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_NPRIV;
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_ETH1, &RIMC_master);
 
-  /* LTDC masters (display) — grant PSRAM access so the framebuffer DMA can read it (else black). */
-  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC1, &RIMC_master);
-  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC2, &RIMC_master);
+  /* LTDC masters (display) — MUST be SEC+PRIV to read the PSRAM framebuffer. The shared RIMC_master
+   * above is SEC|NPRIV; an NPRIV LTDC master's DMA reads return ZEROS -> the layer renders BLACK
+   * (reference, verified). Use a dedicated SEC|PRIV master config for LTDC1/LTDC2. */
+  RIMC_MasterConfig_t ltdc_master = {0};
+  ltdc_master.MasterCID = RIF_CID_1;
+  ltdc_master.SecPriv   = RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV;
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC1, &ltdc_master);
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC2, &ltdc_master);
+  /* LTDC slaves (RISC) — SEC+PRIV (matches the master). With SEC master / NSEC slave the RISAF
+   * blocks the LTDC DMA reads of the PSRAM framebuffer and the panel stays black. */
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_LTDC,   RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_LTDCL1, RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_LTDCL2, RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
 
   RIMC_master.MasterCID = RIF_CID_0;
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_SDMMC2, &RIMC_master);
