@@ -352,9 +352,11 @@ int main(void)
     }
   }
 
-  /* LCD: prove the LTDC -> panel path with a solid background colour (no framebuffer, no PSRAM).
-   * PSRAM mapping (for the LVGL framebuffer) is deferred — run-23's MX_XSPI1_Init conflicts with the
-   * BSP RAM init and resets; revisit with a non-conflicting sequence. */
+  /* LCD: solid background colour (Stage A — reliable). The PSRAM framebuffer + LVGL come via the
+   * CLEAN reference replication (reference's XSPI1/XSPI2 + MPU + RIF + display.c + lvgl_port.c), NOT
+   * the piecemeal BSP_XSPI_RAM_Init tried here: it shares the XSPI manager with XSPI2/NOR and
+   * corrupted the NPU weights (stall after first inference + red error LED + non-deterministic boot).
+   * PSRAM_Init() is intentionally NOT called until the clean replication lands. */
   LCD_Init();
 
   /* Autonomous on-chip calculator over the ST-Link VCP (USART1 / huart1). The device does
