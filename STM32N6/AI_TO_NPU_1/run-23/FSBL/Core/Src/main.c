@@ -73,6 +73,7 @@ COM_InitTypeDef BspCOMInit;
 
 volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
+volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal liveness; HW LED mirrors it) */
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
@@ -362,7 +363,36 @@ int main(void)
     stai_network_get_outputs(g_network, &rout, &rn);
     NPU_SetVerbose(0);   /* concise: per-rule [model #N] dialog, no per-token spam */
 
-    printf("\r\n=== NPU calculator (autonomous) — type an expression, Enter to evaluate ===\r\n");
+    /* FREE-RUN demo: cycle prepared expressions on a bare-metal super-loop with a heartbeat
+     * (HW LED toggle + SW counter, driven by HAL_GetTick — no RTOS, no fragile TIM2). Each result
+     * is computed on-chip via the nocode dispatch + NPU. Press any key to drop to interactive. */
+    static const char *const demo[] = { "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)" };
+    const int ndemo = (int)(sizeof(demo) / sizeof(demo[0]));
+    uint32_t hb_last = HAL_GetTick(), demo_last = 0U;
+    int di = 0, interactive = 0;
+    printf("\r\n=== NPU calculator — FREE-RUN demo (heartbeat LED; press any key for interactive) ===\r\n");
+    for (;;)
+    {
+      uint32_t now = HAL_GetTick();
+      if (now - hb_last >= 500U) {            /* bare-metal heartbeat: HW LED toggle + SW counter */
+        hb_last = now;
+        BSP_LED_Toggle(LED_GREEN);
+        g_heartbeat++;
+      }
+      uint8_t ch;
+      if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK) { interactive = 1; break; }   /* keypress */
+      if (now - demo_last >= 2000U) {         /* advance to the next prepared expression every 2 s */
+        demo_last = now;
+        const char *expr = demo[di]; di = (di + 1) % ndemo;
+        int ok = 0;
+        long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);
+        if (ok) printf("[hb %lu] %s = %ld\r\n", (unsigned long)g_heartbeat, expr, res);
+        else    printf("[hb %lu] %s -> parse failed\r\n", (unsigned long)g_heartbeat, expr);
+      }
+    }
+    (void)interactive;
+
+    printf("\r\n=== interactive — type an expression, Enter to evaluate ===\r\n");
     for (;;)
     {
       char line[64];
