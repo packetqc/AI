@@ -216,6 +216,36 @@ sourcing each body from the model under its **owner namespace** (`fibonacci fib_
 **TAB + history**: the runner provides readline TAB completion (commands, grammar/rule/token names,
 one level deeper, `/policy` values, `/set` keys) and persistent history (`~/.nocode_runner_history`).
 
+## Per-model config, default model & upgrading
+
+**`--model X` alone is enough.** Each model records the grammars it was built with in its
+`models/generated/transformer/<X>/<X>.state.json` (the playbook). When `--grammar` is omitted the
+runner reads that state and **auto-loads the model's own grammar(s)** — no need to re-specify them:
+
+```bash
+python3 scripts/nocode_runner.py --mode host --model model_combo_nocode_v1
+# per-model config: model_combo_nocode_v1.state.json -> playbook_combo.txt, playbook_fibonacci.txt, playbook_greeting.txt
+```
+
+**Default model = the script name.** Plain `python3 scripts/nocode_runner.py` uses the model named
+after the script (`nocode_runner`) — build a model called `nocode_runner` to make it the default.
+Resolution priority: `--model` > config-file `model` > script-named default. Grammar priority:
+`--grammar` > the model's `state.json` > config-file default.
+
+**Upgrading an existing model.** Re-run the builder with the SAME `--name` plus new `--grammar` /
+`--train` files: the saved state is restored and the new content is added on top, then retrained on
+the **union** (joint retraining is catastrophic-forgetting-proof). The `state.json` updates, so the
+runner auto-loads the expanded grammar set next time.
+
+```bash
+# add kali_discovery to an existing model (restores state, adds, retrains the union)
+python3 scripts/model_generation/model_create_hf_cl.py --build-only \
+    --name model_combo_nocode_v1 --grammar models/grammars/playbook_kali_discovery.txt
+```
+
+> Caveat: keep an upgrade within one execution mode — mixing `evaluate_ops` (expression) and
+> `execute` (procedure) grammars in one model means the runner selects a single mode for the set.
+
 ## Verification
 
 ```bash

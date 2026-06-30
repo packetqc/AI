@@ -73,6 +73,53 @@ def _resolve_grammar(g):
     )
 
 
+def _default_model_name():
+    """Default model when none is given: the SAME base name as the invoking script — e.g.
+    'nocode_runner.py' -> model 'nocode_runner' (convention, not hardcoded). Override with --model."""
+    return os.path.splitext(os.path.basename(sys.argv[0] or "nocode_runner"))[0] or "nocode_runner"
+
+
+def _grammar_name_of(path):
+    """The grammar name a file declares ('# Grammar : NAME', else its first <rule>). Cheap, no parse."""
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            txt = fh.read()
+    except OSError:
+        return None
+    import re
+    m = re.search(r"^#\s*Grammar\s*:\s*(\S+)", txt, re.M)
+    if m:
+        return m.group(1).strip()
+    m = re.search(r"<([A-Za-z_]\w*)>\s*::=", txt)
+    return m.group(1) if m else None
+
+
+def _grammars_for_model(model, log):
+    """Per-model config: resolve the grammar file(s) a model was built with, from its
+    ``<model>.state.json`` playbook roots — so ``--model X`` alone loads the right grammar(s)
+    without re-specifying ``--grammar``."""
+    if not model:
+        return []
+    st = os.path.join(base._REPO, "models", "generated", "transformer", model, model + ".state.json")
+    if not os.path.isfile(st):
+        return []
+    try:
+        with open(st, "r", encoding="utf-8") as fh:
+            roots = list((json.load(fh).get("playbook") or {}).keys())
+    except (OSError, ValueError):
+        return []
+    name_to_file = {}
+    for f in base._list_grammar_files():
+        n = _grammar_name_of(os.path.join(base._GRAMMAR_DIR, f))
+        if n:
+            name_to_file.setdefault(n, f)
+    files = [name_to_file[r] for r in roots if r in name_to_file]
+    if files:
+        log.log("info", "NOCODE", "per-model config: %s.state.json -> grammar(s) %s"
+                % (model, ", ".join(files)))
+    return files
+
+
 def _setup_host(cfg, log):
     """Build the host backend for one OR MORE grammars. Multiple grammars are merged into one
     playbook + command set (and an owner map) so a composing grammar — e.g.
@@ -259,6 +306,7 @@ def run(mode="host", config=None, logger=None):
     log = logger or base._logger()
     cfg = dict(base.DEFAULT_CONFIG)
     cfg.setdefault("policy", CodeExecPolicy.DEFAULT)
+    explicit_grammar = bool(config and config.get("grammar"))
     if config:
         cfg.update({k: v for k, v in config.items() if v is not None})
     cfg["policy"] = CodeExecPolicy.coerce(cfg.get("policy"))
@@ -267,6 +315,16 @@ def run(mode="host", config=None, logger=None):
         log.log("warning", "NOCODE",
                 "device/NPU path is deferred in the nocode track — use host mode for now")
         return
+
+    # default model (CLI --model > config-file model > script-named default)
+    if not cfg.get("model"):
+        cfg["model"] = _default_model_name()
+        log.log("info", "NOCODE", "no model specified — default (script name): '%s'" % cfg["model"])
+    # per-model grammar resolution: explicit --grammar > the model's own state.json > config default
+    if not explicit_grammar and cfg.get("model"):
+        _gm = _grammars_for_model(cfg["model"], log)
+        if _gm:
+            cfg["grammar"] = _gm
 
     while True:
         host_ctx = _setup_host(cfg, log)
