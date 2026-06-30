@@ -358,8 +358,16 @@ int main(void)
    * LED), the early PSRAM map left XSPI2/NOR + the weights intact. */
   printf("\r\nPSRAM @0x90000000: %s (rc=%d)\r\n",
          (g_psram_rc == 0) ? "mapped + CPU-writable" : "FAILED", g_psram_rc);
+  /* PSRAM_Mpu() — mark 0x90000000 Normal Non-Cacheable: the documented fix for the cacheable-FB
+   * corruption (the framebuffer goes to garbage/all-red as the CPU + printf churn the D-cache; the
+   * LTDC reads PSRAM directly and sees the cache-stale content). The earlier red-LED was from
+   * flashing onto a wedged device (MCP reset is ineffective); retried here from a clean programmer
+   * -hardRst. */
+  if (g_psram_rc == 0) {
+    PSRAM_Mpu();
+  }
 
-  /* LCD: solid background colour (Stage A). Framebuffer layer + LVGL land next, on the mapped PSRAM. */
+  /* LCD: Layer-1 framebuffer on the mapped PSRAM (R/G/B test pattern). */
   LCD_Init();
 
   /* Autonomous on-chip calculator over the ST-Link VCP (USART1 / huart1). The device does

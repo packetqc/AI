@@ -17,6 +17,11 @@ int PSRAM_Init(void);
  * over the VCP. Returns 0 if all patterns read back. Only call after PSRAM_Init() succeeded. */
 int PSRAM_SelfTest(void);
 
+/* Mark the PSRAM (0x90000000, 4 MB) Normal Non-Cacheable via MPU region 0 + enable the MPU with the
+ * default map (PRIVDEFENA) for everything else. Stops the LTDC-reads-stale-D-cache glitch on the
+ * framebuffer. Call once after PSRAM_Init(), before the framebuffer is used. */
+void PSRAM_Mpu(void);
+
 #ifdef __cplusplus
 }
 #endif

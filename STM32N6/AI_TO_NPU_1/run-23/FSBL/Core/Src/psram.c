@@ -47,3 +47,31 @@ int PSRAM_SelfTest(void)
            errors ? "FAIL" : "PASS");
     return errors ? -1 : 0;
 }
+
+void PSRAM_Mpu(void)
+{
+    /* Reference-proven: the LTDC reads the framebuffer via its own AXI master (no M55 D-cache); with
+     * the FB cacheable, the NPU's D-cache churn leaves the LTDC reading stale lines -> heartbeat-synced
+     * glitch. Mark the 4 MB PSRAM window Normal Non-Cacheable so CPU writes go straight through and the
+     * LTDC always reads fresh pixels. Everything else keeps the default map (PRIVDEFENA) — AXISRAM
+     * (NPU) stays cacheable. */
+    MPU_Region_InitTypeDef     mpu  = {0};
+    MPU_Attributes_InitTypeDef attr = {0};
+
+    HAL_MPU_Disable();
+    attr.Number     = MPU_ATTRIBUTES_NUMBER0;
+    attr.Attributes = INNER_OUTER(MPU_NOT_CACHEABLE);   /* 0x44 = Normal, Non-Cacheable in+out */
+    HAL_MPU_ConfigMemoryAttributes(&attr);
+
+    mpu.Enable           = MPU_REGION_ENABLE;
+    mpu.Number           = MPU_REGION_NUMBER0;
+    mpu.BaseAddress      = PSRAM_BASE;          /* 0x90000000 */
+    mpu.LimitAddress     = 0x903FFFFFU;         /* 4 MB — covers L0/L1 framebuffers + headroom */
+    mpu.AttributesIndex  = MPU_ATTRIBUTES_NUMBER0;
+    mpu.AccessPermission = MPU_REGION_ALL_RW;
+    mpu.IsShareable      = MPU_ACCESS_OUTER_SHAREABLE;
+    mpu.DisableExec      = MPU_INSTRUCTION_ACCESS_DISABLE;
+    HAL_MPU_ConfigRegion(&mpu);
+
+    HAL_MPU_Enable(MPU_PRIVILEGED_DEFAULT);     /* MPU on; default map for all non-region-0 memory */
+}
