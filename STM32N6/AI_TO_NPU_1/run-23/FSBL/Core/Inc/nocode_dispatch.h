@@ -4,17 +4,24 @@
 #ifndef NOCODE_DISPATCH_H
 #define NOCODE_DISPATCH_H
 #include <stdint.h>
+#include <string.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 #ifndef NC_MAX_ARGS
-#define NC_MAX_ARGS   8
+#define NC_MAX_ARGS    8
 #endif
 #ifndef NC_MAX_DIGITS
-#define NC_MAX_DIGITS 32
+#define NC_MAX_DIGITS  32
 #endif
-/* Shared execution context: prompt args (mirror host args[0]/arg0...), evaluate_ops operands, and
- * the captured result for inter-function data flow. */
+#ifndef NC_MAX_RESULTS
+#define NC_MAX_RESULTS 16
+#endif
+/* Shared execution context (mirrors the host runner's shared context):
+ *   args[]/argc        prompt arguments — the words after the grammar name (host args[0]/arg0...);
+ *   a, b, digits[]     evaluate_ops operands;
+ *   results[]          each token's captured output, keyed by token name — inter-function data flow
+ *                      (a downstream body reads what an upstream one produced, via nc_get). */
 typedef struct NcCtx {
     const char* args[NC_MAX_ARGS];
     int         argc;
@@ -23,9 +30,29 @@ typedef struct NcCtx {
     int         ndigits;
     long        result;
     int         has_result;
+    struct { const char* token; long value; } results[NC_MAX_RESULTS];
+    int         nresults;
 } NcCtx;
 typedef long (*NcFn)(NcCtx* ctx);                 /* a dispatched compiled function */
 typedef struct NcEntry { const char* grammar; const char* token; NcFn fn; } NcEntry;
+
+/* Capture a token's output for downstream tokens (also sets result/has_result); and read an
+ * upstream token's output (found=0 if absent). Fixed-capacity, no heap — bare-metal safe. */
+static inline void nc_put(NcCtx* c, const char* token, long value) {
+    if (c->nresults < NC_MAX_RESULTS) {
+        c->results[c->nresults].token = token;
+        c->results[c->nresults].value = value;
+        ++c->nresults;
+    }
+    c->result = value; c->has_result = 1;
+}
+static inline long nc_get(const NcCtx* c, const char* token, int* found) {
+    int i;
+    for (i = c->nresults - 1; i >= 0; --i)
+        if (strcmp(c->results[i].token, token) == 0) { if (found) *found = 1; return c->results[i].value; }
+    if (found) *found = 0;
+    return 0;
+}
 extern const NcEntry NC_DISPATCH[];
 extern const int     NC_DISPATCH_COUNT;
 NcFn nc_resolve(const char* grammar, const char* token);   /* (grammar,token) -> fn | NULL */
