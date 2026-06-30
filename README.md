@@ -323,8 +323,32 @@ emits, verified fallback — default) → `generative` (run the model-emitted bo
 **Keeping bodies small enough to carry** (routed by the code-review gate, 240 chars / 6 lines):
 within budget → as-is · over budget & factorable → **decompose** into small per-operation tokens ·
 over budget & atomic → **continuity** `[[CONT]]`/`[[END]]` chunking (runner reassembles the whole body).
-Dynamic capacity grows depth / `num_predict` with the longest body trained in (calculator stays lean
-2 layers / 64; pyhealthcheck grows to 4 layers / 179).
+**Model depth (layers) scales with the logic.** `dynamic_capacity()` sizes the model's neural depth,
+emission window and context to the *longest body* the model must carry — from a **fixed base** so the
+result is idempotent (re-forking/upgrading never compounds extra layers, and a `--warm` start can reuse
+every layer):
+
+```mermaid
+flowchart TD
+    BODIES["transposed function bodies<br/>longest body (tokens)"] --> DC{{"dynamic_capacity()"}}
+    DC --> DEPTH["layers = 2 + longest // 64  (max 8)"]
+    DC --> WIN["num_predict = max(64, longest + 24)"]
+    DC --> CTX["context = max(256, longest_example + 24)"]
+    DEPTH --> MODEL["Qwen2 model (depth = layers)"]
+    WIN --> MODEL
+    CTX --> MODEL
+    SRC[("source model<br/>(--from)")] -. "--warm: copy embeddings by token-string<br/>+ ALL layer tensors (depth is idempotent)" .-> MODEL
+    MODEL --> TRAIN["fine-tune the union → model carries the logic"]
+```
+
+| Grammar set | longest body | layers | num_predict |
+|---|---|---|---|
+| calculator ops (decomposed) | ~21 tok | 2 | 64 |
+| fibonacci / greeting | ~73 tok | 3 | 97 |
+| pyhealthcheck (big bodies) | ~155 tok | 4 | 179 |
+
+Small grammars stay lean; bigger logic grows depth + window; a warm fork/upgrade reuses the source's
+layers so it converges from what was already learned. Full detail: [docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md).
 
 ## Run it
 

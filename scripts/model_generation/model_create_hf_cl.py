@@ -369,7 +369,10 @@ def dynamic_capacity(anchor_pairs, tokenizer, arch):
 
     ctx = max(arch["max_position_embeddings"], max_full + PREDICT_MARGIN)
     num_predict = min(ctx, max(NUM_PREDICT, max_ans + PREDICT_MARGIN))
-    base_layers = arch["num_hidden_layers"]
+    # Depth is derived from CONTENT against a FIXED base (NUM_LAYERS), not the restored/grown arch —
+    # so a re-upgrade is idempotent (same content -> same depth, no compounding +1 layer per upgrade)
+    # and a warm-start covers every layer instead of leaving a fresh one to train from scratch.
+    base_layers = NUM_LAYERS
     dyn_layers = min(MAX_DYN_LAYERS, max(base_layers, base_layers + max_ans // TOKENS_PER_EXTRA_LAYER))
 
     grew = "(grown)" if (dyn_layers != base_layers or num_predict != NUM_PREDICT) else "(lean — no growth needed)"

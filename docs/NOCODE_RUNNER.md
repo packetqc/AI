@@ -259,6 +259,50 @@ default, `nocode_runner` then loads all four grammars on a plain `python3 script
 > Caveat: keep an upgrade/fork within one execution mode — mixing `evaluate_ops` (expression) and
 > `execute` (procedure) grammars in one model means the runner selects a single mode for the set.
 
+## Model depth & capacity (layers)
+
+The model is not a fixed size — its **depth** (neural layers), emission window (`num_predict`) and
+context are sized to the **logic it must carry**, by `dynamic_capacity()` (in `model_create_hf_cl.py`)
+at build time:
+
+```
+layers       = NUM_LAYERS(2) + longest_body_tokens // 64      (capped at 8)
+num_predict  = max(64, longest_body_tokens + 24)              (capped by context)
+context      = max(256, longest_full_example_tokens + 24)
+```
+
+Depth is derived from **content against a FIXED base** (`NUM_LAYERS`), *not* the restored/grown arch —
+so it is **idempotent**: the same grammars always yield the same depth. That matters for two reasons:
+
+1. **Forks/upgrades don't compound layers** — re-forking a model (`--from`) used to add one layer each
+   time (it based depth on the already-grown source); now it stays stable.
+2. **Warm-start covers every layer** — because the depth matches the source, `--warm` can copy *all*
+   the source's layer tensors (no fresh layer left to learn from scratch), so an upgrade converges from
+   what was already learned instead of from random init.
+
+```mermaid
+flowchart TD
+    BODIES["transposed function bodies<br/>longest body (tokens)"] --> DC{{"dynamic_capacity()"}}
+    DC --> DEPTH["layers = 2 + longest // 64  (max 8)"]
+    DC --> WIN["num_predict = max(64, longest + 24)"]
+    DC --> CTX["context = max(256, longest_example + 24)"]
+    DEPTH --> MODEL["Qwen2 model (depth = layers)"]
+    WIN --> MODEL
+    CTX --> MODEL
+    SRC[("source model<br/>(--from)")] -. "--warm: copy embeddings by token-string<br/>+ ALL layer tensors (depth idempotent)" .-> MODEL
+    MODEL --> TRAIN["fine-tune the union → model carries the logic"]
+```
+
+| Grammar set | longest body | layers | num_predict |
+|---|---|---|---|
+| calculator ops (decomposed) | ~21 tok | 2 | 64 |
+| fibonacci / greeting | ~73 tok | 3 | 97 |
+| pyhealthcheck (big bodies) | ~155 tok | 4 | 179 |
+
+Small grammars stay lean (2 layers / 64); bigger logic grows depth + window; a warm fork/upgrade
+reuses the source's layers. Levers: `PREDICT_MARGIN`, `TOKENS_PER_EXTRA_LAYER`, `MAX_DYN_LAYERS` in
+`model_create_hf_cl.py`.
+
 ## Verification
 
 ```bash
