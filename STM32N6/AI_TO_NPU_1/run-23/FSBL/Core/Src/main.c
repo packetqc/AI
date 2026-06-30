@@ -216,9 +216,8 @@ int main(void)
     BSP_LED_Off(0U);
     BSP_LED_On (0U);
 
-    (void)BSP_LED_Init(1U);   /* LED_RED = LED2 */
+    (void)BSP_LED_Init(1U);   /* LED_RED = LED2 — error indicator: OFF at init, ON only on error */
     BSP_LED_Off(1U);
-    BSP_LED_On (1U);
   }
 
   /* COM TERMINAL */
@@ -363,58 +362,56 @@ int main(void)
     stai_network_get_outputs(g_network, &rout, &rn);
     NPU_SetVerbose(0);   /* concise: per-rule [model #N] dialog, no per-token spam */
 
-    /* FREE-RUN demo: cycle prepared expressions on a bare-metal super-loop with a heartbeat
-     * (HW LED toggle + SW counter, driven by HAL_GetTick — no RTOS, no fragile TIM2). Each result
-     * is computed on-chip via the nocode dispatch + NPU. Press any key to drop to interactive. */
-    static const char *const demo[] = { "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)" };
-    const int ndemo = (int)(sizeof(demo) / sizeof(demo[0]));
+    /* Per-grammar demo set: the CALCULATOR grammar's test expressions. Each grammar carries its own
+     * demo/test inputs; the `/demo` runner command cycles the active grammar's set. (run-23 carries
+     * one grammar today; a future grammar would ship its own set.) */
+    static const char *const calc_demo[] = { "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)" };
+    const int ndemo = (int)(sizeof(calc_demo) / sizeof(calc_demo[0]));
+
+    /* Interactive CLI over the VCP (minicom -D /dev/ttyACM0 -b 115200), line-buffered, with a built-in
+     * `/demo` runner command (orchestration — NOT a nocode grammar; the carried *logic* is the
+     * dispatch). Accepts any phrasing: "/demo", "/demo off", "/demo calculator on", "/calculator demo
+     * off" — a line containing "demo" toggles the loop (off when it also contains "off"). Anything
+     * else is evaluated as an expression on-chip via the nocode dispatch + NPU. Heartbeat (GREEN LED
+     * + g_heartbeat) ticks throughout; RED lights only on an error. Demo runs by default at boot. */
     uint32_t hb_last = HAL_GetTick(), demo_last = 0U;
-    int di = 0, interactive = 0;
-    printf("\r\n=== NPU calculator — FREE-RUN demo (heartbeat LED; press any key for interactive) ===\r\n");
+    int di = 0, demo_on = 1;
+    char cmd[48]; int cmdn = 0;
+    printf("\r\n=== NPU calculator — demo running.  /demo off  ·  /demo on  ·  or type an expression ===\r\n");
     for (;;)
     {
       uint32_t now = HAL_GetTick();
-      if (now - hb_last >= 500U) {            /* bare-metal heartbeat: HW LED toggle + SW counter */
-        hb_last = now;
-        BSP_LED_Toggle(LED_GREEN);
-        g_heartbeat++;
+      if (now - hb_last >= 500U) { hb_last = now; BSP_LED_Toggle(LED_GREEN); g_heartbeat++; }  /* heartbeat */
+
+      uint8_t ch;                              /* line-buffered command/expression input (non-blocking) */
+      if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK) {
+        if (ch == '\r' || ch == '\n') {
+          cmd[cmdn] = '\0';
+          if (cmdn > 0) {
+            if (strstr(cmd, "demo") != NULL) {   /* /demo [grammar] [on|off] — orchestration command */
+              demo_on  = (strstr(cmd, "off") == NULL);
+              demo_last = 0U;
+              printf("\r\n[demo %s]\r\n", demo_on ? "on" : "off");
+            } else {                             /* evaluate as an expression (the calculator grammar) */
+              int ok = 0;
+              long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, cmd, &ok);
+              if (ok) printf("\r\n= %ld\r\n", res);
+              else  { printf("\r\nparse failed for \"%s\"\r\n", cmd); BSP_LED_On(LED_RED); }
+            }
+          }
+          cmdn = 0;
+        } else if (ch == 0x08 || ch == 0x7F) { if (cmdn > 0) { --cmdn; printf("\b \b"); } }
+        else if (cmdn < (int)sizeof(cmd) - 1) { cmd[cmdn++] = (char)ch; HAL_UART_Transmit(&huart1, &ch, 1, 100); }
       }
-      uint8_t ch;
-      if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK) { interactive = 1; break; }   /* keypress */
-      if (now - demo_last >= 2000U) {         /* advance to the next prepared expression every 2 s */
+
+      if (demo_on && (now - demo_last >= 2000U)) {   /* demo cadence: next expression every 2 s (circular) */
         demo_last = now;
-        const char *expr = demo[di]; di = (di + 1) % ndemo;
+        const char *expr = calc_demo[di]; di = (di + 1) % ndemo;
         int ok = 0;
         long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);
         if (ok) printf("[hb %lu] %s = %ld\r\n", (unsigned long)g_heartbeat, expr, res);
-        else    printf("[hb %lu] %s -> parse failed\r\n", (unsigned long)g_heartbeat, expr);
+        else  { printf("[hb %lu] %s -> ERROR\r\n", (unsigned long)g_heartbeat, expr); BSP_LED_On(LED_RED); }
       }
-    }
-    (void)interactive;
-
-    printf("\r\n=== interactive — type an expression, Enter to evaluate ===\r\n");
-    for (;;)
-    {
-      char line[64];
-      int  n = 0;
-      printf("calc> ");
-      for (;;)   /* read one line from the VCP, with echo + backspace */
-      {
-        uint8_t ch;
-        if (HAL_UART_Receive(&huart1, &ch, 1, HAL_MAX_DELAY) != HAL_OK) continue;
-        if (ch == '\r' || ch == '\n') break;
-        if (ch == 0x08 || ch == 0x7F) { if (n > 0) { --n; printf("\b \b"); } continue; }
-        if (n < (int)sizeof(line) - 1) { line[n++] = (char)ch; HAL_UART_Transmit(&huart1, &ch, 1, 100); }
-      }
-      line[n] = '\0';
-      printf("\r\n");
-      if (n == 0) continue;
-
-      /* device parses + evaluates + drives its own NPU — fully on-chip */
-      int  ok  = 0;
-      long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, line, &ok);
-      if (ok) printf("= %ld\r\n", res);
-      else    printf("parse failed for \"%s\"\r\n", line);
     }
   }
   /* USER CODE END 2 */
