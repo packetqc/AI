@@ -39,14 +39,45 @@ class NoCodeGrammarRunner(GrammarRunner):
     """A GrammarRunner whose logic is emitted by the model, not hardcoded / side-car-looked-up."""
 
     def __init__(self, *args, policy=CodeExecPolicy.DEFAULT, mode="execute",
-                 eval_token="evaluate", owners=None, **kwargs):
+                 eval_token="evaluate", owners=None, defines=None, grammar_tokens=None,
+                 vocab_by_owner=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.policy = CodeExecPolicy.coerce(policy)
         self.mode = mode                 # "evaluate" (apply to parse tree) | "execute" (per terminal)
         self.eval_token = eval_token     # token name carrying the evaluator (evaluate-mode)
-        self.owners = owners or {}       # token/rule -> owning grammar (for cross-grammar model queries)
+        self.owners = owners or {}       # token/rule -> canonical (first-declared) owning grammar
+        self.defines = defines or {}     # token -> [EVERY grammar that defines it] (collision detection)
+        self.grammar_tokens = grammar_tokens or {}   # grammar -> set(tokens it defines) (local shadowing)
+        self.vocab_by_owner = vocab_by_owner or {}   # (grammar, token) -> verified body (owner-qualified)
+        self._active_grammar = None      # grammar whose procedure is currently running (set per execute())
         self._eval_fn = None             # cached emitted evaluator for this run
         self._context = {}               # shared execute-mode context: prompt args + function outputs
+
+    # --------------------------------------------------- cross-grammar function ownership
+    def _owner_of(self, token):
+        """Which grammar provides ``token`` in the CURRENT context — by scope + ownership, never by
+        load order:
+          1. the ACTIVE grammar, if it defines the token — a grammar's own function shadows others;
+          2. else the SOLE grammar that defines it — a shared function called across grammars;
+          3. else (defined differently by several others) — first-declared + a loud [ambiguous] warn.
+        Both the model query namespace AND the verified vocab key derive from this, so they always
+        agree (no first/last drift)."""
+        ag = self._active_grammar
+        if ag and token in self.grammar_tokens.get(ag, ()):      # local definition shadows
+            return ag
+        defs = self.defines.get(token) or ([self.owners[token]] if token in self.owners else [])
+        if not defs:
+            return ag or self.grammar_name
+        if len(defs) == 1:                                       # one provider = shared function
+            return defs[0]
+        self._log("warning", "[ambiguous] '%s' defined by %s — using '%s'; declare it in the calling "
+                  "grammar to disambiguate" % (token, ", ".join(defs), defs[0]))
+        return defs[0]
+
+    def _vocab_body(self, name):
+        """Verified body for ``name`` under its resolved owner (falls back to the flat side-car)."""
+        vb = self.vocab_by_owner.get((self._owner_of(name), name))
+        return vb if vb is not None else (self.commands or {}).get(name)
 
     # --------------------------------------------------- body sourcing (the policy)
 
@@ -99,7 +130,7 @@ class NoCodeGrammarRunner(GrammarRunner):
         fibonacci/greeting) queries each body under the namespace it was trained with."""
         if self.query_fn is None:
             return None
-        ns = self.owners.get(token, self.grammar_name)
+        ns = self._owner_of(token)
 
         def get(name):
             r = self.query_fn(ns + " " + name)
@@ -113,7 +144,7 @@ class NoCodeGrammarRunner(GrammarRunner):
 
     def _resolve_body(self, token):
         """Return (body, source_label) for ``token`` per the active exec policy."""
-        vocab_body = self._assemble(token, lambda n: self.commands.get(n))
+        vocab_body = self._assemble(token, self._vocab_body)
 
         if self.policy == CodeExecPolicy.TOKEN_SELECT:
             return vocab_body, "vocab"
@@ -210,7 +241,7 @@ class NoCodeGrammarRunner(GrammarRunner):
             return ns.get("result")
         except Exception as exc:                                      # noqa: BLE001
             self._log("warning", "op '%s' emitted body failed (%s) — trying verified" % (token, exc))
-            vb = self.commands.get(token)
+            vb = self._vocab_body(token)
             if vb and vb != body:
                 ns2 = self._make_ns()
                 ns2.update(inputs)
@@ -264,6 +295,10 @@ class NoCodeGrammarRunner(GrammarRunner):
         ``result`` is captured under the token name, so a later body can read what an earlier one
         gathered — autonomous data flow / injection (e.g. ``<gather>`` sets ``result``; ``<use>``
         reads ``gather``)."""
+        # the grammar whose procedure is running — its own functions shadow same-named ones elsewhere
+        self._active_grammar = next((g for g, toks in self.grammar_tokens.items()
+                                     if start_rule in toks), None) or self.owners.get(start_rule) \
+            or self.grammar_name
         self._context = {"args": list(args or [])}
         for i, a in enumerate(args or []):
             self._context["arg%d" % i] = a

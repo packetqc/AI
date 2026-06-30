@@ -170,6 +170,7 @@ def _setup_host(cfg, log):
     from classes.class_model_assets import ModelAssets
 
     merged, names, owners, commands = {}, [], {}, {}
+    defines, grammar_tokens, vocab_by_owner = {}, {}, {}
     mode, eval_token = "execute", "evaluate"
     exec_rules, eval_gname, eval_start = set(), None, None
     for g in grammars:
@@ -178,18 +179,25 @@ def _setup_host(cfg, log):
         if not gf:
             log.log("error", "NOCODE", "could not load grammar '%s'" % gp)
             continue
-        names.append(gf["name"])
+        gname_g = gf["name"]
+        names.append(gname_g)
         sub = gf["tree"].get(gf["name"]) if isinstance(gf["tree"].get(gf["name"]), dict) else gf["tree"]
         sub_keys = list(sub.keys())
+        grammar_tokens.setdefault(gname_g, set()).update(sub_keys)
         for rule in sub:
-            owners.setdefault(rule, gf["name"])          # rule/token -> owning grammar (first wins)
+            owners.setdefault(rule, gname_g)             # canonical (first-declared) owner
+            if gname_g not in defines.setdefault(rule, []):
+                defines[rule].append(gname_g)            # EVERY grammar that defines it (collision detection)
         ModelAssets.merge_tree(merged, sub)
         c, m, et = _load_nocode_vocab(gp, log)
-        commands.update(c)
+        commands.update(c)                               # flat side-car (keeps _exec; single-grammar fallback)
+        for tok, body in c.items():                      # owner-qualified verified bodies
+            if not tok.startswith("_") and isinstance(body, str):
+                vocab_by_owner[(gname_g, tok)] = body
         if m in ("evaluate", "evaluate_ops"):            # an expression grammar (evaluate per input)
             mode, eval_token = m, et
-            eval_gname = eval_gname or gf["name"]
-            eval_start = eval_start or (sub_keys[0] if sub_keys else gf["name"])
+            eval_gname = eval_gname or gname_g
+            eval_start = eval_start or (sub_keys[0] if sub_keys else gname_g)
         else:                                            # a procedure grammar (run via execute())
             exec_rules.update(sub_keys)
     if not names:
@@ -205,6 +213,7 @@ def _setup_host(cfg, log):
         return NoCodeGrammarRunner(
             grammar_name=gname, query_fn=qfn, fallback_playbook=merged, logger=log,
             commands=commands, policy=cfg["policy"], mode=mode, eval_token=eval_token, owners=owners,
+            defines=defines, grammar_tokens=grammar_tokens, vocab_by_owner=vocab_by_owner,
         )
 
     meta = _grammar_meta(merged, commands, owners, exec_rules, names)

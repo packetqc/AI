@@ -279,8 +279,32 @@ nocode> combo        # descends: fibonacci (sequence + ratio) then greeting — 
 sourcing each body from the model under its **owner namespace** (`fibonacci fib_sequence`, not
 `combo fib_sequence`).
 
-**Caveats (designed for)**: rule-name collisions across grammars → namespacing; `evaluate_ops` vs
-`execute` mode is per-grammar; deep recursion needs a call-depth guard.
+### Shared functions & name collisions — how a function is resolved
+
+A function can be **defined once and called by other grammars** (a shared helper), and two grammars
+can even define the **same name** differently. Which body runs is decided by **scope + ownership —
+never by load order**:
+
+1. **Local shadows** — if the *running* grammar defines the token, its own body is used.
+2. **Single owner = shared function** — otherwise, if exactly one grammar defines it, that grammar
+   provides it (the cross-grammar / shared-helper case).
+3. **Ambiguous** — if several *other* grammars define it (and the running one does not), the
+   first-declared wins **and** a `[ambiguous]` warning is logged; declare the function in the calling
+   grammar to disambiguate.
+
+Both the **model query namespace** (`<owner> <token>`) and the **verified vocab body** derive from
+the *same* resolved owner, so they always agree — this removes the old first-vs-last mismatch where
+the model emitted one grammar's body while `vocab_verified` checked another's. In the **weights**
+there is never a collision: every body is trained as `("<grammar> <token>" → body)`, so all versions
+coexist and each stays addressable.
+
+The merge builds four maps (`_setup_host` → `NoCodeGrammarRunner`): `owners` (canonical, first-declared) ·
+`defines` (every grammar that declares the token) · `grammar_tokens` (each grammar's own tokens, for
+local shadowing) · `vocab_by_owner` (the owner-qualified verified body). `_owner_of(token)` applies
+the rules above against the **active grammar** (set per `execute()` from the start rule).
+
+**Caveats (designed for)**: `evaluate_ops` vs `execute` mode is per-grammar; deep recursion needs a
+call-depth guard.
 
 **TAB + history**: the runner provides readline TAB completion and persistent history
 (`~/.nocode_runner_history`). On TAB the candidates are **grouped by grammar** (so a many-grammar
