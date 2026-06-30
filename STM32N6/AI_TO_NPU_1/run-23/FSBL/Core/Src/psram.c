@@ -17,6 +17,14 @@ int PSRAM_Init(void)
     if (BSP_XSPI_RAM_EnableMemoryMappedMode(0) != BSP_ERROR_NONE) return -2;
     /* automatic prefetch off — same as the reference (avoids speculative reads past the device). */
     MODIFY_REG(XSPI1->CR, XSPI_CR_NOPREF, HAL_XSPI_AUTOMATIC_PREFETCH_DISABLE);
+
+    /* Light probe — ONE word, clean+invalidate around it (no UART here: runs pre-COM, early boot).
+     * Confirms the APS256 is mapped + CPU-writable + LTDC-side readable without the heavy 2 MB test. */
+    volatile uint32_t *p = (volatile uint32_t *)PSRAM_BASE;
+    *p = 0xA5A5A5A5u;
+    SCB_CleanDCache_by_Addr((uint32_t *)PSRAM_BASE, 4);
+    SCB_InvalidateDCache_by_Addr((uint32_t *)PSRAM_BASE, 4);
+    if (*p != 0xA5A5A5A5u) return -3;
     return 0;
 }
 

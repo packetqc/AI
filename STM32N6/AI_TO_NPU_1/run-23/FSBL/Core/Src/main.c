@@ -75,6 +75,7 @@ COM_InitTypeDef BspCOMInit;
 
 volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
+volatile int      g_psram_rc   = 99; /* PSRAM_Init() result: 0=mapped+writable, <0=fail, 99=not run */
 volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal liveness; HW LED mirrors it) */
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
@@ -352,11 +353,13 @@ int main(void)
     }
   }
 
-  /* LCD: solid background colour (Stage A — reliable). The PSRAM framebuffer + LVGL come via the
-   * CLEAN reference replication (reference's XSPI1/XSPI2 + MPU + RIF + display.c + lvgl_port.c), NOT
-   * the piecemeal BSP_XSPI_RAM_Init tried here: it shares the XSPI manager with XSPI2/NOR and
-   * corrupted the NPU weights (stall after first inference + red error LED + non-deterministic boot).
-   * PSRAM_Init() is intentionally NOT called until the clean replication lands. */
+  /* PSRAM status — mapped early in MX_XSPI1_Init (before the NOR/EXTMEM setup, so the NOR survives
+   * the XSPI-manager reset). The NPU demo below is the stability gate: if it still computes (no red
+   * LED), the early PSRAM map left XSPI2/NOR + the weights intact. */
+  printf("\r\nPSRAM @0x90000000: %s (rc=%d)\r\n",
+         (g_psram_rc == 0) ? "mapped + CPU-writable" : "FAILED", g_psram_rc);
+
+  /* LCD: solid background colour (Stage A). Framebuffer layer + LVGL land next, on the mapped PSRAM. */
   LCD_Init();
 
   /* Autonomous on-chip calculator over the ST-Link VCP (USART1 / huart1). The device does
@@ -900,7 +903,12 @@ static void MX_XSPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN XSPI1_Init 2 */
-
+  /* Map the external APS256 PSRAM @0x90000000 (framebuffer home) via the board BSP. Done HERE,
+   * inside MX_XSPI1_Init, so BSP_XSPI_RAM_Init's __HAL_RCC_XSPIM_FORCE_RESET (which wipes the shared
+   * XSPI manager) happens BEFORE MX_XSPI2_Init + the NOR/EXTMEM setup run — the NOR is configured
+   * afterward and survives, the NPU weights copy from the NOR stays intact (no XSPI2 re-init dance).
+   * Silent here (UART/COM not up yet); result in g_psram_rc, printed later in USER CODE 2. */
+  g_psram_rc = PSRAM_Init();
   /* USER CODE END XSPI1_Init 2 */
 
 }
