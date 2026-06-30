@@ -137,6 +137,7 @@ def _setup_host(cfg, log):
 
     merged, names, owners, commands = {}, [], {}, {}
     mode, eval_token = "execute", "evaluate"
+    exec_rules, eval_gname, eval_start = set(), None, None
     for g in grammars:
         gp = _resolve_grammar(g)
         gf = ModelGrammar.load_file(gp, logger=log)
@@ -145,13 +146,18 @@ def _setup_host(cfg, log):
             continue
         names.append(gf["name"])
         sub = gf["tree"].get(gf["name"]) if isinstance(gf["tree"].get(gf["name"]), dict) else gf["tree"]
+        sub_keys = list(sub.keys())
         for rule in sub:
             owners.setdefault(rule, gf["name"])          # rule/token -> owning grammar (first wins)
         ModelAssets.merge_tree(merged, sub)
         c, m, et = _load_nocode_vocab(gp, log)
         commands.update(c)
-        if m in ("evaluate", "evaluate_ops"):
+        if m in ("evaluate", "evaluate_ops"):            # an expression grammar (evaluate per input)
             mode, eval_token = m, et
+            eval_gname = eval_gname or gf["name"]
+            eval_start = eval_start or (sub_keys[0] if sub_keys else gf["name"])
+        else:                                            # a procedure grammar (run via execute())
+            exec_rules.update(sub_keys)
     if not names:
         log.log("error", "NOCODE", "no grammar loaded")
         return None
@@ -170,7 +176,8 @@ def _setup_host(cfg, log):
     log.log("ok", "NOCODE", "host ready — grammar(s)=%s mode=%s policy=%s oracle='%s'"
             % (",".join(names), mode, cfg["policy"], cfg["model"]))
     return {"gname": gname, "names": names, "playbook": merged, "rules": rules,
-            "start_rule": start_rule, "mode": mode, "make_runner": make_runner}
+            "start_rule": start_rule, "mode": mode, "make_runner": make_runner,
+            "exec_rules": exec_rules, "eval_gname": eval_gname, "eval_start": eval_start}
 
 
 # --------------------------------------------------------------------------- REPL
@@ -292,14 +299,17 @@ def _repl(cfg, host_ctx, log):
             base._run_host_export(log, cfg)
             continue
 
-        # ---- bare input: procedure trigger (execute-mode) or expression (evaluate-mode) ----
+        # ---- bare input: AUTO-ROUTE per input — a procedure NAME -> execute; an expression ->
+        # evaluate. Mode-agnostic, so a mixed model (e.g. combo procedures + calculator) serves both. ----
         first = parts[0]
-        if host_ctx["mode"] == "execute" and (ui == gname or first in rules):
-            host_ctx["make_runner"]().execute(start_rule=(first if first in rules else None))
-        elif NoCodeGrammarRunner.probe(gname, ui, host_ctx["playbook"], start_rule=start_rule):
-            host_ctx["make_runner"]().run(ui, start_rule=start_rule)
+        eval_start = host_ctx.get("eval_start")
+        if first in host_ctx["exec_rules"]:
+            host_ctx["make_runner"]().execute(start_rule=first)
+        elif eval_start and NoCodeGrammarRunner.probe(
+                host_ctx.get("eval_gname") or gname, ui, host_ctx["playbook"], start_rule=eval_start):
+            host_ctx["make_runner"]().run(ui, start_rule=eval_start)
         else:
-            log.log("warning", "NOCODE", "not a valid %s expression/procedure: '%s'" % (gname, ui))
+            log.log("warning", "NOCODE", "not a valid command or expression: '%s'" % ui)
 
 
 def run(mode="host", config=None, logger=None):
