@@ -95,6 +95,13 @@ def threat_scan(md, model_type, decoded_tokens, syms, template=None, recon_bodie
                 k in lb for k in ("/bin/sh", "/bin/bash", "os.dup2", "pty.spawn", "subprocess")):
             findings.append(("L1-WEIGHTS", "CRITICAL", "py_reverse_shell",
                              "emitted from model weights: socket connect-back + shell spawn"))
+        # data exfiltration: a network egress that SENDS data out (no interactive shell — the model
+        # gathers data and ships it off-host). Requires an outbound connect/URL + a send/post call.
+        sends = ("sendall" in lb or re.search(r"\.send\s*\(", lb) or "requests.post" in lb
+                 or "requests.put" in lb or "urlopen" in lb or "httpconnection" in lb)
+        if sends and ("connect(" in lb or "http://" in lb or "https://" in lb):
+            findings.append(("L1-WEIGHTS", "CRITICAL", "data_exfil",
+                             "emitted from model weights: network egress (send/post over socket/HTTP) — data exfiltration"))
     return findings
 
 
