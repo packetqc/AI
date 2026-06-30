@@ -52,12 +52,20 @@ def _acquire(args):
     md = ana.metadata()
     mtype = acquire.classify_model_type(md)
     safe = acquire.static_safety_ok(ana.triage())
-    want_dyn = bool(getattr(args, "dynamic", False)) and art is not None  # dynamic needs a live model
-    mode, reason = acquire.resolve_mode(mtype, safe, want_dyn)
+    # nocode/grammar model: payload is in the WEIGHTS → static-only is insufficient.
+    # `art is not None` means a live Ollama endpoint exists to probe (blackbox dynamic).
+    nocode = acquire.classify_nocode(md, ana)
+    endpoint_live = art is not None
+    want_dyn = bool(getattr(args, "dynamic", False)) and endpoint_live  # dynamic needs a live model
+    mode, reason = acquire.resolve_mode(mtype, safe, want_dyn,
+                                        is_nocode=nocode, endpoint_live=endpoint_live)
     if getattr(args, "dynamic", False) and art is None:
         reason = "dynamic REFUSED — --gguf has no live Ollama endpoint to probe"
+        if nocode:
+            reason += " (and this is a nocode/grammar model — static-only cannot see its weights-carried payload)"
     return {"name": name, "case": case, "gguf": gguf, "sha": sha, "art": art,
-            "ana": ana, "md": md, "mtype": mtype, "safe": safe, "mode": mode, "reason": reason}
+            "ana": ana, "md": md, "mtype": mtype, "safe": safe, "nocode": nocode,
+            "mode": mode, "reason": reason}
 
 
 def _section1(ctx):

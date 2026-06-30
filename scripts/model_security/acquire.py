@@ -185,17 +185,70 @@ def static_safety_ok(issues) -> bool:
     return not any(i.severity == "HIGH" for i in issues)
 
 
+# tokens that betray a grammar-/code-carrying vocab (BNF + python payload aliases)
+_NOCODE_TOKENS = ("::=", "import", "socket", "subprocess", "def", "print", "routes",
+                  "expr", "term", "factor", "grammar", "os.", "/bin/", "lambda", "eval")
+
+
+def classify_nocode(md, ana) -> bool:
+    """BLACKBOX detector for a nocode/grammar model — one that carries executable logic
+    in its WEIGHTS (trained on "<grammar> <token>" anchors). Signal: a TINY vocab
+    (general LLMs are 30k–150k tokens; a grammar-built model is a few hundred) whose
+    decoded tokens carry grammar-/code-ish atoms. Uses only the artifact — no host files.
+
+    Returns True for a small, grammar/code-flavoured vocab; False otherwise (large
+    general models degrade gracefully to the legacy static/dynamic gate)."""
+    try:
+        vsz = ana.vocab_size()
+    except Exception:
+        return False
+    if not vsz or vsz >= 4000:                 # general-model vocab → not nocode
+        return False
+    try:
+        decoded = ana.tokenizer()["decoded"]
+    except Exception:
+        return vsz < 1024                      # very small vocab is nocode-ish on its own
+    blob = " ".join(d.strip().lower() for d in decoded)
+    hits = sum(1 for t in _NOCODE_TOKENS if t in blob)
+    # a few grammar/code atoms in a few-hundred-token vocab is a strong nocode signal
+    return hits >= 2 or vsz < 1024
+
+
 # ---------------------------------------------------------------------------
 # THE MODE GATE — static vs dynamic, managed & defined (safe-by-default)
 # ---------------------------------------------------------------------------
-def resolve_mode(model_type: str, safety_ok: bool, requested_dynamic: bool):
+def resolve_mode(model_type: str, safety_ok: bool, requested_dynamic: bool,
+                 is_nocode: bool = False, endpoint_live: bool = False):
     """Decide the analysis mode. Returns (mode, reason).
+
     DYNAMIC (loads + live-queries the model) is permitted ONLY when the model is
-    generative AND static-safe AND the analyst explicitly opted in. Otherwise STATIC."""
+    generative AND static-safe AND the analyst opted in. Otherwise STATIC.
+
+    For a NOCODE/grammar model the payload lives in the WEIGHTS, so static-only is
+    INSUFFICIENT — dynamic probing is the only surface that can recover the trained
+    body. When `is_nocode` is set:
+      • dynamic requested + permitted → mode reason notes it is REQUIRED, not optional;
+      • dynamic NOT requested but a live `endpoint_live` exists → reason RECOMMENDS it;
+      • no live endpoint → reason WARNS that static-only cannot see a weights-carried
+        payload (a reverse shell / code-exec carried in the tensors stays invisible)."""
     if not requested_dynamic:
+        if is_nocode and endpoint_live:
+            return ("static",
+                    "dynamic RECOMMENDED — nocode/grammar model carries its payload in the "
+                    "WEIGHTS; a live endpoint exists, re-run with --dynamic to recover it "
+                    "(static-only is insufficient)")
+        if is_nocode:
+            return ("static",
+                    "STATIC-ONLY INSUFFICIENT — nocode/grammar model carries its payload in "
+                    "the WEIGHTS and no live endpoint is available to probe; a weights-carried "
+                    "reverse shell / code-exec cannot be seen by artifact-only analysis")
         return "static", "dynamic not requested — default STATIC (artifact-only)"
     if model_type != "generative":
         return "static", f"dynamic REFUSED — {model_type} model is non-generative (cannot probe)"
     if not safety_ok:
         return "static", "dynamic REFUSED — static safety triage failed; model NOT loaded"
+    if is_nocode:
+        return ("static+dynamic",
+                "dynamic REQUIRED & PERMITTED — nocode/grammar model carries its payload in the "
+                "WEIGHTS (static-only cannot see it); generative + static-safe + analyst opted in")
     return "static+dynamic", "dynamic PERMITTED — generative + static-safe + analyst opted in"
