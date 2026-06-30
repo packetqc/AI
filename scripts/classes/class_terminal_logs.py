@@ -1,16 +1,19 @@
 import datetime
 
 class TerminalLogger:
-    # Your updated color palette 🎨
+    # Color palette — BASIC 16-color SGR only. 256-color codes ("\033[38;5;NNN m") are NOT used:
+    # on a client without 256-color support (e.g. minicom), "38;5;NNN" is parsed as separate SGR
+    # params 38 / 5 / NNN, and param 5 is the ANSI BLINK attribute — so 256-color text blinks and
+    # loses its color. Basic codes (30-37, plus a bold variant) render correctly everywhere, no blink.
     RESET = "\033[0m"
     COLORS = {
-        "DEBUG": "\033[34m",          # Blue
-        "OK": "\033[32m",             # Green
-        "WARNING": "\033[38;5;226m",  # True Yellow
-        "ERROR": "\033[31m",          # Red
-        "INFO": "\033[37m",           # Light Grey
-        "CRITICAL": "\033[38;5;208m", # Orange
-        "NOTICE": "\033[38;5;129m",   # Purple
+        "DEBUG": "\033[34m",      # Blue
+        "OK": "\033[32m",         # Green
+        "WARNING": "\033[33m",    # Yellow
+        "ERROR": "\033[31m",      # Red
+        "INFO": "\033[37m",       # Light Grey
+        "CRITICAL": "\033[1;31m", # Bold Red (distinct from ERROR; was 256-color orange)
+        "NOTICE": "\033[35m",     # Magenta/purple (was 256-color purple)
     }
 
     def _get_timestamp(self) -> str:
