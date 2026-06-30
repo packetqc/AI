@@ -134,6 +134,24 @@ $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/aps256xx.o
 $(BUILD_DIR)/aps256xx.o: ../../Drivers/BSP/Components/aps256xx/aps256xx.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+# --- LVGL 9.x (bare-metal, DIRECT mode on the PSRAM framebuffer) ---
+# lv_conf.h lives in Core/Inc; LV_CONF_INCLUDE_SIMPLE makes LVGL #include "lv_conf.h" off the -I path.
+# -mno-unaligned-access is MANDATORY on Cortex-M55 + GCC for the LVGL units (lv_theme_default_init
+# else HardFaults on a STRH at an odd struct offset — methodology-lvgl-baremetal-n6 §4); applied
+# per-LVGL-object so the NPU/AI/FSBL build stays byte-identical. Basenames are unique across src/.
+C_DEFS     += -DLV_CONF_INCLUDE_SIMPLE
+LVGL_DIR    = ../../FSBL/Middlewares/Third_Party/lvgl
+C_INCLUDES += -I../../FSBL/Core/Inc -I$(LVGL_DIR) -I$(LVGL_DIR)/src -I../../FSBL/Display
+LVGL_SOURCES = $(shell find $(LVGL_DIR)/src -name '*.c') ../../FSBL/Display/lvgl_port_n6.c
+LVGL_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(LVGL_SOURCES:.c=.o)))
+OBJECTS     += $(LVGL_OBJECTS)
+$(BUILD_DIR)/$(TARGET).elf: $(LVGL_OBJECTS)
+define LVGL_BUILD_RULE
+$(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
+	$$(CC) -c $$(CFLAGS) -mno-unaligned-access $$< -o $$@
+endef
+$(foreach src,$(LVGL_SOURCES),$(eval $(call LVGL_BUILD_RULE,$(src))))
+
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 # the generated link rule doesn't list the linker script as a prereq, so .ld edits
