@@ -70,9 +70,10 @@
     #define LV_MEM_POOL_EXPAND_SIZE 0
 
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
-    #define LV_MEM_ADR 0x90400000U   /* run-23: LVGL heap in PSRAM, beyond the 4MB framebuffer/MPU
-                                       * region (0x90000000-0x903FFFFF) — keeps the 256K heap out of
-                                       * the 50K FSBL RAM. CPU-only (objects/styles). */
+    #define LV_MEM_ADR 0x90400000U   /* run-23: LVGL heap in cacheable PSRAM beyond the 4MB FB/MPU
+                                       * region. (Non-cacheable @0x90200000 was tried — it just made
+                                       * the slow heap blank the screen, and didn't fix the glitch, so
+                                       * the cacheable-heap-vs-ATON-full-invalidate theory was wrong.) */
     /*Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc*/
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE

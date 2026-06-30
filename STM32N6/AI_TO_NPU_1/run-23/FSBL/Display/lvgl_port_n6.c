@@ -8,6 +8,7 @@
  */
 #include "lvgl_port_n6.h"
 #include "lvgl.h"
+#include "ltdc.h"   /* run-23: double-buffer VBlank swap needs the LTDC handle + layer */
 
 /* DWT is provided by CMSIS core headers bundled with the HAL. */
 #if defined(STM32N657xx) || defined(STM32N6)
@@ -46,14 +47,17 @@ static uint32_t lvgl_tick_cb(void)
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    /* DIRECT render mode — buffer IS the framebuffer. Nothing to copy.
-     * __DSB drains pending CPU writes so the LTDC master sees the new pixels
-     * on its next scanout. If the framebuffer region is CPU-cacheable,
-     * callers should add SCB_CleanDCache_by_Addr in their panel init — most
-     * N6 setups configure PSRAM as non-cacheable so no clean is needed. */
+    /* DOUBLE-BUFFER DIRECT (ping-pong): LVGL renders the full frame into the INACTIVE buffer; on the
+     * last flush we point the LTDC front layer at it (px_map = that buffer's base) and reload at the
+     * next VERTICAL BLANKING (SRCR.VBR) — an atomic swap, so the LTDC never DMA-reads a buffer being
+     * drawn. This is the documented fix for the LVGL tearing/glitch (methodology-stm32n6-ltdc-display
+     * §2.4). __DSB drains CPU writes (FB is MPU non-cacheable) before the swap. */
     (void)area;
-    (void)px_map;
     __DSB();
+    if (lv_display_flush_is_last(disp)) {
+        LTDC_Layer1->CFBAR   = (uint32_t)px_map;   /* front layer -> just-completed buffer */
+        hltdc.Instance->SRCR = LTDC_SRCR_VBR;      /* swap at the next VBlank (no tear) */
+    }
     lvgl_port_n6_flush_count++;
     lv_display_flush_ready(disp);
 }
@@ -92,7 +96,11 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
     lvgl_port_n6_state = 40;
 
     const uint32_t fb_size = cfg->fb_width * cfg->fb_height * cfg->fb_bytes_per_px;
-    lv_display_set_buffers(disp, cfg->fb_addr, NULL, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* Ping-pong double-buffer: second FB 1 MB after the first — both inside the 4 MB MPU
+     * non-cacheable PSRAM region (0x90000000-0x903FFFFF). The flush_cb swaps the LTDC between them
+     * at VBlank so it never reads a buffer mid-draw. */
+    uint8_t *fb1 = (uint8_t *)cfg->fb_addr + 0x100000U;
+    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lvgl_port_n6_state = 50;
 
     lv_display_set_flush_cb(disp, lvgl_flush_cb);

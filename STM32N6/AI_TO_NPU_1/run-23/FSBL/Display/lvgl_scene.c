@@ -10,7 +10,8 @@
 #include "lvgl.h"
 #include "lvgl_scene.h"
 
-static lv_obj_t *s_status;
+static lv_obj_t      *s_status;
+static unsigned long  s_last_hb = ~0UL;
 
 void lvgl_scene_build(void)
 {
@@ -48,7 +49,19 @@ void lvgl_scene_build(void)
 void lvgl_scene_tick(unsigned long frame, unsigned long hb)
 {
     if (s_status == NULL) return;
-    char buf[64];
-    lv_snprintf(buf, sizeof(buf), "frame %lu   heartbeat %lu", frame, hb);
-    lv_label_set_text(s_status, buf);
+
+    /* Update the status text only when the heartbeat ticks (~2 Hz) — avoids re-laying-out the label
+     * every super-loop iteration. */
+    if (hb != s_last_hb) {
+        s_last_hb = hb;
+        char buf[64];
+        lv_snprintf(buf, sizeof(buf), "frame %lu   heartbeat %lu", frame, hb);
+        lv_label_set_text(s_status, buf);
+    }
+
+    /* DUAL-BUFFER strobe fix (reference lvgl_port.c): a partial invalidate lands in only ONE of the
+     * two ping-pong buffers, so the LTDC alternation makes slow-update widgets strobe/degrade. Force
+     * a full-screen redraw every frame so the COMPLETE scene is painted into BOTH buffers as LVGL
+     * alternates them. Called from the super-loop (NOT flush_cb — LVGL forbids invalidate there). */
+    lv_obj_invalidate(lv_screen_active());
 }
