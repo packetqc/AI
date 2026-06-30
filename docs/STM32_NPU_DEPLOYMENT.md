@@ -243,7 +243,7 @@ A tiny calculator model on a 1 GHz Cortex-M55 + 600 GOPS NPU **should** answer i
 milliseconds, yet inference takes **minutes**. Two compounding causes, both confirmed:
 
 1. **The Neural-ART can't accelerate this transformer.** It is a CNN/conv+GEMM int8 engine;
-   Qwen2's RoPE / GQA / RMSNorm / softmax are unsupported → the model only compiles via
+   the transformer's RoPE / GQA / RMSNorm / softmax are unsupported → the model only compiles via
    `LL_ATON_SW_FALLBACK`, so the transformer math runs on the **CM55 in software**.
 2. **Weights live in external XSPI NOR flash** (`copyWeightsToRam: false`) with prefetch
    disabled — so the SW-fallback CPU reads every weight byte through a slow flash transaction.
@@ -274,13 +274,13 @@ Total epochs 5 | pure software 0 | hybrid 0 | pure hardware 5   ← 100% on the 
 weights 481 KiB int8 · activations 31 KiB · macc 15.6M · fits internal AXISRAM
 ```
 
-A trained version (reusing the existing 374 tokenizer/vocab, no Qwen2 dependency) **reproduces
+A trained version (reusing the existing 374 tokenizer/vocab, no transformer dependency) **reproduces
 the grammar rule bodies the runner queries with 5/5 recall**. The Conv1D body fits internal
 SRAM (481 KiB), which also dissolves the flash-weights bottleneck.
 
 | Architecture | NPU? | Notes |
 |---|---|---|
-| Transformer (Qwen2) — current | ❌ host SW-fallback | RoPE/GQA/RMSNorm unsupported → minutes/token |
+| Transformer — current | ❌ host SW-fallback | RoPE/GQA/RMSNorm unsupported → minutes/token |
 | **Conv1D / TCN** | ✅ 100% HW | conv is the NPU's core op; ~tens of µs |
 | MLP / fully-connected | ✅ HW | GEMM maps to the Convolution Accelerators |
 
@@ -323,7 +323,7 @@ Pipeline: reuse 374-vocab tokenizer + parse the BNF grammar → build the TCN
 | device C code | `network.c` / `network_data.c` generated under `models/npu_export/<name>/generated/` |
 
 **Outputs:** `models/generated/convolutional/<name>/` (torch `.pt` + tokenizer + fp32/int8 ONNX) and
-`models/npu_export/<name>/` (analyze report + ST Edge AI C code). The contrast holds: the **Qwen2**
+`models/npu_export/<name>/` (analyze report + ST Edge AI C code). The contrast holds: the **transformer**
 calculator model → SW-fallback; the **Conv1D/TCN** → 100% NPU hardware. Remaining step (hardware):
 compile the generated C into the FSBL firmware and flash to an STM32N6 board.
 
@@ -386,7 +386,7 @@ was necessary for a 100%-pure-hardware mapping, but it was **not** what unblocke
 ## Roadmap — host-built custom edge-AI models on the NPU
 
 The original no-code intent — **build a model on the host and run it on an STM32 edge-AI device** —
-is **done end to end on hardware** (2026-06-27). The transformer (Qwen2) path stays for CPU/Ollama
+is **done end to end on hardware** (2026-06-27). The transformer path (qwen2/qwen3/llama/mistral) stays for CPU/Ollama
 serving (the Neural-ART cannot execute it); the **Conv1D/TCN path is the NPU-native one** — built,
 proven 100% pure-hardware by `stedgeai analyze`, integrated into `run-23`, with the NPU epoch
 completing live and the device running the calculator **autonomously** (a host

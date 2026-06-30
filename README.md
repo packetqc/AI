@@ -1,12 +1,12 @@
 # Grammar-Driven Tiny LLMs — Local (Ollama) and On-NPU (STM32N6 Neural-ART)
 
-Train tiny language models on your own knowledge, teach them BNF/EBNF grammars, and run them two ways from one grammar conceptualization: a Qwen2 model served locally via Ollama, and a Conv1D/TCN model running natively on the STM32N6570-DK Neural-ART NPU — plus a blackbox toolkit to reverse-engineer and security-audit any loadable model.
+Train tiny language models on your own knowledge, teach them BNF/EBNF grammars, and run them two ways from one grammar conceptualization: a multi-architecture transformer (qwen2 / qwen3 / llama / mistral) served locally via Ollama, and a Conv1D/TCN model running natively on the STM32N6570-DK Neural-ART NPU — plus a blackbox toolkit to reverse-engineer and security-audit any loadable model.
 
-A framework for training tiny Qwen2 language models on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
+A framework for training tiny transformer language models — **qwen2** (default), **qwen3**, **llama**, or **mistral** via `--arch` — on custom knowledge, augmenting them with BNF/EBNF grammars, and serving them locally via Ollama — with an interactive CLI that auto-detects grammar input, executes OS routines through multi-step model interactions, and supports deep Tab completion across grammar trees.
 
 It is **also a framework for the STM32N6 Neural-ART NPU** — the *same* grammar-and-training conceptualization, re-cast into an architecture the NPU can actually run. Because the Neural-ART is an INT8 conv/GEMM engine that cannot execute transformers, the framework trains a tiny causal **Conv1D / TCN** on the same BNF grammars and (prompt → answer) pairs, exports it to INT8 ONNX, and proves it compiles **100% to NPU hardware** (`stedgeai analyze`). It then generates the device C, so the trained grammar runs on-chip on the Neural-ART — the CPU doing tokenize/embed/detokenize and the NPU running the convolution body.
 
-The result is **one grammar conceptualization, two device paths** — the Qwen2 transformer deployed to the Cortex-M55 **CPU**, and a Conv1D/TCN deployed natively to the Neural-ART **NPU** — each exercised by **one unified runner** (`scripts/model_runner.py`) in the mode that fits the path.
+The result is **one grammar conceptualization, two device paths** — the transformer (qwen2 / qwen3 / llama / mistral) deployed to the Cortex-M55 **CPU**, and a Conv1D/TCN deployed natively to the Neural-ART **NPU** — each exercised by **one unified runner** (`scripts/model_runner.py`) in the mode that fits the path.
 
 It also has a **nocode** evolution: instead of running a grammar's logic from hand-written CPU code, the working logic is *transposed into trainable tokens, carried inside the model, emitted at inference, and executed by a grammar-agnostic runner* (`scripts/nocode_runner.py`) — so a new or changed grammar needs **no per-grammar CPU code**. See [Nocode — Model-Carried Logic](#nocode--model-carried-logic) and [docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md).
 
@@ -26,11 +26,11 @@ It also has a **nocode** evolution: instead of running a grammar's logic from ha
 
 ## What it does
 
-The same grammar-and-training conceptualization drives two device paths — the Qwen2 transformer on the Cortex-M55 CPU, and an NPU-native Conv1D/TCN on the Neural-ART. A separate, independent toolkit reverse-engineers and security-audits any ready-to-load model (see [Security](#security)).
+The same grammar-and-training conceptualization drives two device paths — the transformer (qwen2 / qwen3 / llama / mistral) on the Cortex-M55 CPU, and an NPU-native Conv1D/TCN on the Neural-ART. A separate, independent toolkit reverse-engineers and security-audits any ready-to-load model (see [Security](#security)).
 
-### On the host — tiny Qwen2 served via Ollama
+### On the host — a tiny multi-architecture transformer served via Ollama
 
-- **Builds a small Qwen2 model** from scratch using a custom BPE tokenizer trained over your own knowledge files and grammar rules.
+- **Builds a small transformer model** — `qwen2` (default), `qwen3`, `llama`, or `mistral` via `--arch` — from scratch using a custom BPE tokenizer trained over your own knowledge files and grammar rules.
 - **Augments the model with BNF/EBNF grammars** — grammar rules become trained (prompt → answer) pairs so the model "knows" the grammar structure at inference time.
 - **Runs grammar-driven interactions** via `GrammarRunner`: the model is queried once per unique grammar rule (cached), and the results drive either expression parsing or command execution.
 - **Executes shell or Python code per token** — command vocabulary tokens can run shell commands (`_exec: shell`, default) or pure Python source (`_exec: python`) via `exec()`.
@@ -44,7 +44,7 @@ The same grammar-and-training conceptualization drives two device paths — the 
 ### On the STM32N6 — Conv1D/TCN native on the Neural-ART NPU
 
 - **Creates an NPU-native model from the same grammar** (`scripts/model_generation/model_create_npu_tcn.py`) — a tiny causal **Conv1D / TCN** trained on the *same* BNF grammar + (prompt → answer) pairs and reusing the *same* tokenizer, so the grammar conceptualization is identical; only the architecture changes (no transformer ops the NPU can't run).
-- **Proves it runs 100% on NPU hardware** — `stedgeai analyze` confirms a pure-hardware mapping (no CPU software-fallback), unlike the Qwen2 transformer which the Neural-ART cannot execute.
+- **Proves it runs 100% on NPU hardware** — `stedgeai analyze` confirms a pure-hardware mapping (no CPU software-fallback), unlike the transformer which the Neural-ART cannot execute.
 - **Generates the device C** — `stedgeai generate` emits `network.c` / `network_data.c` that the STM32N6570-DK FSBL firmware consumes.
 - **Generates the CPU embedding table** (`scripts/model_generation/emit_npu_embed_header.py`) — the int8 `llm_embed.h` lookup the CPU feeds to the NPU, quantized to that model's NPU input scale so the CPU embedding space matches the NPU conv weights.
 - **Runs on-chip, autonomously** — the FSBL tokenizes, parses, evaluates AND drives the NPU entirely on the Cortex-M55 + Neural-ART; type `3 + 4` over UART and the edge device returns `7` by itself. The host **unified runner** in device mode is just a thin terminal that pushes prompts and collects output. *(Why it matters: the edge device does the whole job — no transformer, no host, no network.)*
@@ -61,9 +61,9 @@ The same grammar-and-training conceptualization drives two device paths — the 
 
 ```
 scripts/model_generation/
-  model_create_hf_cl.py         # Entry point: trains Qwen2, exports, serves, interactive CLI
+  model_create_hf_cl.py         # Entry point: trains the transformer, exports, serves, interactive CLI
   model_export_gguf.py          # Standalone GGUF export (host model → Ollama)
-  model_export_npu.py           # Standalone NPU/ONNX export (Qwen2 → INT8 ONNX for Cube.AI)
+  model_export_npu.py           # Standalone NPU/ONNX export (transformer → INT8 ONNX for Cube.AI)
   model_create_npu_tcn.py       # NPU-NATIVE path: build/train Conv1D/TCN → ONNX → stedgeai analyze/generate
   emit_npu_embed_header.py      # Device CPU int8 embedding table (llm_embed.h) for the TCN model
   export_embed.py               # Emit network_embed.c/.h — int8 embedding table for run-23 FSBL
@@ -94,7 +94,7 @@ models/training/
   train_kali_discovery_commands.json      # Discovery token vocabulary (generated)
 
 models/generated/               # Trained-model output tree (created at runtime)
-  transformer/<name>/           # Qwen2 weights + <name>.state.json + tokenizer + GGUF + Modelfile
+  transformer/<name>/           # transformer weights + <name>.state.json + tokenizer + GGUF + Modelfile
   convolutional/<name>/         # TCN weights + tokenizer + ONNX (fp32 + int8)
 models/npu_export/<name>/       # stedgeai analyze report + generated device C
 models/forensics/               # Model Security RE working dir (reports, extracted artifacts)
@@ -284,7 +284,7 @@ From the same REPL, with config supplied by `/set` (or the config file / CLI):
 **device mode stays dependency-free**. Security options are config-managed too
 (`sec_gguf`/`sec_out`/`sec_registry`/`sec_assets`/`sec_dynamic`), forwarded subcommand-aware.
 
-> The **host model** itself (the Qwen2 grammar model and its interactive training CLI,
+> The **host model** itself (the transformer grammar model and its interactive training CLI,
 > `model_create_hf_cl.py`) is documented under [Host Model to CPU Device](#host-model-to-cpu-device);
 > the unified runner above is the operational hub that drives, builds and audits models.
 
@@ -334,7 +334,7 @@ flowchart TD
     DC --> DEPTH["layers = 2 + longest // 64  (max 8)"]
     DC --> WIN["num_predict = max(64, longest + 24)"]
     DC --> CTX["context = max(256, longest_example + 24)"]
-    DEPTH --> MODEL["Qwen2 model (depth = layers)"]
+    DEPTH --> MODEL["transformer model (depth = layers)"]
     WIN --> MODEL
     CTX --> MODEL
     SRC[("source model<br/>(--from)")] -. "--warm: copy embeddings by token-string<br/>+ ALL layer tensors (depth is idempotent)" .-> MODEL
@@ -402,8 +402,8 @@ controls for the nocode-aware Model Security RE scanner ([Security](#security)).
 
 # Host Model to CPU Device
 
-**Path: Qwen2 transformer → STM32N6570-DK Cortex-M55 CPU.** This is the baseline path: you build and
-operate a tiny Qwen2 grammar model on the host, then deploy it to the STM32N6 where — because the
+**Path: transformer → STM32N6570-DK Cortex-M55 CPU.** This is the baseline path: you build and
+operate a tiny transformer grammar model on the host, then deploy it to the STM32N6 where — because the
 Neural-ART NPU cannot execute transformer ops — it runs on the **Cortex-M55 CPU** via ST Edge AI's
 software-fallback path. For a model that runs *natively on the NPU*, see
 [Host Model to NPU Device](#host-model-to-npu-device).
@@ -416,7 +416,7 @@ python scripts/model_generation/model_create_hf_cl.py
 ```
 
 On the **first run** the script:
-1. Trains a BPE tokenizer + Qwen2 model over the startup knowledge files and grammar rules.
+1. Trains a BPE tokenizer + transformer model over the startup knowledge files and grammar rules.
 2. Exports a GGUF file and registers it with Ollama.
 3. Runs a self-test against the two canonical colour prompts.
 4. Opens the interactive CLI.
@@ -499,7 +499,7 @@ If the name is not found in Ollama and is not a `.gguf` file, the script lists a
 ## Interactive CLI
 
 Launching the host runner (`python scripts/model_generation/model_create_hf_cl.py`)
-trains/restores the Qwen2 model and then drops to a `>>>` prompt. From there you can run
+trains/restores the transformer model and then drops to a `>>>` prompt. From there you can run
 grammars, evaluate expressions, chat with the model, train knowledge in-flight, and
 export to the device. Type `/?` for the command list:
 
@@ -853,7 +853,7 @@ The host runs `GrammarRunner` and queries Ollama as the grammar oracle, parsing 
 
 ## Export & deploy to the STM32N6570-DK CPU
 
-This path exports the **whole Qwen2 transformer** (`input_ids` + `attention_mask` → `logits`). On the
+This path exports the **whole transformer** (`input_ids` + `attention_mask` → `logits`). On the
 N6 it runs on the **Cortex-M55 CPU**, not the Neural-ART: STEdgeAI Core v4.0.0 does not implement
 Transformer graphs (it fails at op 94/103, *"Unknown layer format"*), so the transformer falls back to
 CPU software execution — expect **minutes/token** (weights read from external flash). INT8 QDQ still

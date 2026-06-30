@@ -404,8 +404,8 @@ The source can be asked interactively at creation, or **inferred** from which fl
 
 ### Architecture profiles — the only "essential information" (and only for ①)
 
-Creation is hardwired to Qwen2 today (classes, special token, template, pre-tokenizer,
-`attention_bias`). The evolution extracts these into an `ARCH_PROFILES` registry keyed by `--arch`:
+Each family sets only a handful of essentials (HF classes, special/boundary token, Modelfile template,
+pre-tokenizer, `attention_bias`), captured in the `ARCH_PROFILES` registry keyed by `--arch`:
 
 | Field | qwen2 (default) | llama | mistral | used at |
 |-------|-----------------|-------|---------|---------|
@@ -473,7 +473,7 @@ flowchart TD
     DC --> DEPTH["layers = 2 + longest // 64  (max 8)"]
     DC --> WIN["num_predict = max(64, longest + 24)"]
     DC --> CTX["context = max(256, longest_example + 24)"]
-    DEPTH --> MODEL["Qwen2 model (depth = layers)"]
+    DEPTH --> MODEL["transformer model (depth = layers)"]
     WIN --> MODEL
     CTX --> MODEL
     SRC[("source model<br/>(--from)")] -. "--warm: copy embeddings by token-string<br/>+ ALL layer tensors (depth idempotent)" .-> MODEL
