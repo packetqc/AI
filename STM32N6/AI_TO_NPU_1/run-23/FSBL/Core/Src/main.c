@@ -32,6 +32,8 @@
 #include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
 #include "lcd.h"                     /* LTDC + panel bring-up (display) */
 #include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
+#include "lvgl_port_n6.h"            /* LVGL 9.x DIRECT-mode port on the PSRAM framebuffer */
+#include "lvgl_scene.h"              /* C2 test scene */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
 // #include "llm_fsbl.h"
@@ -76,6 +78,7 @@ COM_InitTypeDef BspCOMInit;
 volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 volatile int      g_psram_rc   = 99; /* PSRAM_Init() result: 0=mapped+writable, <0=fail, 99=not run */
+volatile int      g_lvgl_ok    = 0;  /* 1 once lvgl_port_n6_init succeeded */
 volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal liveness; HW LED mirrors it) */
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
@@ -367,8 +370,28 @@ int main(void)
     PSRAM_Mpu();
   }
 
-  /* LCD: Layer-1 framebuffer on the mapped PSRAM (R/G/B test pattern). */
+  /* LCD: LTDC + Layer-1 @0x90000000 up (paints a brief R/G/B pattern). */
   LCD_Init();
+
+  /* LVGL (DIRECT mode) renders straight into the same PSRAM framebuffer the LTDC scans — it repaints
+   * the whole frame continuously, so it overwrites/absorbs the static-FB corruption. */
+  if (g_psram_rc == 0) {
+    /* DWT cycle counter = lvgl_port_n6's ms tick source. */
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+
+    lvgl_port_n6_cfg_t lv_cfg = {
+      .fb_addr         = (void *)0x90000000U,
+      .fb_width        = 800U,
+      .fb_height       = 480U,
+      .fb_bytes_per_px = 2U,
+      .hclk_hz         = 800000000U,   /* run-23 HCLK (DWT->ms); tweak if clock differs */
+      .build_scene_cb  = lvgl_scene_build,
+    };
+    g_lvgl_ok = (lvgl_port_n6_init(&lv_cfg) == LVGL_PORT_N6_OK);
+    printf("LVGL: init %s (DIRECT @0x90000000)\r\n", g_lvgl_ok ? "ok" : "FAILED");
+  }
 
   /* Autonomous on-chip calculator over the ST-Link VCP (USART1 / huart1). The device does
    * ALL the work — this proves edge autonomy. The host unified runner in `--mode device` is a
@@ -402,6 +425,7 @@ int main(void)
     {
       uint32_t now = HAL_GetTick();
       if (now - hb_last >= 500U) { hb_last = now; BSP_LED_Toggle(LED_GREEN); g_heartbeat++; }  /* heartbeat */
+      if (g_lvgl_ok) { lvgl_scene_tick(lvgl_port_n6_loop_count, g_heartbeat); lvgl_port_n6_run_once(); }  /* LVGL frame */
 
       uint8_t ch;                              /* line-buffered command/expression input (non-blocking) */
       if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK) {

@@ -142,7 +142,7 @@ $(BUILD_DIR)/aps256xx.o: ../../Drivers/BSP/Components/aps256xx/aps256xx.c Makefi
 C_DEFS     += -DLV_CONF_INCLUDE_SIMPLE
 LVGL_DIR    = ../../FSBL/Middlewares/Third_Party/lvgl
 C_INCLUDES += -I../../FSBL/Core/Inc -I$(LVGL_DIR) -I$(LVGL_DIR)/src -I../../FSBL/Display
-LVGL_SOURCES = $(shell find $(LVGL_DIR)/src -name '*.c') ../../FSBL/Display/lvgl_port_n6.c
+LVGL_SOURCES = $(shell find $(LVGL_DIR)/src -name '*.c') ../../FSBL/Display/lvgl_port_n6.c ../../FSBL/Display/lvgl_scene.c
 LVGL_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(LVGL_SOURCES:.c=.o)))
 OBJECTS     += $(LVGL_OBJECTS)
 $(BUILD_DIR)/$(TARGET).elf: $(LVGL_OBJECTS)
