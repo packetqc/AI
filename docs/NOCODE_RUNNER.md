@@ -358,10 +358,11 @@ default, `nocode_runner` then loads all four grammars on a plain `python3 script
 ## Model creation: sources & architectures
 
 > **Status (branch `multimodel-arch`):** ① empty (`--arch`) and ② existing-ours (`--from`/`--warm`,
-> arch inherited) are **live with multi-arch** — `qwen2` (default) · `qwen3` · `llama` · `mistral`,
-> via the `ARCH_PROFILES` registry below. ③ external-open (`--from-external`) is the remaining step.
-> Verified host→CPU end-to-end: `llama` (fibonacci) converged + GGUF-tagged + registered; the
-> `revshell_param` × {qwen2, qwen3, llama, mistral} matrix is the full check.
+> arch inherited) are **live across all four families** — `qwen2` (default) · `qwen3` · `llama` ·
+> `mistral` — via the `ARCH_PROFILES` registry below. ③ external-open (`--from-external`) is the
+> remaining step. **All four archs build + LOAD in Ollama** (`revshell_param` matrix verified); the
+> qwen3/mistral export needed per-arch GGUF fixes — see *GGUF loadability* below. Emission quality
+> tracks training depth — `vocab_verified` guards any under-trained arch (drift → verified body).
 
 A model is created from one of **three sources** — the source decides how much the user must specify,
 because the architecture + template (the "essential information") is either chosen, inherited, or
@@ -395,6 +396,22 @@ Creation is hardwired to Qwen2 today (classes, special token, template, pre-toke
 config — so multi-arch support inherits it for free; there is nothing GQA-specific to implement.
 Layers/dims keep auto-growing via `dynamic_capacity`; a profile only sets the head config + the
 strings above. `--arch qwen2` stays the default, so existing builds are unchanged.
+
+### GGUF loadability — the per-arch export fixes
+
+Tagging the GGUF with the HF `model_type` is not enough — each family's llama.cpp loader has its own
+requirements (`export_gguf` in `class_model_assets.py`):
+
+| Arch | Why it failed to load | Fix |
+|------|-----------------------|-----|
+| **qwen3** | `head_dim` (128) is decoupled from `hidden//n_head` (64) — the loader derives the wrong head_dim and the load aborts | emit `qwen3.attention.key_length`/`value_length` from `config.head_dim`; map the `q_norm`/`k_norm` (qk-norm) tensors |
+| **mistral** | structurally identical to Llama (same 30 tensors) but the legacy llama.cpp engine has no separate `mistral` loader | ship it under the `llama` arch tag |
+
+**Patch an already-trained model without retraining** — `scripts/model_generation/gguf_arch_fix.py`
+rewrites a trained GGUF's arch metadata (inject `key/value_length`, rename the arch prefix), then
+`ollama create -f Modelfile` re-registers it. This matters on an **AVX-only CPU**: qwen3 retraining
+hits an AVX2 kernel and **SIGILLs** — retrain with `ATEN_CPU_CAPABILITY=default` (scalar, slower) to
+avoid it, or just patch the existing blob.
 
 ### ③ external — the one scale decision
 

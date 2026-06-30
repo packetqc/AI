@@ -390,9 +390,10 @@ proven by resolution (no scans run).
 **Also supported:** **grammar composition** (one grammar calls others; one model carries many),
 **per-model config** (`--model X` auto-loads its grammars; plain `nocode_runner.py` → script-named
 default), **fork + warm upgrade** (`--from` / `--warm`), **multi-architecture creation**
-(`--arch qwen2|qwen3|llama|mistral` — the same grammar pipeline on any base family; the GGUF is tagged
-per arch and warm-start inherits the source family), and **function arguments + inter-function
-data flow** (`<tool> <arg…>` at the prompt; one function gathers data and injects it into the next).
+(`--arch qwen2|qwen3|llama|mistral` — the same grammar pipeline on any base family; all four build
+and **load** in Ollama, with per-arch GGUF export fixes for qwen3 `head_dim` + mistral, plus
+`gguf_arch_fix.py` to patch a built model without retraining), and **function arguments +
+inter-function data flow** (`<tool> <arg…>` at the prompt; one function gathers data and injects it into the next).
 Lab pentest fixtures (`revshell_localhost`, `revshell_param`, `recon_exfil`) double as positive
 controls for the nocode-aware Model Security RE scanner ([Security](#security)). Full reference:
 **[docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md)**.
