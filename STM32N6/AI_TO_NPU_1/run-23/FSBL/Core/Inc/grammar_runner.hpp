@@ -24,6 +24,10 @@
 #include <stdint.h>
 #include "terminal_logger.hpp"
 
+#ifdef NOCODE_DISPATCH
+struct NcCtx;                 /* nocode dispatch context (full definition in nocode_dispatch.h) */
+#endif
+
 namespace llm {
 
 /* ── capacities (tune per grammar complexity; sized to fit AXISRAM2 RAM) ─── */
@@ -117,6 +121,9 @@ private:
     /* ── evaluator / display ── */
     long evaluate(int node, bool* ok);
     void tree_str(int node, char* buf, int n) const;
+#ifdef NOCODE_DISPATCH
+    void collect_digits(int node, NcCtx* c) const;   /* gather leaf digit terminals into c->digits */
+#endif
 
     /* ── execute-mode ── */
     void execute_rule(const char* rule_name, int depth,

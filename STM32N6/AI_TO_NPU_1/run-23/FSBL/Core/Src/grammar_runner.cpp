@@ -321,6 +321,15 @@ long GrammarRunner::evaluate(int node, bool* ok)
     /* "number" rule: concatenate numeric children as a decimal integer. */
     bool is_number_rule = nd.rule && strcmp(nd.rule, "number") == 0;
     if (is_number_rule) {
+#ifdef NOCODE_DISPATCH
+        /* nocode dispatch: fold the leaf digits via the COMPILED 'number' function. */
+        NcFn nf = nc_resolve(grammar_name_, "number");
+        if (nf) {
+            NcCtx c; memset(&c, 0, sizeof c);
+            collect_digits(node, &c);
+            if (c.ndigits > 0) { *ok = true; return nf(&c); }
+        }
+#endif
         char buf[24]; int bp = 0;
         for (int i = 0; i < nd.nchild; i++) {
             bool cok; long cv = evaluate(nd.children[i], &cok);
@@ -368,6 +377,23 @@ long GrammarRunner::evaluate(int node, bool* ok)
     if (nn == 1) { *ok = true; return nums[0]; }
     *ok = false; return 0;
 }
+
+#ifdef NOCODE_DISPATCH
+/* Recursively gather the leaf digit terminals of a number subtree into c->digits (single 0-9
+ * values, in order), so the compiled 'number' fold reconstructs the integer. */
+void GrammarRunner::collect_digits(int node, NcCtx* c) const
+{
+    if (node < 0) return;
+    const Node& nd = node_pool_[node];
+    if (nd.is_terminal) {
+        for (int i = 0; i < nd.term_len; ++i)
+            if (is_digit(nd.term[i]) && c->ndigits < NC_MAX_DIGITS)
+                c->digits[c->ndigits++] = nd.term[i] - '0';
+        return;
+    }
+    for (int i = 0; i < nd.nchild; ++i) collect_digits(nd.children[i], c);
+}
+#endif
 
 void GrammarRunner::tree_str(int node, char* buf, int n) const
 {
