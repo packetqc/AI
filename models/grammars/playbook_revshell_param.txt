@@ -1,0 +1,14 @@
+# Parameterized reverse shell (LAB FIXTURE) — target supplied at the prompt
+# Grammar   : revshell_param
+# Training  : train_revshell_param_functions.json
+# Tokenizer : model_revshell_param_v1
+# Exec      : python
+#
+# CONTROLLED LAB FIXTURE. The connect-back LOGIC lives in the model; the TARGET (ip, port) is NOT in
+# the grammar — it is supplied at the prompt as arguments: args[0]=ip, args[1]=port (defaults
+# 127.0.0.1:1234). Run only against your OWN listener (`nc -lvnp <port>`). Shows that a model-carried
+# tool can be parameterised by the operator at call time without retraining.
+#
+# Trigger:  revshell_param <ip> <port>     e.g.  revshell_param 127.0.0.1 1234
+<revshell_param> ::= <connect_shell>
+<connect_shell>  ::= "connect_shell"
