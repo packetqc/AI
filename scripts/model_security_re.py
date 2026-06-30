@@ -81,7 +81,7 @@ def _section1(ctx):
     return md, sorted(recon_syms), dyn
 
 
-def _section3(ctx, integral=False):
+def _section3(ctx, integral=False, dyn=None):
     ana = ctx["ana"]
     # cheap vocab-size check first — avoid decoding 150k tokens on a general model
     if ana.vocab_size() < 4000:
@@ -89,12 +89,17 @@ def _section3(ctx, integral=False):
         syms = reconstruct.discover_symbols(decoded, top=24)
     else:
         decoded, syms = [], []
+    # nocode: feed the RECONSTRUCTED bodies (logic emitted from the weights) to the threat scan —
+    # a nocode payload (reverse shell, code-exec) is in the tensors, not the metadata/template.
+    recon_bodies = dyn["rule_body"] if dyn else None
     f = threat.threat_scan(ctx["md"], ctx["mtype"], decoded, syms,
-                           ctx["art"].template if ctx["art"] else None)
+                           ctx["art"].template if ctx["art"] else None, recon_bodies=recon_bodies)
     # deep binary forensics is for the grammar-model scope; skip the heavy blob scan
     # on large open models (best-effort) — the metadata/template threat scan still ran
     bf = threat.binary_forensics(ctx["gguf"], DEF_YAR) if os.path.getsize(ctx["gguf"]) <= 64 * 1024 * 1024 else None
-    v = threat.threat_verdict(f)
+    # a CRITICAL binary/YARA signature must veto a CLEAN verdict (no CLEAN-with-critical-hit)
+    yara_critical = bool(bf and any(str(y.get("severity", "")).lower() == "critical" for y in bf.get("yara", [])))
+    v = threat.threat_verdict(f, yara_critical=yara_critical)
     md = threat.render_threat(ctx["name"], f, v, bf)
     return md, threat.threat_incident(ctx["name"], f, v, integral)
 
@@ -111,9 +116,9 @@ def _section2(ctx, recon_syms, registry, assets):
 
 def cmd_analyze(args):
     ctx = _acquire(args)
-    s1, recon_syms, _ = _section1(ctx)
+    s1, recon_syms, dyn = _section1(ctx)
     s2, inc2, integral = _section2(ctx, recon_syms, args.registry, args.assets)
-    s3, inc3 = _section3(ctx, integral)
+    s3, inc3 = _section3(ctx, integral, dyn)
     ident = report.identity_block(ctx["name"], ctx["gguf"], ctx["sha"], ctx["ana"],
                                   ctx["mtype"], ctx["mode"], ctx["reason"])
     master = report.assemble(ident, s1, s2, s3, [inc2, inc3])

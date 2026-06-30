@@ -38,8 +38,12 @@ _SHELL_KW = ("/bin/", "/etc/", "subprocess", "os.system", "powershell",
              "eval(", "exec(", "bash", "sh -c", "curl", "wget")
 
 
-def threat_scan(md, model_type, decoded_tokens, syms, template=None):
-    """Returns a list of findings (layer, severity, name, why)."""
+def threat_scan(md, model_type, decoded_tokens, syms, template=None, recon_bodies=None):
+    """Returns a list of findings (layer, severity, name, why).
+
+    ``recon_bodies`` (nocode): the bodies the model EMITS from its weights — a nocode model carries
+    its payload in the trained tensors, not in the metadata/template, so this is the only surface a
+    reverse shell / code-exec carried by such a model shows up on."""
     findings = []
     region = " ".join(v for v in md.values() if isinstance(v, str))
     if template:
@@ -75,12 +79,28 @@ def threat_scan(md, model_type, decoded_tokens, syms, template=None):
         findings.append(("L3-AGENCY", "MEDIUM", "tool-calling-template",
                          f"chat template routes model output to client execution ({thits}) — "
                          "excessive-agency / insecure-output-handling surface"))
+
+    # nocode: scan the RECONSTRUCTED bodies (logic emitted from the weights) — the region scan above
+    # only covers metadata/template, where a nocode payload does NOT live.
+    if recon_bodies:
+        body = recon_bodies if isinstance(recon_bodies, str) else " ".join(
+            v for v in recon_bodies.values() if isinstance(v, str))
+        for sig, pat in _DIRECT_SIGNATURES.items():
+            m = re.search(pat, body, re.I)
+            if m:
+                findings.append(("L1-WEIGHTS", "CRITICAL", sig,
+                                 "emitted from model weights: " + m.group(0)[:60]))
+        lb = body.lower()
+        if "socket" in lb and "connect" in lb and any(
+                k in lb for k in ("/bin/sh", "/bin/bash", "os.dup2", "pty.spawn", "subprocess")):
+            findings.append(("L1-WEIGHTS", "CRITICAL", "py_reverse_shell",
+                             "emitted from model weights: socket connect-back + shell spawn"))
     return findings
 
 
-def threat_verdict(findings):
+def threat_verdict(findings, yara_critical=False):
     sev = {f[1] for f in findings}
-    if "CRITICAL" in sev:
+    if "CRITICAL" in sev or yara_critical:
         return "MALICIOUS-CONTENT — literal executable/C2 signatures present in the model"
     if any(f[0] == "L2-OBFUSCATION" for f in findings):
         return ("OBFUSCATED-EXEC — hidden alias/action-grammar drives command execution via a "
