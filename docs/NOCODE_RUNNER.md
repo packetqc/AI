@@ -354,6 +354,53 @@ default, `nocode_runner` then loads all four grammars on a plain `python3 script
 > Caveat: keep an upgrade/fork within one execution mode — mixing `evaluate_ops` (expression) and
 > `execute` (procedure) grammars in one model means the runner selects a single mode for the set.
 
+## Model creation: sources & architectures
+
+> **Status (branch `multimodel-arch`):** ① empty + ② existing-ours are live today; ③ external-open
+> and multi-arch profiles are the in-progress evolution. This section is the design contract.
+
+A model is created from one of **three sources** — the source decides how much the user must specify,
+because the architecture + template (the "essential information") is either chosen, inherited, or
+auto-read:
+
+| Source | Meaning | How | Arch + template come from |
+|--------|---------|-----|---------------------------|
+| **① empty** | scratch / cold build | default (no `--from*`) | the **user** picks `--arch` (nothing to inherit) |
+| **② existing — ours** | warm / fork one of our own models | `--from <model>` / `--warm` | **inherited** from the model's `state.json` |
+| **③ existing — external open** | start from a real pretrained Qwen3 / Llama / Mistral | `--from-external <hf-id\|path>` | **auto-read** from the checkpoint (`config.json` + tokenizer) |
+
+The source can be asked interactively at creation, or **inferred** from which flag is given
+(`--arch` → ①, `--from` → ②, `--from-external` → ③). Only ① needs the user to state the architecture;
+② inherits it, ③ auto-detects it from the self-describing checkpoint.
+
+### Architecture profiles — the only "essential information" (and only for ①)
+
+Creation is hardwired to Qwen2 today (classes, special token, template, pre-tokenizer,
+`attention_bias`). The evolution extracts these into an `ARCH_PROFILES` registry keyed by `--arch`:
+
+| Field | qwen2 (default) | llama | mistral | used at |
+|-------|-----------------|-------|---------|---------|
+| HF classes | `Qwen2*` | `Llama*` | `Mistral*` | creation |
+| boundary token (bos/eos/pad) | `<\|endoftext\|>` | `<\|begin_of_text\|>` / `<\|eot_id\|>` | `<s>` / `</s>` | creation |
+| Modelfile `TEMPLATE` | `<\|endoftext\|>{{ .Prompt }}` | arch-specific | arch-specific | **creation only** |
+| pre-tokenizer | `qwen2` | `llama-bpe` | … | creation |
+| `attention_bias` | `true` | `false` | `false` | creation |
+| GQA kv-head ratio | per arch | per arch | per arch | creation |
+
+**GQA (grouped-query attention) is already in the pipeline** — it is `num_key_value_heads` in the
+config — so multi-arch support inherits it for free; there is nothing GQA-specific to implement.
+Layers/dims keep auto-growing via `dynamic_capacity`; a profile only sets the head config + the
+strings above. `--arch qwen2` stays the default, so existing builds are unchanged.
+
+### ③ external — the one scale decision
+
+"From an external open model" has two flavors; pick deliberately:
+- **③a adopt-and-shrink** — take the external arch + tokenizer + template, but still train a *tiny*
+  from-scratch net (embeddings initialized by token-string). Stays ~8 MB. Generalizes today's
+  `--warm` (which already calls `from_pretrained`) — it just unlocks non-Qwen2 classes.
+- **③b real fine-tune** — train the grammar anchors on top of the real pretrained weights at full
+  size (0.6B–1B). Genuinely capable, real compute. A separate opt-in track.
+
 ## Model depth & capacity (layers)
 
 The model is not a fixed size — its **depth** (neural layers), emission window (`num_predict`) and
