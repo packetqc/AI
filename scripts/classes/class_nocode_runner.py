@@ -120,6 +120,40 @@ def _grammars_for_model(model, log):
     return files
 
 
+def _grammar_meta(merged, commands, owners, exec_rules, names):
+    """For every callable rule/token: its ARGUMENT signature (parsed from ``args[N]`` / ``name =
+    args[N]`` in the body) and the SUB-FUNCTIONS it calls. Powers the TAB detail display so the user
+    sees ``revshell_param  <ip> <port>`` and the callable sub-paths a grammar exposes."""
+    import re
+
+    def arg_sig(body):
+        body = body if isinstance(body, str) else ""
+        named = {}
+        for mm in re.finditer(r"(\w+)\s*=\s*(?:int|str|float)?\(?\s*args\[(\d+)\]", body):
+            named.setdefault(int(mm.group(2)), mm.group(1))
+        idxs = [int(i) for i in re.findall(r"args\[(\d+)\]", body)]
+        if not idxs:
+            return "<args...>" if re.search(r"\bargs\b", body) else ""
+        return " ".join("<%s>" % named.get(i, "arg%d" % i) for i in range(max(idxs) + 1))
+
+    callable_set = set(names) | set(exec_rules) | set(commands)
+    meta = {}
+    for name in callable_set:
+        refs, rb = [], merged.get(name)
+        if rb is not None:
+            for tok in re.findall(r"[A-Za-z_]\w+", str(rb)):
+                if tok in callable_set and tok != name and tok not in refs:
+                    refs.append(tok)
+        meta[name] = {"args": arg_sig(commands.get(name, "") or ""),
+                      "subs": refs, "owner": owners.get(name, "")}
+    for name in meta:                                # a root inherits the richest sig of its sub-fns
+        sigs = [meta[name]["args"]] + [meta[s]["args"] for s in meta[name]["subs"] if s in meta]
+        sigs = [s for s in sigs if s]
+        if sigs:
+            meta[name]["args"] = max(sigs, key=lambda s: s.count("<"))
+    return meta
+
+
 def _setup_host(cfg, log):
     """Build the host backend for one OR MORE grammars. Multiple grammars are merged into one
     playbook + command set (and an owner map) so a composing grammar — e.g.
@@ -173,11 +207,15 @@ def _setup_host(cfg, log):
             commands=commands, policy=cfg["policy"], mode=mode, eval_token=eval_token, owners=owners,
         )
 
+    meta = _grammar_meta(merged, commands, owners, exec_rules, names)
+    callable_names = sorted(set(names) | exec_rules | set(commands))
+
     log.log("ok", "NOCODE", "host ready — grammar(s)=%s mode=%s policy=%s oracle='%s'"
             % (",".join(names), mode, cfg["policy"], cfg["model"]))
     return {"gname": gname, "names": names, "playbook": merged, "rules": rules,
             "start_rule": start_rule, "mode": mode, "make_runner": make_runner,
-            "exec_rules": exec_rules, "eval_gname": eval_gname, "eval_start": eval_start}
+            "exec_rules": exec_rules, "eval_gname": eval_gname, "eval_start": eval_start,
+            "meta": meta, "callable": callable_names}
 
 
 # --------------------------------------------------------------------------- REPL
@@ -193,18 +231,40 @@ def _print_help():
 
 
 def _install_nocode_completer(host_ctx):
-    """TAB completion + persistent prompt history (readline). Completes nocode commands, grammar /
-    rule / token names, /policy values, /set keys, and one level deeper into a rule's references."""
+    """TAB completion + persistent history (readline). Completes nocode commands, grammar roots AND
+    their callable sub-functions, /policy values, /set keys. On TAB it ALSO prints each candidate's
+    DETAIL — argument signature (e.g. ``<ip> <port>``) and the sub-functions a grammar calls — so the
+    user discovers how to invoke a command and which sub-paths can be called specifically."""
     try:
-        import readline, atexit, re
+        import readline, atexit, re, sys
         rules = host_ctx["rules"]
         playbook = host_ctx["playbook"]
+        meta = host_ctx.get("meta") or {}
+        callable_names = host_ctx.get("callable") or rules
         cmds = ["/?", "/help", "/policy", "/grammar", "/set", "/create", "/export", "/bye", "exit", "quit"]
+
+        def _detail(name):
+            m = meta.get(name.split("/")[-1] if "/" in name else name)
+            if not m:
+                return ""
+            bits = []
+            if m["args"]:
+                bits.append("args " + m["args"])
+            if m["subs"]:
+                bits.append("→ " + ", ".join(m["subs"]))
+            if m.get("owner") and m["owner"] != name:
+                bits.append("[%s]" % m["owner"])
+            return "   ".join(bits)
 
         def candidates(buf):
             toks = buf.split()
             if (not toks) or (len(toks) == 1 and not buf.endswith(" ")):
-                return cmds + rules
+                cur = toks[0] if toks else ""
+                if "/" in cur:                            # path: complete a grammar's sub-functions
+                    g = cur.split("/", 1)[0]
+                    return ["%s/%s" % (g, s) for s in (meta.get(g) or {}).get("subs", [])]
+                paths = ["%s/" % n for n in callable_names if (meta.get(n) or {}).get("subs")]
+                return cmds + callable_names + paths
             head = toks[0].lower()
             if head == "/policy":
                 return list(CodeExecPolicy.ALL)
@@ -218,11 +278,35 @@ def _install_nocode_completer(host_ctx):
                 return []
             if head == "/grammar":
                 return base._list_grammar_files()
-            if toks[0] in playbook:                              # one level deeper: rule's references
+            if toks[0] in meta and meta[toks[0]]["subs"]:        # deeper: the grammar's callable sub-fns
+                return meta[toks[0]]["subs"]
+            if toks[0] in playbook:                              # fallback: rule's references
                 return re.findall(r"[a-zA-Z_]\w*", str(playbook[toks[0]]))
             return []
 
+        def _display(substitution, matches, longest):           # noqa: ARG001 — readline hook signature
+            cmd_hits, groups = [], {}
+            for mm in matches:                                   # group candidates BY GRAMMAR (owner)
+                if mm in cmds:
+                    cmd_hits.append(mm)
+                    continue
+                key = mm.split("/")[-1] if "/" in mm else mm
+                owner = (meta.get(key) or {}).get("owner") or key
+                groups.setdefault(owner, []).append(mm)
+            sys.stdout.write("\n")
+            if cmd_hits:
+                sys.stdout.write("  \033[2mcommands\033[0m   " + "  ".join(sorted(cmd_hits)) + "\n")
+            for g in sorted(groups):
+                sys.stdout.write("  \033[1m%s\033[0m\n" % g)
+                for mm in sorted(groups[g], key=lambda x: (x.split("/")[-1] != g, x)):  # root first
+                    d = _detail(mm)
+                    sys.stdout.write(("    %-22s %s\n" % (mm, d)) if d else ("    %s\n" % mm))
+            sys.stdout.write("nocode> " + readline.get_line_buffer())
+            sys.stdout.flush()
+            readline.redisplay()
+
         readline.set_completer_delims(" \t\n")
+        readline.set_completion_display_matches_hook(_display)
         histfile = os.path.join(os.path.expanduser("~"), ".nocode_runner_history")
         try:
             readline.read_history_file(histfile)
@@ -300,11 +384,21 @@ def _repl(cfg, host_ctx, log):
             continue
 
         # ---- bare input: AUTO-ROUTE per input — a procedure NAME -> execute; an expression ->
-        # evaluate. Mode-agnostic, so a mixed model (e.g. combo procedures + calculator) serves both. ----
+        # evaluate. Mode-agnostic, so a mixed model (e.g. combo procedures + calculator) serves both.
+        # A "<grammar>/<function>" path runs that function specifically, under the grammar's namespace
+        # (disambiguates a token shared by two grammars). Bare "<function>" works too. ----
         first = parts[0]
+        owner_override = None
+        if "/" in first:
+            gpart, _, fn = first.partition("/")
+            if fn and (fn in host_ctx["exec_rules"] or fn in (host_ctx.get("meta") or {})):
+                owner_override, first = gpart, fn
         eval_start = host_ctx.get("eval_start")
         if first in host_ctx["exec_rules"]:
-            host_ctx["make_runner"]().execute(start_rule=first, args=parts[1:])
+            runner = host_ctx["make_runner"]()
+            if owner_override:
+                runner.owners[first] = owner_override          # fetch the body under this grammar
+            runner.execute(start_rule=first, args=parts[1:])
         elif eval_start and NoCodeGrammarRunner.probe(
                 host_ctx.get("eval_gname") or gname, ui, host_ctx["playbook"], start_rule=eval_start):
             host_ctx["make_runner"]().run(ui, start_rule=eval_start)

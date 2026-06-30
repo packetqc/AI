@@ -204,13 +204,16 @@ Omit `--grammar` to auto-load the model's own grammars; omit `--model` to use th
 | Input | Action |
 |-------|--------|
 | `<expression>` (e.g. `3 + 4`) | parsed + **evaluated** against the loaded expression grammar |
-| `<command name>` (e.g. `fibonacci`) | **executes** that procedure grammar (auto-routed) |
+| `<grammar>` (e.g. `fibonacci`) | **executes** the grammar's procedure — descends into its functions (auto-routed) |
+| `<function>` (e.g. `fib_sequence`) | run ONE function directly **by name** |
+| `<grammar>/<function>` (e.g. `recon_exfil/gather_host`) | run a function **by playbook path** — fetches the body under that grammar's namespace (disambiguates a token shared by two grammars) |
+| `<command> <arg…>` (e.g. `revshell_param 10.0.0.5 4444`) | pass prompt **arguments** (`args[0]`, `args[1]`, …) |
 | `/policy [mode]` | show or set the exec policy (reloads the backend) |
 | `/grammar [file ...]` | show loaded grammars/rules, or switch/merge grammar files |
 | `/set <key> <val>` | set `model` / `grammar` / `host` / `policy` |
 | `/create` · `/export` | retrain the host model · export to CPU ONNX |
 | `/?` · `/bye` (`exit`,`quit`) | help · quit |
-| `TAB` · `↑`/`↓` | completion (commands, grammar/rule/token names, one level deeper) · history |
+| `TAB` · `↑`/`↓` | completion **grouped by grammar** — each candidate shows its **arg signature** (`<ip> <port>`) and **callable sub-functions**; also completes `grammar/` paths · history |
 
 ### `emit_logic_vocab.py` — transpose CPU logic → function vocabulary
 
@@ -278,8 +281,13 @@ sourcing each body from the model under its **owner namespace** (`fibonacci fib_
 **Caveats (designed for)**: rule-name collisions across grammars → namespacing; `evaluate_ops` vs
 `execute` mode is per-grammar; deep recursion needs a call-depth guard.
 
-**TAB + history**: the runner provides readline TAB completion (commands, grammar/rule/token names,
-one level deeper, `/policy` values, `/set` keys) and persistent history (`~/.nocode_runner_history`).
+**TAB + history**: the runner provides readline TAB completion and persistent history
+(`~/.nocode_runner_history`). On TAB the candidates are **grouped by grammar** (so a many-grammar
+model stays navigable), and each shows its **argument signature** (parsed from `args[N]` in the body,
+e.g. `revshell_param  <ip> <port>`) and its **callable sub-functions** (e.g. `recon_exfil → gather_host,
+exfil_to_localhost`). Typing `<grammar>/` then TAB lists that grammar's functions; selecting one runs
+it specifically. As you type a prefix or a path, the list narrows and re-groups. Also completes
+`/policy` values and `/set` keys.
 
 ## Function arguments & data flow
 
