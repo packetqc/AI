@@ -7,6 +7,9 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef NOCODE_DISPATCH
+#include "nocode_dispatch.h"   /* generated (grammar,token)->compiled fn dispatch (host-model->NPU path) */
+#endif
 
 namespace llm {
 
@@ -340,6 +343,20 @@ long GrammarRunner::evaluate(int node, bool* ok)
     }
     if (nn == 2 && op) {
         long a = nums[0], b = nums[1];
+#ifdef NOCODE_DISPATCH
+        /* nocode dispatch: the op's logic is a COMPILED function selected by (grammar,token) — the
+         * device equivalent of the host model emitting the body; the runner stays grammar-agnostic.
+         * Falls through to the hardcoded switch if the token is not in the dispatch table. */
+        const char* tok = (op=='+')?"op_add":(op=='-')?"op_sub":(op=='*')?"op_mul":(op=='/')?"op_div":0;
+        if (tok) {
+            NcFn fn = nc_resolve(grammar_name_, tok);
+            if (fn) {
+                if (op=='/' && b == 0) { log(Severity::Error, "Division by zero."); *ok = false; return 0; }
+                NcCtx c; memset(&c, 0, sizeof c); c.a = a; c.b = b;
+                *ok = true; return fn(&c);
+            }
+        }
+#endif
         switch (op) {
             case '+': *ok = true; return a + b;
             case '-': *ok = true; return a - b;
