@@ -65,6 +65,12 @@ _parser.add_argument(
          "then add any --grammar/--train on top. Restores <MODEL>.state.json but saves under --name.",
 )
 _parser.add_argument(
+    "--warm", action="store_true",
+    help="Warm-start: initialize weights from the restored model (the --from source, or this --name's "
+         "existing model) instead of random — copies embeddings by token string + matching layers, so "
+         "an upgrade/fork converges fast from what the source already learned (forgetting-proof).",
+)
+_parser.add_argument(
     "--build-only", action="store_true",
     help="Train, export GGUF, register with Ollama, then exit — no interactive session "
          "(used by the unified runner's /create in host mode).",
@@ -115,6 +121,13 @@ RESTORE_STATE_PATH = STATE_PATH
 if _args.from_model and not os.path.isfile(STATE_PATH):
     RESTORE_STATE_PATH = os.path.join("models", "generated", "transformer",
                                       _args.from_model, _args.from_model + ".state.json")
+
+# Warm-start source: the directory of the model whose weights we initialize from (the restore source).
+WARM_FROM_DIR = None
+if _args.warm:
+    _src_dir = os.path.dirname(RESTORE_STATE_PATH)
+    if os.path.isfile(os.path.join(_src_dir, "config.json")):
+        WARM_FROM_DIR = _src_dir
 
 # Ollama serving parameters (shared by the first build and every /read rebuild).
 # NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
@@ -368,7 +381,36 @@ def dynamic_capacity(anchor_pairs, tokenizer, arch):
     return {"num_hidden_layers": dyn_layers, "max_position_embeddings": ctx}, num_predict
 
 
-def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=None):
+def _warm_start(model, tokenizer, warm_from, logger):
+    """Initialize ``model`` from an existing model's weights: copy embedding rows by matching token
+    STRING (robust to vocab/ID changes) + every vocab-independent layer tensor whose shape matches.
+    New tokens / new layers keep their fresh init — so an upgrade converges from what the source knew."""
+    import torch as _torch
+    src_model = Qwen2ForCausalLM.from_pretrained(warm_from)
+    src_tok = Qwen2TokenizerFast.from_pretrained(warm_from)
+    src_vocab = src_tok.get_vocab()
+    with _torch.no_grad():
+        src_embed = src_model.get_input_embeddings().weight.data
+        new_embed = model.get_input_embeddings().weight.data
+        copied = 0
+        for tokstr, nid in tokenizer.get_vocab().items():
+            sid = src_vocab.get(tokstr)
+            if sid is not None and sid < src_embed.shape[0] and nid < new_embed.shape[0]:
+                new_embed[nid].copy_(src_embed[sid].to(new_embed.device))
+                copied += 1
+        tgt_sd = model.state_dict()
+        layers = 0
+        for k, v in src_model.state_dict().items():
+            if "embed_tokens" in k or "lm_head" in k:
+                continue
+            if k in tgt_sd and tgt_sd[k].shape == v.shape:
+                tgt_sd[k].copy_(v.to(tgt_sd[k].device))
+                layers += 1
+    logger.log("ok", "SYSTEM", "warm-start from %s: %d embedding row(s) + %d layer tensor(s) copied"
+               % (warm_from, copied, layers))
+
+
+def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=None, warm_from=None):
     """Build a tokenizer + model that cover the green/red prompts, every grammar routine AND
     every knowledge text, then train them JOINTLY (anchors + grammar routines masked to the
     answer; prose knowledge as causal-LM windows).
@@ -450,6 +492,11 @@ def build_pipeline(knowledge_texts, grammar_pairs=None, arch=None, vocab_cap=Non
     config.save_pretrained("./" + model_path)
     model = Qwen2ForCausalLM(config).to(DEVICE)
     model.resize_token_embeddings(len(tokens), mean_resizing=False)
+    if warm_from:
+        try:
+            _warm_start(model, tokenizer, warm_from, logger)
+        except Exception as _e:                                  # noqa: BLE001
+            logger.log("warning", "SYSTEM", "warm-start failed (%s) — using fresh init" % _e)
 
     # ---- training rows: anchors + grammar routines (mask everything up to the answer) ----
     rows = []  # list of (input_ids, labels)
@@ -714,7 +761,7 @@ if not _EXTERNAL_MODEL:
     grammar_pairs = ModelAssets.flatten_playbook(playbook, grammar_name)
 
     # Build the tokenizer + model over prompts + grammar pairs + knowledge.
-    artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap)
+    artifacts = build_pipeline(knowledge_texts, grammar_pairs, arch, vocab_cap, warm_from=WARM_FROM_DIR)
 
     assets = ModelAssets(
         builder=build_pipeline,
