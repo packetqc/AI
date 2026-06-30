@@ -98,6 +98,16 @@ $(foreach src,$(CXX_SOURCES),$(eval $(call CXX_BUILD_RULE,$(src))))
 # STL (std::map/std::string) pulls libstdc++ internals (_Rb_tree, __throw_* stubs).
 LIBS += -lstdc++
 
+# --- nocode dispatch: generated (grammar,token)->compiled-fn table (host-model->NPU path) ---
+# C_DEFS feeds both CFLAGS and CXXFLAGS (recursive =), so -DNOCODE_DISPATCH reaches the C unit AND
+# the C++ runner that calls nc_resolve(). nocode_dispatch.h lives in Core/Inc (already on -I path).
+# Explicit per-object rule (no vpath) per the durable-wrapper convention.
+C_DEFS  += -DNOCODE_DISPATCH
+OBJECTS += $(BUILD_DIR)/nocode_dispatch.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/nocode_dispatch.o
+$(BUILD_DIR)/nocode_dispatch.o: ../../FSBL/Core/Src/nocode_dispatch.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 # the generated link rule doesn't list the linker script as a prereq, so .ld edits

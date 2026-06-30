@@ -17,6 +17,9 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#ifdef NOCODE_DISPATCH
+#include "nocode_dispatch.h"   /* generated (grammar,token)->compiled fn dispatch (host-model->NPU) */
+#endif
 
 extern "C" uint32_t HAL_GetTick(void);
 
@@ -223,7 +226,17 @@ private:
         if (node.rule == "number") {
             std::string ds;
             for (size_t i = 0; i < cv.size(); ++i) if (cv[i].num) { char b[16]; std::snprintf(b,sizeof(b),"%ld",cv[i].n); ds += b; }
-            if (!ds.empty()) return vnum(std::atol(ds.c_str()));
+            if (!ds.empty()) {
+#ifdef NOCODE_DISPATCH
+                if (NcFn nf = nc_resolve("calculator", "number")) {   /* fold the digits via the compiled fn */
+                    NcCtx c; std::memset(&c, 0, sizeof c);
+                    for (size_t i = 0; i < ds.size(); ++i)
+                        if (ds[i] >= '0' && ds[i] <= '9' && c.ndigits < NC_MAX_DIGITS) c.digits[c.ndigits++] = ds[i] - '0';
+                    if (c.ndigits > 0) return vnum(nf(&c));
+                }
+#endif
+                return vnum(std::atol(ds.c_str()));
+            }
         }
         std::vector<long> nums; std::string op;
         for (size_t i = 0; i < cv.size(); ++i) {
@@ -232,6 +245,15 @@ private:
         }
         if (nums.size() == 2 && !op.empty()) {
             long a = nums[0], b = nums[1];
+#ifdef NOCODE_DISPATCH
+            /* nocode dispatch: the op's logic is a COMPILED function selected by (grammar,token) —
+             * the device mirror of the host model emitting the body. Falls through on a miss. */
+            const char* tok = op=="+"?"op_add":op=="-"?"op_sub":op=="*"?"op_mul":op=="/"?"op_div":nullptr;
+            if (NcFn fn = tok ? nc_resolve("calculator", tok) : nullptr) {
+                NcCtx c; std::memset(&c, 0, sizeof c); c.a = a; c.b = b;
+                return vnum(fn(&c));
+            }
+#endif
             if (op=="+") return vnum(a+b);
             if (op=="-") return vnum(a-b);
             if (op=="*") return vnum(a*b);
