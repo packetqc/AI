@@ -371,6 +371,18 @@ nocode> 3 + 4         # expression  → evaluate-mode  → Result: 7   (op bodie
 nocode> fibonacci     # command name → execute-mode  → runs the procedure (model-emitted python)
 ```
 
+### nocode CLI at a glance
+
+| Command | What it does |
+|---|---|
+| `nocode_runner.py [--model M] [--grammar F…] [--policy P]` | run a model-carried grammar; omit `--model`→script-named default, omit `--grammar`→auto-load from the model's `state.json` |
+| `nocode_runner.py --grammar a.txt b.txt c.txt` | load **multiple** grammars (composition: one grammar can call others) |
+| in-session: `<expr>` / `<name>` · `/policy` · `/grammar` · `/set` · `/create` · `/?` · `/bye` · `TAB` | evaluate / execute · set policy · switch grammars · config · retrain · help · quit · completion+history |
+| `emit_logic_vocab.py --grammar G [--decompose] [--review]` | transpose a grammar's CPU logic into a trainable function vocabulary |
+| `model_create_hf_cl.py --build-only --name M [--from S] [--warm] --grammar F…` | build / **fork** (`--from`) / **warm-upgrade** (`--warm`) a model |
+
+Full reference: **[docs/NOCODE_RUNNER.md § CLI & REPL reference](docs/NOCODE_RUNNER.md#cli--repl-reference)**.
+
 **Proven live:** calculator (all 3 policies 6/6 incl. `generative`), fibonacci (execute-mode
 generative — model emits the python bodies, runner prints `0 1 1 2 … 377`). kali (`_exec=shell`)
 proven by resolution (no scans run). Full reference: **[docs/NOCODE_RUNNER.md](docs/NOCODE_RUNNER.md)**.

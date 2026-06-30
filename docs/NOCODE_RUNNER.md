@@ -180,6 +180,69 @@ nocode> fibonacci             # command name → execute-mode → runs the proce
 In `generative` policy the logs show each body fetched from the model, e.g.
 `[model body] calculator op_add -> 14 char(s)` then executed.
 
+## CLI & REPL reference
+
+### `nocode_runner.py` — run a model-carried grammar
+
+```bash
+python3 scripts/nocode_runner.py [--mode host] [--model MODEL] [--grammar FILE ...] \
+                                 [--policy POLICY] [--host URL]
+```
+
+| Flag | Values | Default | Description |
+|------|--------|---------|-------------|
+| `--mode` | `host` / `device` | `host` | `host` = CPU logic from the model; `device` deferred |
+| `--model` | Ollama model name | **script name** (`nocode_runner`) | the model that carries the logic (the oracle) |
+| `--grammar` | one or more files (bare name or path) | from the model's `state.json` | grammars to load; multiple are merged (composition) |
+| `--policy` | `token_select` / `vocab_verified` / `generative` | `vocab_verified` | where each body comes from |
+| `--host` | URL | env / `localhost:11434` | Ollama host |
+
+Omit `--grammar` to auto-load the model's own grammars; omit `--model` to use the script-named default.
+
+### In-session (REPL) commands
+
+| Input | Action |
+|-------|--------|
+| `<expression>` (e.g. `3 + 4`) | parsed + **evaluated** against the loaded expression grammar |
+| `<command name>` (e.g. `fibonacci`) | **executes** that procedure grammar (auto-routed) |
+| `/policy [mode]` | show or set the exec policy (reloads the backend) |
+| `/grammar [file ...]` | show loaded grammars/rules, or switch/merge grammar files |
+| `/set <key> <val>` | set `model` / `grammar` / `host` / `policy` |
+| `/create` · `/export` | retrain the host model · export to CPU ONNX |
+| `/?` · `/bye` (`exit`,`quit`) | help · quit |
+| `TAB` · `↑`/`↓` | completion (commands, grammar/rule/token names, one level deeper) · history |
+
+### `emit_logic_vocab.py` — transpose CPU logic → function vocabulary
+
+```bash
+python3 scripts/model_generation/emit_logic_vocab.py --grammar <name> [--decompose] [--review] [--print] [--selftest]
+python3 scripts/model_generation/emit_logic_vocab.py --list
+```
+
+| Flag | Description |
+|------|-------------|
+| `--grammar <name>` | grammar to transpose (`--list` shows the registered specs) |
+| `--decompose` | emit small per-operation tokens instead of the whole function |
+| `--review` | code-review the bodies (flag over-budget tokens → decompose/chunk) |
+| `--print` / `--selftest` / `--list` | print vocab / verify offline (calculator) / list specs |
+
+### `model_create_hf_cl.py` — build / upgrade / fork a model
+
+```bash
+python3 scripts/model_generation/model_create_hf_cl.py --build-only --name <model> \
+        [--grammar FILE ...] [--train FILE ...] [--from <model>] [--warm]
+```
+
+| Flag | Description |
+|------|-------------|
+| `--name <model>` | output model (folder under `models/generated/transformer/` + Ollama name) |
+| `--grammar` / `--train` | grammar file(s) / knowledge files to train in |
+| `--from <model>` | **fork**: seed from an existing model's state, then add `--grammar`/`--train` |
+| `--warm` | **warm-start** weights from the restored model (upgrade without training from scratch) |
+| `--build-only` | train → export GGUF → register with Ollama → exit (no REPL) |
+
+Re-run with the same `--name` + new `--grammar` to **upgrade in place** (restores state, trains the union).
+
 ## Composition — grammars calling grammars (multi-grammar model)
 
 Grammars are composable: one can **call others** by referencing their root rules, and a single model
