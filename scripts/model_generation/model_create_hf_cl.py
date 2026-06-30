@@ -71,6 +71,16 @@ _parser.add_argument(
          "an upgrade/fork converges fast from what the source already learned (forgetting-proof).",
 )
 _parser.add_argument(
+    "--max-epochs", type=int, default=None, metavar="N",
+    help="Cap training epochs (default: built-in). Lower it to register a usable model fast on a slow "
+         "CPU / heavy corpus — pairs well with --warm (already-good weights need few epochs).",
+)
+_parser.add_argument(
+    "--target-loss", type=float, default=None, metavar="L",
+    help="Stop when training loss < L (default: 5e-4). Loosen for a faster, good-enough model "
+         "(the vocab_verified / token_select policies tolerate imperfect emission).",
+)
+_parser.add_argument(
     "--build-only", action="store_true",
     help="Train, export GGUF, register with Ollama, then exit — no interactive session "
          "(used by the unified runner's /create in host mode).",
@@ -286,6 +296,10 @@ BLOCK_SIZE = 64              # sliding-window length for knowledge text (<= CONT
 MAX_KNOWLEDGE_TOKENS = 2048  # per-document safety cap so a huge file can't stall the toy
 MAX_EPOCHS = 800
 TARGET_LOSS = 5e-4
+if _args.max_epochs:                  # CLI override — cap epochs (fast usable model on slow CPU)
+    MAX_EPOCHS = _args.max_epochs
+if _args.target_loss:                 # CLI override — loosen the stop threshold
+    TARGET_LOSS = _args.target_loss
 
 # Dynamic capacity (nocode "grow the model as per the grammars/functions included"): the emission
 # window, depth and context are sized to the LONGEST body the model must carry + emit, so a build
