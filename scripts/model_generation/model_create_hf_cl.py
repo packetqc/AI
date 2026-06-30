@@ -60,6 +60,11 @@ _parser.add_argument(
          "'# Tokenizer :' so the NPU build can reuse the host tokenizer.",
 )
 _parser.add_argument(
+    "--from", dest="from_model", metavar="MODEL", default=None,
+    help="Fork: seed this NEW model from an EXISTING model's saved state (its grammars + knowledge), "
+         "then add any --grammar/--train on top. Restores <MODEL>.state.json but saves under --name.",
+)
+_parser.add_argument(
     "--build-only", action="store_true",
     help="Train, export GGUF, register with Ollama, then exit — no interactive session "
          "(used by the unified runner's /create in host mode).",
@@ -103,6 +108,13 @@ INIT_KNOWLEDGE_FILES = [
 # Persistence: accumulated knowledge + the (possibly adapted) config are saved here so that a
 # later run of this script restores everything learned in previous sessions.
 STATE_PATH = os.path.join(model_path, model_create + ".state.json")
+
+# Fork (--from): restore from a SOURCE model's state (its grammars + knowledge) but always SAVE
+# under this --name, so a new model is derived from an existing one and can be extended on top.
+RESTORE_STATE_PATH = STATE_PATH
+if _args.from_model and not os.path.isfile(STATE_PATH):
+    RESTORE_STATE_PATH = os.path.join("models", "generated", "transformer",
+                                      _args.from_model, _args.from_model + ".state.json")
 
 # Ollama serving parameters (shared by the first build and every /read rebuild).
 # NOTE: plain string so the Ollama "{{ .Prompt }}" double-braces survive; the template
@@ -664,7 +676,7 @@ def seed_from_file(path, knowledge_texts, playbook):
 # Restore previous-session state if present; otherwise seed from the start-up knowledge files.
 # Load order (fresh start): --train files → --grammar files → INIT_KNOWLEDGE_FILES defaults.
 # Load order (restored):     restore state → apply any --train/--grammar additions on top.
-_state = ModelAssets.load_state(STATE_PATH)
+_state = ModelAssets.load_state(RESTORE_STATE_PATH)
 if _state:
     knowledge_texts = list(_state.get("knowledge_texts", []))
     playbook = dict(_state.get("playbook", {}))
@@ -673,7 +685,7 @@ if _state:
         playbook = {str(p[0]): str(p[1]) for p in _state["grammar_pairs"]}
     arch = dict(ARCH_DEFAULTS, **_state.get("arch", {}))
     vocab_cap = _state.get("vocab_cap", DEFAULT_VOCAB_CAP)
-    logger.log("ok", "SYSTEM", "Restored state from " + STATE_PATH + ": "
+    logger.log("ok", "SYSTEM", "Restored state from " + RESTORE_STATE_PATH + ": "
                + str(len(knowledge_texts)) + " prose doc(s), " + str(len(playbook))
                + " playbook root(s), vocab_cap=" + str(vocab_cap) + ".")
     # Apply any CLI files on top of the restored state.

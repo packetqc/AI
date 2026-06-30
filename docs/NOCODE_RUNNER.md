@@ -243,7 +243,20 @@ python3 scripts/model_generation/model_create_hf_cl.py --build-only \
     --name model_combo_nocode_v1 --grammar models/grammars/playbook_kali_discovery.txt
 ```
 
-> Caveat: keep an upgrade within one execution mode — mixing `evaluate_ops` (expression) and
+**Forking a new model from an existing one (`--from`).** Seed a brand-new model from an existing
+model's state (its grammars + knowledge), then add grammars on top — the source model is untouched:
+
+```bash
+# nocode_runner = model_combo_nocode_v1 (combo+fibonacci+greeting) + revshell_localhost
+python3 scripts/model_generation/model_create_hf_cl.py --build-only \
+    --name nocode_runner --from model_combo_nocode_v1 \
+    --grammar models/grammars/playbook_revshell_localhost.txt
+```
+
+`--from` restores `<source>.state.json` but saves under `--name`; combined with the script-named
+default, `nocode_runner` then loads all four grammars on a plain `python3 scripts/nocode_runner.py`.
+
+> Caveat: keep an upgrade/fork within one execution mode — mixing `evaluate_ops` (expression) and
 > `execute` (procedure) grammars in one model means the runner selects a single mode for the set.
 
 ## Verification
