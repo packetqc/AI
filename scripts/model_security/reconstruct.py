@@ -342,6 +342,38 @@ def decoded_grammar_lines(seeds, rule_body):
     return L
 
 
+_EXEC_MARKERS = ("subprocess", "os.system", "__import__", "socket", "sendall", "/bin/sh",
+                 "/bin/bash", "os.dup2", "pty.spawn", "connect(", "urlopen", "requests.post",
+                 "requests.put", ".send(")
+
+
+def constitution_mermaid(dyn):
+    """A mermaid flowchart of the reconstructed grammar's CONSTITUTION — grammar roots → the tokens
+    recovered from the live model, with exec-capable bodies flagged (red). Built only from what was
+    recovered blackbox; rendered inside the Section-1 report."""
+    rb = (dyn or {}).get("rule_body") or {}
+    if not rb:
+        return []
+    L = ["", "## Constitution (reconstructed grammar — live)", "",
+         "```mermaid", "flowchart TD"]
+    roots_done, styles = set(), []
+    for i, (key, body) in enumerate(rb.items()):
+        parts = str(key).split()
+        root = re.sub(r"[^A-Za-z0-9_]", "_", parts[0] if parts else str(key))
+        tok = re.sub(r"[^A-Za-z0-9_]", "_", parts[-1] if len(parts) > 1 else str(key))
+        rid, tid = "g_" + root, "t%d" % i
+        if root not in roots_done:
+            L.append('    %s(["%s"])' % (rid, root))
+            roots_done.add(root)
+        is_exec = any(m in (body or "").lower() for m in _EXEC_MARKERS)
+        L.append('    %s["%s%s"]' % (tid, tok, "  ⚠exec" if is_exec else ""))
+        L.append("    %s --> %s" % (rid, tid))
+        if is_exec:
+            styles.append("    style %s fill:#f99,stroke:#900,color:#000" % tid)
+    L += styles + ["```", ""]
+    return L
+
+
 # ---- Section 1 render ------------------------------------------------------
 def render_reconstitution(name, ana, dyn=None, mode_reason=""):
     """Section 1 markdown. STATIC tier always; DYNAMIC tier when `dyn` is provided."""
@@ -392,4 +424,5 @@ def render_reconstitution(name, ana, dyn=None, mode_reason=""):
     else:
         L.append("\n## Reconstructed grammar")
         L.append("_(dynamic tier not run — rule structure needs live probing; see mode reason above)_")
+    L += constitution_mermaid(dyn)     # visual grammar 'constitution' from the live recovery
     return "\n".join(L) + "\n"
