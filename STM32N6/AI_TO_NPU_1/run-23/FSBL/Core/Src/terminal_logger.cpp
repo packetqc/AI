@@ -89,18 +89,24 @@ void TerminalLogger::log(Severity sev, const char* category, const char* message
         safe[0] = '\0';
     }
 
-    char line[320];
+    char line[384];
     const char* col   = color_ ? severity_color(sev) : "";
     const char* reset = color_ ? RESET : "";
 
-    /* "%-10s%-16s" reproduces Python's {sev:<10}{cat:<16} column padding. */
-    snprintf(line, sizeof(line), "%s%s  %-10s%-16s%s%s\r\n",
+    /* "%-10s%-16s" reproduces Python's {sev:<10}{cat:<16} column padding. Emit the CRLF as a SEPARATE
+     * write (NOT in the format string): if a long message + colour codes pushed the formatted line to the
+     * buffer limit, snprintf would silently drop the trailing '\r\n' (or just the '\n'), leaving a bare
+     * carriage return that makes the next line overwrite this one on the same terminal row — the observed
+     * "inference lines print on the same line". Splitting the CRLF out guarantees every record ends with
+     * a full newline regardless of message length. */
+    snprintf(line, sizeof(line), "%s%s  %-10s%-16s%s%s",
              col, time_str,
              severity_name(sev),
              category ? category : "",
              safe,
              reset);
     emit(line);
+    emit("\r\n");
 }
 
 void TerminalLogger::logf(Severity sev, const char* category, const char* fmt, ...) const

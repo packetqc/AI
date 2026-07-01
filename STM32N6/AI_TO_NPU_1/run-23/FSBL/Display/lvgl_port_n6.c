@@ -164,7 +164,7 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
      * DIRECT + tolerates a strobe only because its busy scene repaints most of the screen every frame;
      * for a static scene a full repaint is cheap and identical frame-to-frame, so it's glitch-free.
      * This matches flush_cb's own assumption ("LVGL rendered a full frame into the inactive buffer"). */
-    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_FULL);
+    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lvgl_port_n6_state = 50;
 
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
