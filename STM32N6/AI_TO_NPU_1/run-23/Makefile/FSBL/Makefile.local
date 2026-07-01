@@ -122,6 +122,12 @@ $(BUILD_DIR)/stm32n6xx_hal_ltdc.o: ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n
 $(BUILD_DIR)/stm32n6xx_hal_ltdc_ex.o: ../../Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_ltdc_ex.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+# --- on-chip SRAM framebuffer bring-up (reference layout, option B; no-op at FB_IN_SRAM=0) ---
+OBJECTS += $(BUILD_DIR)/fb_sram.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/fb_sram.o
+$(BUILD_DIR)/fb_sram.o: ../../FSBL/Core/Src/fb_sram.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
 # --- PSRAM (XSPI1): map @0x90000000 via the board BSP + self-test (framebuffer + app data) ---
 OBJECTS += $(BUILD_DIR)/psram.o $(BUILD_DIR)/stm32n6570_discovery_xspi.o
 $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/psram.o $(BUILD_DIR)/stm32n6570_discovery_xspi.o

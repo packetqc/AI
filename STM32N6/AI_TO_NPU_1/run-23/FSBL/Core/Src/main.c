@@ -34,6 +34,7 @@
 #include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
 #include "lvgl_port_n6.h"            /* LVGL 9.x DIRECT-mode port on the PSRAM framebuffer */
 #include "fb_layout.h"               /* framebuffer layout selector: PSRAM (legacy) vs 100%-SRAM ref */
+#include "fb_sram.h"                 /* on-chip SRAM FB bank MPU/RISAF bring-up (no-op unless FB_IN_SRAM) */
 #include "lvgl_scene.h"              /* C2 test scene */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
@@ -415,7 +416,12 @@ int main(void)
   SCB_EnableICache();
   SCB_EnableDCache();
 
-  /* LCD: LTDC + Layer-1 @0x90000000 up (paints a brief R/G/B pattern). */
+  /* Reference layout (FB_IN_SRAM): mark the on-chip FB banks (AXISRAM1 front + AXISRAM5-6 back)
+   * MPU Normal-Non-Cacheable so the LTDC scans fresh pixels with D-cache on. No-op for the legacy
+   * PSRAM layout (PSRAM_Mpu already covers 0x90000000). Must run before the FB is first written. */
+  fb_sram_enable();
+
+  /* LCD: LTDC + Layer-1 framebuffer up (paints a brief R/G/B pattern). */
   LCD_Init();
 
   /* LVGL (DIRECT mode) renders straight into the same PSRAM framebuffer the LTDC scans — it repaints
