@@ -382,7 +382,7 @@ int main(void)
     DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
 
     lvgl_port_n6_cfg_t lv_cfg = {
-      .fb_addr         = (void *)0x90000000U,
+      .fb_addr         = (void *)0x90000000U,   /* PSRAM — AXISRAM4-6 is the NPU activation arena (see lcd.c) */
       .fb_width        = 800U,
       .fb_height       = 480U,
       .fb_bytes_per_px = 2U,

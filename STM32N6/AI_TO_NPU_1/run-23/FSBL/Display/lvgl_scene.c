@@ -31,7 +31,7 @@ static lv_obj_t *make_bar(lv_obj_t *scr, lv_align_t side)
 {
     lv_obj_t *b = lv_obj_create(scr);
     lv_obj_remove_style_all(b);
-    lv_obj_set_size(b, 800, 36);
+    lv_obj_set_size(b, 800, 56);   /* taller bars to fit the doubled (~28px) bar text */
     lv_obj_align(b, side, 0, 0);
     lv_obj_set_style_bg_color(b, lv_color_hex(COL_BAR), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(b, LV_OPA_COVER, LV_PART_MAIN);
@@ -43,6 +43,9 @@ static lv_obj_t *make_caption(lv_obj_t *scr, const char *txt, int y)
     lv_obj_t *c = lv_label_create(scr);
     lv_label_set_text(c, txt);
     lv_obj_set_style_text_color(c, lv_color_hex(COL_DIM), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_x(c, 0, LV_PART_MAIN);         /* left pivot: grow rightward, left edge fixed at x=24 */
+    lv_obj_set_style_transform_pivot_y(c, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(c, 512, LV_PART_MAIN);         /* 512/256 = 2x -> ~28px */
     lv_obj_align(c, LV_ALIGN_TOP_LEFT, 24, y);
     return c;
 }
@@ -58,11 +61,17 @@ void lvgl_scene_build(void)
     lv_obj_t *tab = lv_label_create(top);
     lv_label_set_text(tab, "calculator");
     lv_obj_set_style_text_color(tab, lv_color_hex(COL_TAB), LV_PART_MAIN);
-    lv_obj_align(tab, LV_ALIGN_LEFT_MID, 14, 0);
+    lv_obj_set_style_transform_pivot_x(tab, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(tab, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(tab, 512, LV_PART_MAIN);       /* 2x -> ~28px */
+    lv_obj_align(tab, LV_ALIGN_LEFT_MID, 16, 0);
     lv_obj_t *appn = lv_label_create(top);
-    lv_label_set_text(appn, "STM32N6  -  nocode grammar LM");
+    lv_label_set_text(appn, "STM32N6  nocode LM");   /* shortened so it fits the top bar at 2x */
     lv_obj_set_style_text_color(appn, lv_color_hex(COL_DIM), LV_PART_MAIN);
-    lv_obj_align(appn, LV_ALIGN_RIGHT_MID, -14, 0);
+    lv_obj_set_style_transform_pivot_x(appn, lv_pct(100), LV_PART_MAIN);   /* right pivot: grow leftward */
+    lv_obj_set_style_transform_pivot_y(appn, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(appn, 512, LV_PART_MAIN);       /* 2x -> ~28px */
+    lv_obj_align(appn, LV_ALIGN_RIGHT_MID, -16, 0);
 
     /* ---- L2 content: inference (top) / response (bottom) ---- */
     make_caption(scr, "inference", 64);
@@ -100,7 +109,10 @@ void lvgl_scene_build(void)
     lv_obj_t *ledtx = lv_label_create(bot);
     lv_label_set_text(ledtx, "SW");
     lv_obj_set_style_text_color(ledtx, lv_color_hex(COL_DIM), LV_PART_MAIN);
-    lv_obj_align(ledtx, LV_ALIGN_LEFT_MID, 40, 0);
+    lv_obj_set_style_transform_pivot_x(ledtx, 0, LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(ledtx, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(ledtx, 512, LV_PART_MAIN);      /* 2x */
+    lv_obj_align(ledtx, LV_ALIGN_LEFT_MID, 44, 0);
 
     lv_obj_t *ver = lv_label_create(bot);
     char vb[24];
@@ -108,17 +120,24 @@ void lvgl_scene_build(void)
                 LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
     lv_label_set_text(ver, vb);
     lv_obj_set_style_text_color(ver, lv_color_hex(COL_DIM), LV_PART_MAIN);
-    lv_obj_align(ver, LV_ALIGN_RIGHT_MID, -14, 0);
+    lv_obj_set_style_transform_pivot_x(ver, lv_pct(100), LV_PART_MAIN);   /* right pivot: grow leftward, right edge fixed */
+    lv_obj_set_style_transform_pivot_y(ver, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(ver, 512, LV_PART_MAIN);       /* 2x */
+    lv_obj_align(ver, LV_ALIGN_RIGHT_MID, -16, 0);
 }
 
 void lvgl_scene_set_prompt(const char *s)
 {
-    if (s_prompt != NULL) lv_label_set_text(s_prompt, s);
+    /* Full-screen invalidate = force a complete repaint on the next run_once. With a single buffer and
+     * dirty-only rendering, a region the NPU may have disturbed during inference would otherwise never
+     * be repainted (the stretch "doesn't come back"). Repainting the whole scene around each inference
+     * guarantees recovery. Called between inferences (no NPU running), so no contention. */
+    if (s_prompt != NULL) { lv_label_set_text(s_prompt, s); lv_obj_invalidate(lv_screen_active()); }
 }
 
 void lvgl_scene_set_answer(const char *s)
 {
-    if (s_answer != NULL) lv_label_set_text(s_answer, s);
+    if (s_answer != NULL) { lv_label_set_text(s_answer, s); lv_obj_invalidate(lv_screen_active()); }
 }
 
 void lvgl_scene_tick(unsigned long frame, unsigned long hb)

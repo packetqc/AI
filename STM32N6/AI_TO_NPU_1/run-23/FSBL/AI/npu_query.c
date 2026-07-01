@@ -44,11 +44,11 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                 in_buf[c * L + l] = row[c];
         }
 
-        /* Per-UNIT-inference display gate (user architecture): drop the LTDC framebuffer fetch for THIS
-         * one NPU epoch only, then restore it — so the panel refreshes between the many epochs of a
-         * generation instead of being blanked for the whole stretch. LTDC + Neural-ART share the AXI
-         * bus (AN4861/RM0486); with the fetch off for the ~ms this epoch runs there is no contention and
-         * the live scanout can't corrupt. */
+        /* Per-UNIT-inference display gate: drop the LTDC framebuffer fetch for THIS one NPU epoch, then
+         * restore it — panel refreshes between the many epochs of a generation. LTDC + Neural-ART share
+         * the AXI bus (AN4861/RM0486); with the fetch off for the ~ms this epoch runs there is no
+         * contention. (Spatial segmentation into AXISRAM was tried but AXISRAM3-6 is the NPU arena, so
+         * the FB must stay in shared PSRAM and this temporal gate is the mitigation.) */
         if (g_lvgl_ok) lvgl_port_n6_display_freeze(1);
         int npu_run_ok = (stai_network_run(net, STAI_MODE_SYNC) == STAI_SUCCESS);
         if (g_lvgl_ok) lvgl_port_n6_display_freeze(0);

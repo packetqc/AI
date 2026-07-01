@@ -14,7 +14,14 @@
 
 #define LCD_W    800U
 #define LCD_H    480U
-#define LCD_FB0  0x90000000U          /* RGB565 framebuffer in the mapped APS256 PSRAM */
+#define LCD_FB0  0x90000000U          /* RGB565 framebuffer in the mapped APS256 PSRAM. AXISRAM4-6
+                                        * (0x34280000) was TRIED for spatial segmentation but that whole
+                                        * 0x34200000-0x343BFFFF range is ll_aton's activation arena
+                                        * (1.75MB — the linker only *declares* 512K AI_RAM but the runtime
+                                        * uses it all), so the NPU overwrote the FB with random
+                                        * activations. No free non-NPU internal bank fits a 768K FB, so
+                                        * the FB stays in PSRAM and the LTDC-vs-NPU contention is handled
+                                        * temporally by the per-epoch gate in npu_query.c. */
 
 extern volatile int g_psram_rc;       /* 0 = PSRAM mapped + CPU-writable (set in MX_XSPI1_Init) */
 
