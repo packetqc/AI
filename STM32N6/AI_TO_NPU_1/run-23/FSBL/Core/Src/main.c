@@ -104,14 +104,11 @@ volatile int      g_npu_quiet  = 1;
  * (8bpp+CLUT or lower res) or an AXISRAM scanout buffer — see README § Display. */
 volatile int      g_npu_gate   = 1;
 
-/* Interconnect QoS root-fix experiment. NPU1/NPU2 AXI-read QoS on the NPUNIC (SYSCFG->NPUNICQOSCR
- * bits [3:0] and [11:8], 0..15). The LTDC scanout master runs at fixed max QoS (ST: "LTDC AXI QoS is
- * already maximum"), so LOWERING the NPU's read QoS below the LTDC's should let the LTDC's PSRAM
- * fetch win interconnect arbitration during inference — the config-only alternative to the gate for
- * the whole-screen scanline corruption. 15 = default-ish (NPU aggressive). Programmed at boot from
- * this var (applied in the NPU block) and live-tunable via GDB write_memory for an on-device sweep;
- * lower until the glitch clears with the gate off, then back off just enough to keep inference fast. */
-volatile uint32_t g_npu_arqos  = 2U;
+/* NOTE: interconnect QoS was tested as a config-only alternative to the gate and DISPROVEN on device
+ * (2026-07-01, IPEVO camera): lowering the NPU's NPUNIC read QoS (SYSCFG->NPUNICQOSCR NPU1/NPU2
+ * ARQOSR) to 2 and even 0 did NOT stop the whole-screen scanline corruption during inference. The
+ * contention is bandwidth saturation, not priority arbitration — the NPU's sustained AXI flood
+ * consumes the interconnect regardless of QoS rank. The per-epoch gate above remains the solution. */
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
@@ -329,17 +326,6 @@ int main(void)
 
     printf("NPU clocked + reset OK + AXI cache + RISAF mem (boot_stage=%lu)\r\n", (unsigned long)g_boot_stage);
   }
-
-  /* Interconnect QoS (flicker root-fix experiment): lower the NPU's two AXI-master read QoS on the
-   * NPUNIC so the fixed-max-priority LTDC scanout wins arbitration during inference. See g_npu_arqos.
-   * Direct-register (HAL_SYSCFG_SetReadQosNP1/NP2 do the same MODIFY_REG). Live-tunable via SWD:
-   * write SYSCFG->NPUNICQOSCR (0x56008028) low nibble + bits[11:8] to sweep without reflash. */
-  MODIFY_REG(SYSCFG->NPUNICQOSCR,
-             SYSCFG_NPUNICQOSCR_NPU1_ARQOSR | SYSCFG_NPUNICQOSCR_NPU2_ARQOSR,
-             ((g_npu_arqos & 0xFU) << SYSCFG_NPUNICQOSCR_NPU1_ARQOSR_Pos) |
-             ((g_npu_arqos & 0xFU) << SYSCFG_NPUNICQOSCR_NPU2_ARQOSR_Pos));
-  printf("NPU NICQOS set: NPUNICQOSCR=0x%08lX (NPU read QoS=%lu)\r\n",
-         (unsigned long)SYSCFG->NPUNICQOSCR, (unsigned long)g_npu_arqos);
 
   /* NPU RUNTIME (global ATON runtime init — MUST run before any network init/run).
    * The --st-neural-art network runs as epoch *blobs* on the NPU epoch controller,
