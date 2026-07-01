@@ -515,15 +515,16 @@ int main(void)
         else if (cmdn < (int)sizeof(cmd) - 1) { cmd[cmdn++] = (char)ch; HAL_UART_Transmit(&huart1, &ch, 1, 100); }
       }
 
-      if (demo_on && (now - demo_last >= 2000U)) {   /* demo cadence: next expression every 2 s (circular) */
+      if (demo_on && (now - demo_last >= 3000U)) {   /* demo cadence: next expression every 3 s (circular) — leaves ~2 s to read the answer before the next parse */
         demo_last = now;
         const char *expr = calc_demo[di]; di = (di + 1) % ndemo;
         int ok = 0;
-        /* GATED inference (ST-confirmed AXI-contention fix): show the prompt, then DISABLE the LTDC
-         * layer so it stops fetching the framebuffer while the NPU floods the shared AXI bus, run the
-         * NPU, re-ENABLE the layer, then show the answer. No LTDC fetch during inference -> no contention
-         * -> no live-scanout corruption. */
-        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); }   /* show the prompt (no NPU yet) */
+        /* Option-B display path: the LTDC double-buffer lives in NPU-free AXISRAM (front AXISRAM1, back
+         * AXISRAM5-6), so the LTDC scans cleanly while the NPU runs — no per-epoch LTDC gate needed
+         * (g_npu_gate defaults 0). set_prompt shows the new expression and clears the answer to "= ?";
+         * after inference set_answer paints the result. Both are dirty-region updates (no full-screen
+         * invalidate), so only the changed labels repaint. */
+        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); }   /* show the prompt + "= ?" (no NPU yet) */
         long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);   /* gates the LTDC fetch per NPU epoch internally */
         if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "ERROR"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }   /* show the answer */
         if (ok) printf("[hb %lu] %s = %ld\r\n", (unsigned long)g_heartbeat, expr, res);

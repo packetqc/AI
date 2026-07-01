@@ -12,6 +12,7 @@
  */
 #include "lvgl.h"
 #include "lvgl_scene.h"
+#include "lvgl_port_n6.h"   /* lvgl_port_n6_mark_dirty — dual-buffer DIRECT propagation */
 
 #define COL_BAR     0x16324A   /* L1 top/bottom bars   */
 #define COL_BG      0x0B1E2D   /* L2 content background */
@@ -128,16 +129,25 @@ void lvgl_scene_build(void)
 
 void lvgl_scene_set_prompt(const char *s)
 {
-    /* Full-screen invalidate = force a complete repaint on the next run_once. With a single buffer and
-     * dirty-only rendering, a region the NPU may have disturbed during inference would otherwise never
-     * be repainted (the stretch "doesn't come back"). Repainting the whole scene around each inference
-     * guarantees recovery. Called between inferences (no NPU running), so no contention. */
-    if (s_prompt != NULL) { lv_label_set_text(s_prompt, s); lv_obj_invalidate(lv_screen_active()); }
+    /* DIRTY-REGION update only. lv_label_set_text already invalidates the label's own area; LVGL's
+     * DIRECT 2-buffer mode replays that dirty area into the other bank over the next frame, so both
+     * buffers stay in sync WITHOUT a whole-screen repaint. The old full-screen invalidate
+     * (lv_obj_invalidate(lv_screen_active())) forced a complete 768 KB repaint on every update — and
+     * because the LTDC swaps to a buffer mid-repaint, the panel flashed the bg for a frame ("goes
+     * blank, then comes back"). It was only there to recover FB regions the NPU disturbed during
+     * inference on the PSRAM framebuffer; on option-B the framebuffer lives in NPU-free AXISRAM, so the
+     * NPU never touches it and the whole-screen repaint is both unnecessary and the cause of the blank. */
+    if (s_prompt != NULL) { lv_label_set_text(s_prompt, s); }
+    /* New expression is now being parsed → clear the answer to "= ?" until the NPU returns the result. */
+    if (s_answer != NULL) { lv_label_set_text(s_answer, "= ?"); }
+    /* Propagate both label changes into BOTH DIRECT buffers (2-frame full redraw) — no strobe. */
+    lvgl_port_n6_mark_dirty();
 }
 
 void lvgl_scene_set_answer(const char *s)
 {
-    if (s_answer != NULL) { lv_label_set_text(s_answer, s); lv_obj_invalidate(lv_screen_active()); }
+    if (s_answer != NULL) { lv_label_set_text(s_answer, s); }
+    lvgl_port_n6_mark_dirty();   /* propagate into both DIRECT buffers (2-frame full redraw) */
 }
 
 void lvgl_scene_tick(unsigned long frame, unsigned long hb)
@@ -153,5 +163,6 @@ void lvgl_scene_tick(unsigned long frame, unsigned long hb)
         s_last_hb = hb;
         lv_obj_set_style_bg_color(s_led,
             lv_color_hex((hb & 1UL) ? COL_LED_OFF : COL_LED_ON), LV_PART_MAIN);
+        lvgl_port_n6_mark_dirty();   /* propagate the LED change into both DIRECT buffers (no strobe) */
     }
 }

@@ -115,6 +115,13 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg);
 void lvgl_port_n6_run_once(void);
 
 /**
+ * @brief  Request a full-screen invalidate for the next 2 render passes so a widget update propagates
+ *         into BOTH DIRECT double buffers (else the LTDC strobes the change on/off as it alternates
+ *         buffers). Call after changing any runtime widget (prompt, answer, heartbeat LED).
+ */
+void lvgl_port_n6_mark_dirty(void);
+
+/**
  * @brief  Block until the LTDC has completed its pending shadow-register reload (the ping-pong swap
  *         requested in flush_cb via SRCR.VBR). Bare-metal equivalent of the reference's ThreadX
  *         display event-flag / semaphore: after this returns the LTDC is stably scanning one complete

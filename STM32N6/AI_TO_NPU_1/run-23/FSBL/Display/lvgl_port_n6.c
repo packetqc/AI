@@ -99,6 +99,18 @@ void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *h)
  * (NOT the LTDC_UP_ERR error IRQ that hung bring-up). Dispatches to HAL, which invokes the callback. */
 void LTDC_UP_IRQHandler(void)
 {
+    /* Warm-reload guard. hltdc lives in .bss; a GDB-driven SRAM reload (load_and_run) restarts the CPU
+     * with PRIMASK cleared while the LTDC peripheral + its NVIC line are LEFT ENABLED from the prior run.
+     * The pending line IRQ then fires during early startup — AFTER .bss zeroes hltdc but BEFORE
+     * MX_LTDC_Init repopulates hltdc.Instance — so HAL_LTDC_IRQHandler would deref NULL->ISR2 (BFAR=0x68
+     * HardFault). If the handle isn't set up yet, mask this IRQ at the NVIC and bail; MX_LTDC_Init
+     * force-resets the LTDC and lvgl_port_n6_init re-enables the line IRQ cleanly after setup. On a cold
+     * NOR boot the NVIC starts disabled, so this never triggers there — it only hardens SRAM reloads. */
+    if (hltdc.Instance == NULL) {
+        HAL_NVIC_DisableIRQ(LTDC_UP_IRQn);
+        HAL_NVIC_ClearPendingIRQ(LTDC_UP_IRQn);
+        return;
+    }
     HAL_LTDC_IRQHandler(&hltdc);
 }
 
@@ -168,9 +180,25 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
     return LVGL_PORT_N6_OK;
 }
 
+/* Dual-buffer DIRECT propagation (ported from the reference N6_EDGEAI_1 lvgl_port.c). A widget update
+ * dirties only ONE of the two alternating DIRECT buffers; the LTDC then STROBES the change on/off as it
+ * swaps between the updated buffer and the still-stale one (seen as a ~1 s strobe / flicker on the
+ * heartbeat + answer). To land an update in BOTH buffers, a widget change requests a full-screen
+ * invalidate for the NEXT 2 render passes — NOT every frame (that is the "huge white slow refresh" /
+ * big blank that full-invalidate-per-update produced), only the 2 passes needed to propagate. The
+ * invalidate MUST happen here in the render pass, never inside flush_cb (LVGL asserts during render). */
+static volatile uint8_t s_full_redraw_frames = 0;
+
+void lvgl_port_n6_mark_dirty(void) { s_full_redraw_frames = 2U; }
+
 void lvgl_port_n6_run_once(void)
 {
     if (!s_ctx.initialized) return;
+
+    if (s_full_redraw_frames > 0U) {
+        lv_obj_invalidate(lv_screen_active());   /* propagate the pending update into this buffer too */
+        s_full_redraw_frames--;
+    }
 
     (void)lv_timer_handler();
     lvgl_port_n6_loop_count++;
