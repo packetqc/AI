@@ -92,13 +92,17 @@ volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal livenes
  * on (=1) at the user's request. */
 volatile int      g_npu_quiet  = 1;
 
-/* Per-epoch LTDC display gate (flicker fix — stage 2). 0 = gate DROPPED (default, the reference's
- * low-bus-traffic behavior: with stage-1 D-cache on the CPU working set is off the AXI bus, so the
- * LTDC should scan the framebuffer cleanly straight through inference — no Layer1 toggling, no
- * flicker). 1 = restore the old per-epoch gate (Layer1 fetch off around each NPU epoch) for A/B
- * comparison. Runtime-togglable via GDB write_memory so the gate can be re-enabled on-device WITHOUT
- * reflashing — flip it and re-run one inference to compare scanout cleanliness both ways. */
-volatile int      g_npu_gate   = 0;
+/* Per-epoch LTDC display gate. 1 = gate ON (default, REQUIRED): Layer1 fetch is disabled around each
+ * NPU epoch so the LTDC stops contending for the shared AXI bus during inference. 0 = gate DROPPED.
+ * ON-DEVICE PROOF (2026-07-01, IPEVO video A/B): with the gate OFF the panel suffers catastrophic
+ * whole-screen scanline corruption during every inference (live-scanout starvation — FB bytes stay
+ * correct, ISR/LEN look healthy, so it is INVISIBLE to SWD; only a camera sees it). Enabling stage-1
+ * D-cache lowers CPU bus traffic but the NPU's own two 64-bit AXI masters alone still starve the LTDC
+ * PSRAM scanout, so D-cache does NOT let the gate be dropped. Gate ON = clean apart from a mild
+ * per-epoch dim. Runtime-togglable via GDB write_memory (D-cache-coherent through the MCP write) for
+ * A/B testing. Real glitch-free path (reference-style, no gate) = cut LTDC PSRAM read bandwidth
+ * (8bpp+CLUT or lower res) or an AXISRAM scanout buffer — see README § Display. */
+volatile int      g_npu_gate   = 1;
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))

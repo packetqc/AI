@@ -88,38 +88,40 @@ Characterised live over SWD:
 - **Not framebuffer-memory corruption** — a vblank trace ring showed the FB bytes, `CFBAR`, and layer regs all intact during inference.
 - **It is live-scanout disturbance** — the LTDC's real-time PSRAM fetch is starved by the NPU's AXI flood, so the *fetched* pixels are transiently wrong even though the memory is correct. LTDC AXI QoS is already maxed (no register lever — confirmed vs AN4861 / RM0486).
 
-### Coexistence design — the reference low-bus-traffic mechanical (implemented)
-
-Rather than fight the contention with a gate, run-23 now matches how the reference (N6_EDGEAI_1) stays
-glitch-free on the same silicon: keep the AXI bus quiet during inference.
+### Coexistence design — what helps, and the gate that is still required
 
 1. **Double-buffer + line-event vsync swap** — LVGL renders the back buffer; the LTDC line-event ISR swaps `CFBAR` at vblank ([lvgl_port_n6.c](FSBL/Display/lvgl_port_n6.c)). Removes render-vs-read tearing.
-2. **M55 D-cache ON + FB Non-Cacheable** — `SCB_EnableI/DCache()` right after `PSRAM_Mpu()` marks the FB `0x44` Normal-Non-Cacheable ([main.c](FSBL/Core/Src/main.c), [psram.c](FSBL/Core/Src/psram.c)). The CPU working set (embedding Gather, token loop, LVGL heap in cacheable AXISRAM1) is absorbed by cache instead of flooding the interconnect the LTDC scans from — the actual root-cause lever. FB stays non-cacheable so the LTDC never reads stale lines; `flush_cb`'s `__DSB` drains pixel writes before each swap.
+2. **M55 D-cache ON + FB Non-Cacheable** — `SCB_EnableI/DCache()` right after `PSRAM_Mpu()` marks the FB `0x44` Normal-Non-Cacheable ([main.c](FSBL/Core/Src/main.c), [psram.c](FSBL/Core/Src/psram.c)). Pulls the CPU working set (embedding Gather, token loop, LVGL heap in cacheable AXISRAM1) off the AXI interconnect and matches the `.ioc` intent. FB stays non-cacheable so the LTDC never reads stale lines; `flush_cb`'s `__DSB` drains pixel writes before each swap.
 3. **NPU I/O coherency** — with D-cache on, `mcu_cache_clean_range(in_buf)` after the embedding Gather cleans the CPU-filled input before the NPU reads it ([npu_query.c](FSBL/AI/npu_query.c)); the STAI runtime invalidates the output. Self-gating on `SCB->CCR.DC` (no-op if D-cache off).
-4. **Per-epoch gate dropped** — the Layer-1 fetch gate around each `stai_network_run` is now off by default (`g_npu_gate=0`). Retained as a runtime A/B switch: set `g_npu_gate=1` via GDB `write_memory` to restore the old gate on-device without reflashing.
+4. **Per-epoch gate — REQUIRED, ON by default** (`g_npu_gate=1`). Layer-1 fetch is disabled around each `stai_network_run` epoch so the LTDC stops contending during inference. **This is the only thing that prevents the corruption** (see Status). Runtime-togglable via GDB `write_memory` for A/B testing.
 
-### Why the reference (N6_EDGEAI_1) doesn't show this
+### Status — on-device VISUAL verification 2026-07-01 (IPEVO camera A/B, branch `lvgl`)
 
-The reference **also** scans LTDC directly from PSRAM (`0x90000000` / `0x900C0000`) — it has **no**
-AXISRAM scanout buffer — yet runs the NPU concurrently glitch-free with **no gate**. The difference was
-bus pressure, not architecture: it keeps D-cache on and updates only a small dynamic region per frame,
-whereas run-23 previously ran with D-cache **off**. Stage 1 closes that gap.
+Flashed via `load_and_run`. Recorded the panel with a camera and ran a gate on/off A/B (frames in
+`_camera_captures/`):
 
-### Status — on-device verified 2026-07-01 (branch `lvgl`, commits `6ff1ea7` + `ae28c2d`)
+| | Steady (between inferences) | **During inference** |
+|---|---|---|
+| **Gate OFF** | clean | **catastrophic whole-panel scanline corruption** |
+| **Gate ON**  | clean | clean apart from a mild per-epoch dim |
 
-Flashed via `load_and_run`, gate off. Verified over SWD + VCP:
-- **Correctness (D-cache coherency holds):** boot self-test `3 + 4 = 7`, then the demo loop computes
-  `12 - 5 = 7`, `6 * 7 = 42`, `8 / 2 = 4` — every multi-epoch NPU inference correct with D-cache ON.
-- **Gate genuinely dropped:** `g_npu_gate=0`; the LTDC vblank trace ring shows `LayerCR.LEN=1` on
-  every traced vblank (never gated off), `ISR=0` (no underrun ever), `CFBAR` valid with live
-  double-buffer swaps. Display loop alive through inference (108 M loops, 226 flushes, 4378 vblanks).
-- **Pending:** the final *visual* confirmation of scanout cleanliness during inference — by the
-  glitch's nature (FB bytes stay correct, the LTDC *fetch* is transiently starved) it is invisible to
-  SWD and requires a camera on the panel.
+- **The gate is required.** D-cache (stage 1) is correct and helpful (boot self-test `3 + 4 = 7`, demo
+  `12-5=7 / 6*7=42 / 8/2=4` all correct with D-cache ON) but does **NOT** eliminate the glitch: the
+  NPU's own two 64-bit AXI masters alone still starve the LTDC PSRAM scanout with the gate off.
+- **Why SWD said "healthy" but the panel was shredded:** the corruption is a live-scanout *fetch*
+  artifact — FB bytes stay correct, so `ISR=0`, `LayerCR.LEN=1`, and the trace ring all look clean. It
+  is **invisible to SWD**; only a camera on the panel reveals it. (Lesson: board-proves-behavior.)
+
+### Real glitch-free path (no gate) — open
+
+The reference (N6_EDGEAI_1) runs the NPU concurrently with no gate; run-23 cannot yet match that. The
+remaining lever is LTDC PSRAM **read bandwidth**: 8bpp + CLUT (halves scanout traffic) or reduced
+resolution, or a full-res on-chip AXISRAM scanout buffer (doesn't fit today — weights + heap + NPU
+arena consume it). Needs investigation of why the reference's identical PSRAM scanout survives (LTDC
+pixel clock / porch timings / model AXI pattern).
 
 **Ruled out (2026-06-30):** silencing the per-token UART dialog (`g_npu_quiet=1`) did **not** fix the
-glitch — confirming it is intrinsic per-*epoch* NPU↔LTDC AXI contention, which is why the fix targets
-bus traffic (D-cache) rather than CPU churn duration.
+glitch — it is intrinsic per-*epoch* NPU↔LTDC AXI contention, not CPU/UART churn.
 
 ## Debug notes (hard-won)
 
