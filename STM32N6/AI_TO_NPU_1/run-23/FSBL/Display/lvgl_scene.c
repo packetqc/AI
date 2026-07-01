@@ -140,14 +140,21 @@ void lvgl_scene_set_prompt(const char *s)
     if (s_prompt != NULL) { lv_label_set_text(s_prompt, s); }
     /* New expression is now being parsed → clear the answer to "= ?" until the NPU returns the result. */
     if (s_answer != NULL) { lv_label_set_text(s_answer, "= ?"); }
-    /* Propagate both label changes into BOTH DIRECT buffers (2-frame full redraw) — no strobe. */
+    /* Bare-metal renders on-demand, so force a 2-frame full-redraw to land the change in BOTH DIRECT
+     * buffers (else it strobes). Under ThreadX the render thread runs continuously (~30 FPS), so LVGL's
+     * own 2-buffer sync propagates the small dirty label region over consecutive frames — forcing a
+     * full-screen repaint there is the reference's known "huge white refresh" / distortion source. */
+#if !RUN23_USE_THREADX
     lvgl_port_n6_mark_dirty();
+#endif
 }
 
 void lvgl_scene_set_answer(const char *s)
 {
     if (s_answer != NULL) { lv_label_set_text(s_answer, s); }
-    lvgl_port_n6_mark_dirty();   /* propagate into both DIRECT buffers (2-frame full redraw) */
+#if !RUN23_USE_THREADX
+    lvgl_port_n6_mark_dirty();   /* bare-metal only — ThreadX continuous render syncs both buffers itself */
+#endif
 }
 
 void lvgl_scene_tick(unsigned long frame, unsigned long hb)

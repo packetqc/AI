@@ -78,7 +78,8 @@ static void render_thread_entry(ULONG arg)
             lvgl_port_n6_run_once();
         }
         frame++;
-        tx_thread_sleep(1);                          /* yield ~1 tick (~10 ms) */
+        tx_thread_sleep(3);                          /* ~30 FPS (reference LVGL_THREAD_SLEEP_TICKS=3). 100 FPS
+                                                      * (sleep 1) out-runs the 60 Hz LTDC swap → the distortion. */
     }
 }
 
