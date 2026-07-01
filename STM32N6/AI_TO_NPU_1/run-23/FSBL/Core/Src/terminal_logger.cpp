@@ -39,7 +39,7 @@ const char* severity_color(Severity s)
         case Severity::Error:    return "\033[31m";   /* Red            */
         case Severity::Info:     return "\033[37m";   /* Light Grey     */
         case Severity::Critical: return "\033[91m";   /* Bright Red     */
-        case Severity::Notice:   return "\033[35m";   /* Magenta        */
+        case Severity::Notice:   return "\033[37m";   /* White (was Magenta 35m — user reports it merges lines in minicom) */
     }
     return "";
 }
