@@ -1,0 +1,9 @@
+{
+    "_comment": "Option-B neural-art profile for run-23 — same options as the shipped 'sram_weights' profile (Makefile/FSBL/user_neuralart_sram.json), only the memory_pool is swapped to place the NPU in AXISRAM3-4-7 and FREE AXISRAM1 + AXISRAM5-6 for the 100%-SRAM LTDC double-buffer. See README.md.",
+    "Profiles": {
+        "optionB_sram": {
+            "memory_pool": "./stm32n6_optionB_axisram34.mpool",
+            "options": "--optimization 3 --cache-maintenance --Oauto-sched --native-float --enable-virtual-mem-pools --Omax-ca-pipe 4 --Ocache-opt --Os"
+        }
+    }
+}
