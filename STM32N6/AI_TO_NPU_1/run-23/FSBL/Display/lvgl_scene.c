@@ -69,13 +69,24 @@ void lvgl_scene_build(void)
     s_prompt = lv_label_create(scr);
     lv_label_set_text(s_prompt, "-");
     lv_obj_set_style_text_color(s_prompt, lv_color_hex(COL_PROMPT), LV_PART_MAIN);
-    lv_obj_align(s_prompt, LV_ALIGN_TOP_MID, 0, 104);
+    lv_obj_set_style_text_align(s_prompt, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    /* Enlarge the 14px default font ~2.6x via transform (reference technique — no bigger font, no ROM).
+     * Pivot at the label centre so the scale is symmetric and the text stays centred as it grows. */
+    lv_obj_set_style_transform_pivot_x(s_prompt, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_prompt, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(s_prompt, 1097, LV_PART_MAIN);   /* 1097/256 = 4.29x -> ~60px */
+    lv_obj_align(s_prompt, LV_ALIGN_CENTER, 0, -100);   /* centred (H+V) in the upper inference zone */
 
     make_caption(scr, "response", 244);
     s_answer = lv_label_create(scr);
     lv_label_set_text(s_answer, "-");
     lv_obj_set_style_text_color(s_answer, lv_color_hex(COL_ANSWER), LV_PART_MAIN);
-    lv_obj_align(s_answer, LV_ALIGN_TOP_MID, 0, 284);
+    lv_obj_set_style_text_align(s_answer, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    /* The response is the headline — scale it bigger, ~3.3x → ~46px effective. Centre pivot too. */
+    lv_obj_set_style_transform_pivot_x(s_answer, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_pivot_y(s_answer, lv_pct(50), LV_PART_MAIN);
+    lv_obj_set_style_transform_scale(s_answer, 1097, LV_PART_MAIN);   /* 1097/256 = 4.29x -> ~60px */
+    lv_obj_align(s_answer, LV_ALIGN_CENTER, 0, 100);    /* centred (H+V) in the lower response zone */
 
     /* ---- L1 bottom: global bar — SW-LED (left), LVGL version (right) ---- */
     lv_obj_t *bot = make_bar(scr, LV_ALIGN_BOTTOM_MID);
@@ -114,15 +125,14 @@ void lvgl_scene_tick(unsigned long frame, unsigned long hb)
 {
     (void)frame;
 
-    /* SW-LED mirrors the physical heartbeat LED: bright on even ticks, dim on odd. */
+    /* SW-LED mirrors the physical heartbeat LED: bright on even ticks, dim on odd. Only the LED and the
+     * status label change per tick; LVGL redraws just those small dirty regions into the single
+     * framebuffer and leaves the rest untouched. No full-screen invalidate — that existed only to keep
+     * two ping-pong buffers in sync; with one buffer it would rewrite all 768 KB every frame (maximum
+     * tearing) for no benefit. */
     if (s_led != NULL && hb != s_last_hb) {
         s_last_hb = hb;
         lv_obj_set_style_bg_color(s_led,
             lv_color_hex((hb & 1UL) ? COL_LED_OFF : COL_LED_ON), LV_PART_MAIN);
     }
-
-    /* Repaint the whole screen each frame so BOTH ping-pong buffers always carry the complete scene
-     * (no slow-widget strobe). Safe because main.c gates inference: lvgl_port_n6_wait_idle() settles
-     * the swap before the NPU runs and no refresh happens while it infers. */
-    lv_obj_invalidate(lv_screen_active());
 }

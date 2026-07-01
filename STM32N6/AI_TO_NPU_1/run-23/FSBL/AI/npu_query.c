@@ -15,6 +15,8 @@
 /* Per-token CPU<->NPU dialog logger (implemented in grammar_runner.cpp via the C++
  * TerminalLogger). One line per autoregressive step = one NPU epoch. */
 extern void NPU_LogStep(int rule_idx, int pos, int tok_id, const char *piece);
+extern void lvgl_port_n6_display_freeze(int freeze);   /* per-epoch display gate: LTDC fetch off during the NPU run */
+extern volatile int g_lvgl_ok;                          /* 1 once the LVGL display is initialised */
 
 void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                    int rule_idx, char *out, int out_max)
@@ -42,7 +44,15 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                 in_buf[c * L + l] = row[c];
         }
 
-        if (stai_network_run(net, STAI_MODE_SYNC) != STAI_SUCCESS)
+        /* Per-UNIT-inference display gate (user architecture): drop the LTDC framebuffer fetch for THIS
+         * one NPU epoch only, then restore it — so the panel refreshes between the many epochs of a
+         * generation instead of being blanked for the whole stretch. LTDC + Neural-ART share the AXI
+         * bus (AN4861/RM0486); with the fetch off for the ~ms this epoch runs there is no contention and
+         * the live scanout can't corrupt. */
+        if (g_lvgl_ok) lvgl_port_n6_display_freeze(1);
+        int npu_run_ok = (stai_network_run(net, STAI_MODE_SYNC) == STAI_SUCCESS);
+        if (g_lvgl_ok) lvgl_port_n6_display_freeze(0);
+        if (!npu_run_ok)
         {
             strncpy(out, "[npu run err]", out_max - 1);
             out[out_max - 1] = '\0';

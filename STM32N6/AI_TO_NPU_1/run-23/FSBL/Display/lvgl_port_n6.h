@@ -117,6 +117,15 @@ void lvgl_port_n6_run_once(void);
 void lvgl_port_n6_wait_idle(void);
 
 /**
+ * @brief  Gate the LTDC framebuffer fetch during NPU inference. Pass 1 right before running the NPU to
+ *         disable Layer1 (LTDC stops contending for the shared AXI/memory bus), 0 right after to resume.
+ *         This is the fix for the LTDC-vs-Neural-ART bandwidth contention that corrupts the live scanout
+ *         (AN4861/RM0486, ST-confirmed). Applies immediately (SRCR.IMR). The panel briefly shows the
+ *         LTDC background colour for the ~ms the NPU runs, instead of corrupting.
+ */
+void lvgl_port_n6_display_freeze(int freeze);
+
+/**
  * @brief  Tear down (rare — most bare-metal apps never deinit).
  */
 void lvgl_port_n6_deinit(void);

@@ -65,13 +65,13 @@
     #define LV_MEM_POOL_EXPAND_SIZE 0
 
     /*Set an address for the memory pool instead of allocating it as a normal array. Can be in external SRAM too.*/
-    #define LV_MEM_ADR 0x90400000U   /* run-23: LVGL heap in PSRAM at 0x90400000 — 4MB into the 32MB
-                                       * APS256, PAST both framebuffers (0x90000000..0x901C0000) and
-                                       * OUTSIDE every NPU region (WEIGHTS_RAM 0x34064000-0x34100000,
-                                       * AI_RAM 0x34200000-0x34280000). The earlier 0x340F0000 spot was
-                                       * inside WEIGHTS_RAM (ll_aton's pool) so inference scratch
-                                       * corrupted the object tree. ISR=0 proved there is no LTDC
-                                       * underrun, so "heap must leave PSRAM" was a false lead. */
+    #define LV_MEM_ADR 0x34100000U   /* run-23: LVGL heap in the FREE AXISRAM1 gap — AXISRAM1 spans
+                                       * 0x34000000..0x34180400; WEIGHTS_RAM ends at 0x34100000 and ROM
+                                       * starts at 0x34180400, leaving ~513K free in between that NO NPU
+                                       * region uses. 256K heap (0x34100000..0x34140000) lives there:
+                                       * fast AXISRAM, no overlap with ll_aton's WEIGHTS_RAM pool (the
+                                       * 0x340F0000 spot was INSIDE that pool -> object-tree corruption),
+                                       * no .ld edit needed. Mirrors the reference's AXISRAM-heap intent. */
     /*Instead of an address give a memory allocator that will be called to get a memory pool for LVGL. E.g. my_malloc*/
     #if LV_MEM_ADR == 0
         #undef LV_MEM_POOL_INCLUDE

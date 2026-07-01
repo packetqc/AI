@@ -47,29 +47,17 @@ static uint32_t lvgl_tick_cb(void)
 
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    /* DOUBLE-BUFFER DIRECT (ping-pong): LVGL renders the full frame into the INACTIVE buffer; on the
-     * last flush we point the LTDC front layer at it (px_map = that buffer's base) and reload at the
-     * next VERTICAL BLANKING (SRCR.VBR) — an atomic swap, so the LTDC never DMA-reads a buffer being
-     * drawn. This is the documented fix for the LVGL tearing/glitch (methodology-stm32n6-ltdc-display
-     * §2.4). __DSB drains CPU writes (FB is MPU non-cacheable) before the swap. */
-    /* Clean (write back) the just-rendered pixels from the M55 D-cache to PSRAM BEFORE the LTDC reads
-     * them. If the framebuffer's MPU region is anything but *truly* non-cacheable, the rendered rows can
-     * sit in the D-cache: the LTDC reads PSRAM by DMA and never sees them, and the NPU's post-inference
-     * SCB_InvalidateDCache can DISCARD those still-dirty lines -> the framebuffer corrupts exactly at
-     * inference time (methodology-stm32n6-ltdc-display §"clean before reload"). On a genuinely
-     * non-cacheable region this is a cheap near-no-op. Clean only this dirty area's row span. */
-    const uint32_t stride = 800u * 2u;                          /* RGB565 row bytes (full width) */
-    uint8_t       *rows   = px_map + (uint32_t)area->y1 * stride;
-    uint32_t       nbytes = (uint32_t)(area->y2 - area->y1 + 1) * stride;
-    SCB_CleanDCache_by_Addr((uint32_t *)rows, (int32_t)nbytes);
+    /* SINGLE-BUFFER DIRECT: LVGL renders straight into the ONE framebuffer the LTDC scans (fb_addr,
+     * programmed as LTDC_Layer1->CFBAR in LCD_Init). There is NO ping-pong buffer, so there is NO swap
+     * to time and NO swap-race — the blank/"losing layout" came from the flush requesting a swap the
+     * LTDC hadn't completed, letting LVGL draw into the buffer being scanned. The reference does
+     * tear-free double-buffering from the LTDC LINE-EVENT ISR; run-23 has LTDC IRQs disabled (the
+     * error-IRQ hang fix), so we take the simpler robust route: one buffer, no swap. __DSB drains the
+     * CPU pixel writes to the (MPU non-cacheable) PSRAM framebuffer before LVGL marks the flush done,
+     * so the LTDC DMA sees fresh pixels. Only the small regions that change each frame can tear. */
+    (void)px_map;
+    (void)area;
     __DSB();
-    if (lv_display_flush_is_last(disp)) {
-        LTDC_Layer1->CFBAR   = (uint32_t)px_map;   /* front layer -> just-completed buffer */
-        hltdc.Instance->SRCR = LTDC_SRCR_VBR;      /* swap at the next VBlank (no tear) */
-        /* NOTE: do NOT busy-wait for the reload here — a per-frame VBlank spin (~16 ms) starves the
-         * UART RX poll in the super-loop (dropped keystrokes). The once-per-inference settle is done
-         * explicitly via lvgl_port_n6_wait_idle() in main.c, right before the NPU runs. */
-    }
     lvgl_port_n6_flush_count++;
     lv_display_flush_ready(disp);
 }
@@ -108,11 +96,10 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
     lvgl_port_n6_state = 40;
 
     const uint32_t fb_size = cfg->fb_width * cfg->fb_height * cfg->fb_bytes_per_px;
-    /* Ping-pong double-buffer: second FB 1 MB after the first — both inside the 4 MB MPU
-     * non-cacheable PSRAM region (0x90000000-0x903FFFFF). The flush_cb swaps the LTDC between them
-     * at VBlank so it never reads a buffer mid-draw. */
-    uint8_t *fb1 = (uint8_t *)cfg->fb_addr + 0x100000U;
-    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* SINGLE buffer (second arg NULL): LVGL renders directly into the LTDC's framebuffer. No second
+     * buffer, no swap — the flush_cb is a plain __DSB + flush_ready. This trades a bit of tearing on
+     * changed regions for a display that CANNOT go blank from a mistimed ping-pong swap. */
+    lv_display_set_buffers(disp, cfg->fb_addr, NULL, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lvgl_port_n6_state = 50;
 
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
@@ -153,6 +140,24 @@ void lvgl_port_n6_wait_idle(void)
     while ((hltdc.Instance->SRCR & LTDC_SRCR_VBR) != 0U && guard != 0U) {
         guard--;
     }
+}
+
+void lvgl_port_n6_display_freeze(int freeze)
+{
+    /* Remove the LTDC-vs-Neural-ART AXI contention window (root cause per AN4861/RM0486, confirmed by
+     * ST: LTDC scanout and the NPU share the AXI/memory system; while the NPU floods the bus the LTDC's
+     * PSRAM fetch is disturbed and the LIVE scanout corrupts even though the framebuffer bytes stay
+     * correct — QoS is already maxed, so the only lever is to stop the LTDC fetching during inference).
+     * Disabling Layer1 makes the LTDC stop fetching the framebuffer, so the NPU gets the bus alone for
+     * the ~ms it runs; re-enabling restores the scene. IMMEDIATE reload (IMR) so it lands inside the
+     * short inference window (a VBlank reload would take effect a whole frame later). */
+    if (freeze) {
+        hltdc.Instance->BCCR = 0x000B1E2DU;            /* LTDC background = scene bg (COL_BG 0x0B1E2D) so the layer-off shows the bg tint, not black */
+        LTDC_Layer1->CR &= ~(uint32_t)LTDC_LxCR_LEN;   /* layer off -> LTDC stops FB fetch */
+    } else {
+        LTDC_Layer1->CR |=  (uint32_t)LTDC_LxCR_LEN;   /* layer on -> resume scanout */
+    }
+    hltdc.Instance->SRCR = LTDC_SRCR_IMR;
 }
 
 void lvgl_port_n6_deinit(void)

@@ -428,7 +428,9 @@ int main(void)
       if (g_lvgl_ok) { lvgl_scene_tick(lvgl_port_n6_loop_count, g_heartbeat); lvgl_port_n6_run_once(); }  /* LVGL frame */
 
       uint8_t ch;                              /* line-buffered command/expression input (non-blocking) */
-      if (HAL_UART_Receive(&huart1, &ch, 1, 0) == HAL_OK) {
+      if (huart1.Instance->ISR & USART_ISR_ORE) { huart1.Instance->ICR = USART_ICR_ORECF; }  /* clear overrun: the super-loop stalls ~ms during NPU inference so a byte can be missed; without this the ORE flag wedges HAL RX and the UART goes dead ("cannot write to it") */
+      if (huart1.Instance->ISR & USART_ISR_RXNE_RXFNE) {
+        ch = (uint8_t)(huart1.Instance->RDR & 0xFFU);   /* read straight from the UART; reading RDR clears the RX flag */
         if (ch == '\r' || ch == '\n') {
           cmd[cmdn] = '\0';
           if (cmdn > 0) {
@@ -438,9 +440,9 @@ int main(void)
               printf("\r\n[demo %s]\r\n", demo_on ? "on" : "off");
             } else {                             /* evaluate as an expression (the calculator grammar) */
               int ok = 0;
-              if (g_lvgl_ok) { lvgl_scene_set_prompt(cmd); lvgl_port_n6_run_once(); lvgl_port_n6_wait_idle(); }
-              long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, cmd, &ok);   /* NPU — display held */
-              if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "parse error"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }
+              if (g_lvgl_ok) { lvgl_scene_set_prompt(cmd); lvgl_port_n6_run_once(); }   /* show the prompt */
+              long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, cmd, &ok);   /* gates LTDC fetch per NPU epoch internally */
+              if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "parse error"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }   /* show the answer */
               if (ok) printf("\r\n= %ld\r\n", res);
               else  { printf("\r\nparse failed for \"%s\"\r\n", cmd); BSP_LED_On(LED_RED); }
             }
@@ -454,12 +456,13 @@ int main(void)
         demo_last = now;
         const char *expr = calc_demo[di]; di = (di + 1) % ndemo;
         int ok = 0;
-        /* GATED inference: show prompt on the L2 top, settle the LTDC swap (wait_idle = bare-metal
-         * stand-in for the reference's ThreadX display event-flag), run the NPU with the display held
-         * (no refresh in flight), then show the answer on the L2 bottom. */
-        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); lvgl_port_n6_wait_idle(); }
-        long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);
-        if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "ERROR"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }
+        /* GATED inference (ST-confirmed AXI-contention fix): show the prompt, then DISABLE the LTDC
+         * layer so it stops fetching the framebuffer while the NPU floods the shared AXI bus, run the
+         * NPU, re-ENABLE the layer, then show the answer. No LTDC fetch during inference -> no contention
+         * -> no live-scanout corruption. */
+        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); }   /* show the prompt (no NPU yet) */
+        long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);   /* gates the LTDC fetch per NPU epoch internally */
+        if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "ERROR"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }   /* show the answer */
         if (ok) printf("[hb %lu] %s = %ld\r\n", (unsigned long)g_heartbeat, expr, res);
         else  { printf("[hb %lu] %s -> ERROR\r\n", (unsigned long)g_heartbeat, expr); BSP_LED_On(LED_RED); }
       }
