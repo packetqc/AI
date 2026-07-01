@@ -19,6 +19,7 @@ extern void NPU_LogStep(int rule_idx, int pos, int tok_id, const char *piece);
 extern void lvgl_port_n6_display_freeze(int freeze);   /* per-epoch display gate: LTDC fetch off during the NPU run */
 extern volatile int g_lvgl_ok;                          /* 1 once the LVGL display is initialised */
 extern volatile int g_npu_quiet;                        /* 1 = suppress the per-token UART dialog ("just infer + display" experiment) */
+extern volatile int g_npu_gate;                         /* stage 2: 1 = per-epoch LTDC gate ON (old), 0 = gate DROPPED (default) */
 
 void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                    int rule_idx, char *out, int out_max)
@@ -56,16 +57,17 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
         mcu_cache_clean_range((uint32_t)(uintptr_t)in_buf,
                               (uint32_t)(uintptr_t)in_buf + (uint32_t)(C * L));
 
-        /* Per-epoch display gate REQUIRED. Test proved it: removing it left the LTDC fetching the front
-         * buffer during the NPU's AXI flood -> the live scanout corrupts continuously and the panel is
-         * blank all the time (ST mechanism: FB + LTDC regs stay intact, ISR underrun flag = 0, but the
-         * FETCHED pixels are wrong). The double-buffer fixes render-vs-read; this gate is the ONLY thing
-         * that fixes NPU-vs-read, by stopping the LTDC fetch (Layer1 off) for each epoch's ~ms. The
-         * per-epoch layer toggle is a brief flicker, but it is the mitigation given the FB must stay in
-         * shared PSRAM (no free non-NPU SRAM bank fits 768K). Between epochs the panel refreshes clean. */
-        if (g_lvgl_ok) lvgl_port_n6_display_freeze(1);
+        /* Per-epoch display gate — stage 2: now DROPPED by default (g_npu_gate=0). The gate was a
+         * stopgap that stopped the LTDC fetch (Layer1 off) for each epoch because, WITHOUT it and with
+         * D-cache OFF, the CPU working set + NPU AXI flood together starved the LTDC's PSRAM scanout ->
+         * continuous live-scanout corruption (FB + regs intact, underrun flag 0, but fetched pixels
+         * wrong). Stage 1 enabled D-cache, pulling the CPU working set off the AXI bus (the reference's
+         * low-traffic pattern), so the LTDC should now scan cleanly through the NPU's flood alone with
+         * NO gate and NO per-epoch flicker. g_npu_gate is left as a runtime A/B switch: set it to 1 via
+         * GDB to restore the old gate on-device (no reflash) and compare scanout cleanliness. */
+        if (g_lvgl_ok && g_npu_gate) lvgl_port_n6_display_freeze(1);
         int npu_run_ok = (stai_network_run(net, STAI_MODE_SYNC) == STAI_SUCCESS);
-        if (g_lvgl_ok) lvgl_port_n6_display_freeze(0);
+        if (g_lvgl_ok && g_npu_gate) lvgl_port_n6_display_freeze(0);
         if (!npu_run_ok)
         {
             strncpy(out, "[npu run err]", out_max - 1);

@@ -92,6 +92,14 @@ volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal livenes
  * on (=1) at the user's request. */
 volatile int      g_npu_quiet  = 1;
 
+/* Per-epoch LTDC display gate (flicker fix — stage 2). 0 = gate DROPPED (default, the reference's
+ * low-bus-traffic behavior: with stage-1 D-cache on the CPU working set is off the AXI bus, so the
+ * LTDC should scan the framebuffer cleanly straight through inference — no Layer1 toggling, no
+ * flicker). 1 = restore the old per-epoch gate (Layer1 fetch off around each NPU epoch) for A/B
+ * comparison. Runtime-togglable via GDB write_memory so the gate can be re-enabled on-device WITHOUT
+ * reflashing — flip it and re-run one inference to compare scanout cleanliness both ways. */
+volatile int      g_npu_gate   = 0;
+
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
 static uint8_t s_network_ctx[STAI_NETWORK_CONTEXT_SIZE];
