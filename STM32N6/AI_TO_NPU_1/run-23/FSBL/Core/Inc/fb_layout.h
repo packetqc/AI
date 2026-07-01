@@ -23,7 +23,7 @@
 #define FB_LAYOUT_H
 
 #ifndef FB_IN_SRAM
-#define FB_IN_SRAM 0
+#define FB_IN_SRAM 1
 #endif
 
 #if FB_IN_SRAM

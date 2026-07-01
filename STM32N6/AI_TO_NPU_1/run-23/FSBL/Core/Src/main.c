@@ -234,9 +234,11 @@ int main(void)
    * memory-mapped, copy the weights into AXISRAM, then clean the M55 D-cache so the Neural-ART reads
    * fresh weights over its AXI master. SIZE = network_weights.bin (526496 B) — re-flash 0x70200000
    * + update this size if the model changes. */
-  (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);            /* NOR readable (idempotent) */
-  memcpy((void *)0x34064000UL, (const void *)0x70200000UL, 526496UL);  /* flash NOR -> AXISRAM1 */
-  SCB_CleanDCache_by_Addr((uint32_t *)0x34064000UL, 526496);           /* NPU sees fresh weights */
+  (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);            /* NOR memory-mapped for XIP */
+  /* OPTION B (FB_IN_SRAM): the regenerated network reads its weights + epoch-controller blobs XIP
+   * from NOR @0x70000000 (ecloader) — NO copy to AXISRAM1, which is now the FB front bank. The
+   * legacy `memcpy(0x34064000 <- 0x70200000, 526496)` + D-cache clean are removed. Flash the
+   * regenerated NOR blob (network_regen/generated/atonbuf_xSPI2.bin) to 0x70000000. */
   g_boot_stage = 5;
 
   // RISAF_Config();
