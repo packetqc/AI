@@ -381,6 +381,21 @@ int main(void)
     PSRAM_Mpu();
   }
 
+  /* Reference low-bus-traffic mechanical (flicker fix — stage 1): now that PSRAM_Mpu() has marked the
+   * framebuffer window Normal-Non-Cacheable in an ENABLED MPU, turn the M55 L1 caches ON. This is the
+   * lever that lets the reference (N6_EDGEAI_1) run the NPU concurrently glitch-free on the same
+   * silicon: with D-cache on, the CPU working set (embedding Gather, token loop, LVGL heap in
+   * cacheable AXISRAM1) is absorbed by cache instead of flooding the AXI interconnect that the LTDC
+   * scans the framebuffer from — the root cause of the inference-time scanout starvation. Ordering is
+   * critical: the FB MUST already be non-cacheable (above) so LVGL's pixel writes never sit in cache
+   * for the LTDC to read stale; flush_cb's __DSB drains them to PSRAM before each swap. The NPU
+   * activation arena stays write-back, and the STAI runtime's mcu_cache_* hooks (self-gated on
+   * SCB->CCR.DC) now auto-invalidate the network output each epoch; the CPU-filled input is cleaned
+   * explicitly in npu_query.c. SCB_EnableDCache invalidates the whole D-cache before enabling, so
+   * prior uncached writes (weights memcpy, BSS) are already in memory — no stale lines. */
+  SCB_EnableICache();
+  SCB_EnableDCache();
+
   /* LCD: LTDC + Layer-1 @0x90000000 up (paints a brief R/G/B pattern). */
   LCD_Init();
 

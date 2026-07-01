@@ -10,6 +10,7 @@
 #include "npu_query.h"
 #include "network_embed.h"    /* g_embed_table[VOCAB*DIM], EMBED_DIM */
 #include "network_tokens.h"   /* g_tok_decode, g_rule_prompt, TOK_EOS_ID, ... */
+#include "mcu_cache.h"        /* self-gating M55 D-cache maintenance (no-op while D-cache off) */
 #include <string.h>
 
 /* Per-token CPU<->NPU dialog logger (implemented in grammar_runner.cpp via the C++
@@ -44,6 +45,16 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
             for (int c = 0; c < C; c++)
                 in_buf[c * L + l] = row[c];
         }
+
+        /* D-cache coherency (flicker fix — stage 1): the CPU just filled in_buf THROUGH the M55 cache,
+         * so clean it back to memory before the NPU reads the embedding over its AXI master — otherwise
+         * (once stage-1 enables D-cache) the NPU sees stale input and the answer is wrong. ST's own
+         * contract makes cleaning app-filled input buffers the application's responsibility; the runtime
+         * only invalidates the output (network.c). Self-gating: mcu_cache_clean_range checks SCB->CCR.DC,
+         * so this is a no-op while D-cache is off (today) and a real SCB_CleanDCache_by_Addr once it's on.
+         * in_buf holds C*L int8 = 8192 B (a multiple of the 32-B cache line). */
+        mcu_cache_clean_range((uint32_t)(uintptr_t)in_buf,
+                              (uint32_t)(uintptr_t)in_buf + (uint32_t)(C * L));
 
         /* Per-epoch display gate REQUIRED. Test proved it: removing it left the LTDC fetching the front
          * buffer during the NPU's AXI flood -> the live scanout corrupts continuously and the panel is
