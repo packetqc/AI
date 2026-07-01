@@ -480,6 +480,32 @@ int main(void)
      * off" — a line containing "demo" toggles the loop (off when it also contains "off"). Anything
      * else is evaluated as an expression on-chip via the nocode dispatch + NPU. Heartbeat (GREEN LED
      * + g_heartbeat) ticks throughout; RED lights only on an error. Demo runs by default at boot. */
+    /* ============================================================================================
+     * RUNTIME FRAMEWORK SELECT — bare-metal super-loop (default) vs ThreadX (reference framework)
+     *
+     *   RUN23_USE_THREADX 0  — BARE-METAL (CURRENT / STABLE)
+     *     The single super-loop below cooperatively runs everything: heartbeat, LVGL render (30 FPS
+     *     gated), UART CLI, and the demo (set_prompt → Grammar_Calc → set_answer). It WORKS and the UI is
+     *     correct, BUT the ~1 s SYNCHRONOUS NPU inference (Grammar_Calc) blocks the loop, so the heartbeat
+     *     and display FREEZE for that ~1 s each demo cycle. This is inherent to a bare-metal blocking
+     *     loop — it cannot be made fully fluid/continuous by render tuning alone (proven across the
+     *     g_npu_gate, dirty-region, 2-frame-propagation and 30 FPS-cap iterations). Known residual:
+     *     brief freeze / possible stale frame during inference.
+     *
+     *   RUN23_USE_THREADX 1  — THREADX (TARGET — port of the reference N6_EDGEAI_1 framework)
+     *     Skip the super-loop; fall through to MX_ThreadX_Init() → tx_kernel_enter() (never returns).
+     *     App_ThreadX_Init (app_threadx.c) spawns a dedicated ~30 FPS LVGL render thread that runs
+     *     CONTINUOUSLY, decoupled from a separate demo/inference thread — so inference never freezes the
+     *     display and the heartbeat stays fluid. LVGL 9.x is single-threaded: only the render thread
+     *     touches LVGL; the demo thread publishes expr/answer via shared state the render thread applies.
+     *     Option-B freed enough AXISRAM to host the kernel + thread stacks. (Port in progress.)
+     * ============================================================================================ */
+#ifndef RUN23_USE_THREADX
+#define RUN23_USE_THREADX 0
+#endif
+
+#if !RUN23_USE_THREADX
+    /* ---- BARE-METAL super-loop (status: STABLE; display + heartbeat freeze during the ~1 s inference) */
     uint32_t hb_last = HAL_GetTick(), demo_last = 0U, fb_last = 0U;
     int di = 0, demo_on = 1;
     char cmd[48]; int cmdn = 0;
@@ -538,6 +564,14 @@ int main(void)
         else  { printf("[hb %lu] %s -> ERROR\r\n", (unsigned long)g_heartbeat, expr); BSP_LED_On(LED_RED); }
       }
     }
+#else
+    /* ---- THREADX framework (RUN23_USE_THREADX=1) — all bring-up above ran bare-metal; now hand control
+     *      to the ThreadX kernel. tx_kernel_enter() never returns; App_ThreadX_Init (app_threadx.c)
+     *      spawns the continuous 30 FPS LVGL render thread + the demo/inference thread. (Port in
+     *      progress — needs the AZURE_RTOS/ middleware + app_threadx.* copied from the reference and the
+     *      SysTick/PendSV ThreadX timebase wired.) */
+    MX_ThreadX_Init();
+#endif  /* RUN23_USE_THREADX */
   }
   /* USER CODE END 2 */
 
