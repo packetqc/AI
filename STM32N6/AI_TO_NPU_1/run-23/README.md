@@ -114,6 +114,11 @@ arena consume the rest), so it would require reduced resolution or 8-bpp + CLUT.
 **Status:** resilient — clean between inferences, brief flicker during each epoch. Full glitch-free
 operation *during* inference is not yet achieved.
 
+**Ruled out (tested on device 2026-06-30):** silencing the per-token UART dialog (`g_npu_quiet=1`,
+"just infer + display") does **not** fix the glitch — it still happens. That confirms the glitch is
+the intrinsic per-*epoch* NPU↔LTDC AXI contention, independent of UART/CPU churn duration. The next
+lead is the reference's dirty-region update pattern + D-cache, not less terminal output.
+
 ## Debug notes (hard-won)
 
 - **SWD desync wall:** after `SystemClock_Config`'s supply/clock switch the ST-Link↔target link

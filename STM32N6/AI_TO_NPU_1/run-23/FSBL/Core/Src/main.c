@@ -85,7 +85,11 @@ volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal livenes
  * line PER TOKEN inside the token loop, and lv_timer_handler never runs during that loop — so the
  * logging only lengthens the window the panel spends in the gate-toggling flicker state. Silencing
  * it shortens each inference cycle (less flicker, less per-cycle degradation), matching the
- * reference's minimal-work-per-frame pattern. Set to 0 to restore the full oracle dialog. */
+ * reference's minimal-work-per-frame pattern. Set to 0 to restore the full oracle dialog.
+ * TESTED ON DEVICE 2026-06-30: does NOT fix the glitch — it still happens with quiet=1. Confirms
+ * the glitch is the intrinsic per-EPOCH NPU<->LTDC AXI contention, independent of UART/CPU churn
+ * duration. The real fix is the reference's dirty-region update pattern + D-cache (not this). Kept
+ * on (=1) at the user's request. */
 volatile int      g_npu_quiet  = 1;
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
