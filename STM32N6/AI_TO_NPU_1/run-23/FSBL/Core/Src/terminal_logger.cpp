@@ -31,13 +31,15 @@ const char* severity_name(Severity s)
 const char* severity_color(Severity s)
 {
     switch (s) {
-        case Severity::Debug:    return "\033[34m";       /* Blue        */
-        case Severity::Ok:       return "\033[32m";       /* Green       */
-        case Severity::Warning:  return "\033[38;5;226m"; /* True Yellow */
-        case Severity::Error:    return "\033[31m";       /* Red         */
-        case Severity::Info:     return "\033[37m";       /* Light Grey  */
-        case Severity::Critical: return "\033[38;5;208m"; /* Orange      */
-        case Severity::Notice:   return "\033[38;5;129m"; /* Purple      */
+        /* 16-color codes only — 256-color "\033[38;5;Nm" sequences contain ";5;" which minicom's
+         * limited parser misreads as the BLINK attribute (\033[5m). Use basic/bright colors instead. */
+        case Severity::Debug:    return "\033[34m";   /* Blue           */
+        case Severity::Ok:       return "\033[32m";   /* Green          */
+        case Severity::Warning:  return "\033[93m";   /* Bright Yellow  */
+        case Severity::Error:    return "\033[31m";   /* Red            */
+        case Severity::Info:     return "\033[37m";   /* Light Grey     */
+        case Severity::Critical: return "\033[91m";   /* Bright Red     */
+        case Severity::Notice:   return "\033[35m";   /* Magenta        */
     }
     return "";
 }
@@ -71,6 +73,22 @@ void TerminalLogger::log(Severity sev, const char* category, const char* message
     char time_str[16];
     format_time(time_str, sizeof(time_str));
 
+    /* Sanitize the message: blank out embedded control chars (esp. a bare '\r'). A mid-line carriage
+     * return makes the next log line overwrite this one from column 0; when the newer line is shorter
+     * it leaves this line's tail visible — the "blinking NOTICE" effect. The NPU grammar body can
+     * carry a "\r" token (network_tokens.c). Keep printable ASCII + UTF-8 bytes (>=0x20). */
+    char safe[256];
+    if (message) {
+        size_t j = 0;
+        for (size_t i = 0; message[i] != '\0' && j < sizeof(safe) - 1U; i++) {
+            unsigned char c = (unsigned char)message[i];
+            safe[j++] = (c >= 0x20U) ? (char)c : ' ';
+        }
+        safe[j] = '\0';
+    } else {
+        safe[0] = '\0';
+    }
+
     char line[320];
     const char* col   = color_ ? severity_color(sev) : "";
     const char* reset = color_ ? RESET : "";
@@ -80,7 +98,7 @@ void TerminalLogger::log(Severity sev, const char* category, const char* message
              col, time_str,
              severity_name(sev),
              category ? category : "",
-             message ? message : "",
+             safe,
              reset);
     emit(line);
 }
