@@ -94,17 +94,26 @@ volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal livenes
  * on (=1) at the user's request. */
 volatile int      g_npu_quiet  = 1;
 
-/* Per-epoch LTDC display gate. 1 = gate ON (default, REQUIRED): Layer1 fetch is disabled around each
- * NPU epoch so the LTDC stops contending for the shared AXI bus during inference. 0 = gate DROPPED.
- * ON-DEVICE PROOF (2026-07-01, IPEVO video A/B): with the gate OFF the panel suffers catastrophic
- * whole-screen scanline corruption during every inference (live-scanout starvation — FB bytes stay
- * correct, ISR/LEN look healthy, so it is INVISIBLE to SWD; only a camera sees it). Enabling stage-1
- * D-cache lowers CPU bus traffic but the NPU's own two 64-bit AXI masters alone still starve the LTDC
- * PSRAM scanout, so D-cache does NOT let the gate be dropped. Gate ON = clean apart from a mild
- * per-epoch dim. Runtime-togglable via GDB write_memory (D-cache-coherent through the MCP write) for
- * A/B testing. Real glitch-free path (reference-style, no gate) = cut LTDC PSRAM read bandwidth
- * (8bpp+CLUT or lower res) or an AXISRAM scanout buffer — see README § Display. */
-volatile int      g_npu_gate   = 1;
+/* Per-epoch LTDC display gate. 0 = gate OFF (default on option-B): the LTDC keeps scanning the
+ * framebuffer during inference. 1 = gate ON: Layer1 fetch is disabled (lvgl_port_n6_display_freeze)
+ * around the whole NPU inference so the LTDC stops contending for the shared AXI bus.
+ *
+ * HISTORY / WHY THE DEFAULT IS NOW OFF:
+ *  - On the LEGACY PSRAM framebuffer (FB_IN_SRAM=0), gate OFF caused catastrophic whole-screen scanline
+ *    corruption every inference — the NPU's two 64-bit AXI masters starved the LTDC's slow PSRAM
+ *    scanout (invisible to SWD; only a camera saw it). There the gate was REQUIRED.
+ *  - Option-B (FB_IN_SRAM=1) moves the double-buffer into dedicated NPU-free AXISRAM banks (front
+ *    AXISRAM1, back AXISRAM5-6) — this IS the "AXISRAM scanout buffer" reference fix. With the FB on
+ *    its own on-chip AXI slave ports + D-cache on, the LTDC scans cleanly THROUGH the inference:
+ *    camera A/B (2026-06, "bye flipper") showed ZERO glitch with the gate OFF and a clean calculator UI.
+ *  - With the gate ON, display_freeze() disables Layer1 for the ENTIRE stai_network_run(). That is
+ *    imperceptible when inference is ~ms (all-HW epochs) but the current network has SW-fallback conv
+ *    epochs that take ~2 s, so the gate blanks the panel to the bg tint for ~2 s every cycle — the
+ *    reported "screen goes blank for a lot of heartbeats then comes back". OFF removes that blank.
+ *
+ * Kept as a runtime A/B switch: set it to 1 via GDB write_memory (D-cache-coherent through the MCP
+ * write) to restore the old freeze-based gate on-device with no reflash. See MEMORY_MAP.md § Display. */
+volatile int      g_npu_gate   = 0;
 
 /* NOTE: interconnect QoS was tested as a config-only alternative to the gate and DISPROVEN on device
  * (2026-07-01, IPEVO camera): lowering the NPU's NPUNIC read QoS (SYSCFG->NPUNICQOSCR NPU1/NPU2
