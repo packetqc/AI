@@ -157,7 +157,7 @@ private:
             /* Host GrammarRunner._query_rule line (class_model_grammar.py:429):
              * "[model #N] <grammar> <rule> -> <answer>". The per-token CPU<->NPU
              * epochs that produced <answer> were logged from npu_query.c above. */
-            rlog().logf(llm::Severity::Info, "RUNNER",
+            rbuf().logf(llm::Severity::Info, "RUNNER",
                         "[model #%d] calculator %s " "\xe2\x86\x92" " %s",
                         ++interactions_, name.c_str(), body);
             /* playbook authoritative; the oracle line above is the visible model dialog */
