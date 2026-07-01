@@ -182,6 +182,12 @@ void DebugMon_Handler(void)
 /**
   * @brief This function handles Pendable request for system service.
   */
+/* Under ThreadX (RUN23_USE_THREADX=1) the kernel OWNS PendSV (context switch, tx_thread_schedule.S) and
+ * SysTick (the RTOS timer tick, tx_initialize_low_level.S), so the bare-metal handlers below are compiled
+ * out to avoid duplicate-symbol link errors. HAL_GetTick under ThreadX comes from the DWT-based tick
+ * (see main.c) which does not depend on SysTick. An undefined RUN23_USE_THREADX evaluates to 0 here, so
+ * the bare-metal build keeps these unchanged. */
+#if !RUN23_USE_THREADX
 void PendSV_Handler(void)
 {
   /* USER CODE BEGIN PendSV_IRQn 0 */
@@ -205,6 +211,7 @@ void SysTick_Handler(void)
 
   /* USER CODE END SysTick_IRQn 1 */
 }
+#endif /* !RUN23_USE_THREADX */
 
 /******************************************************************************/
 /* STM32N6xx Peripheral Interrupt Handlers                                    */

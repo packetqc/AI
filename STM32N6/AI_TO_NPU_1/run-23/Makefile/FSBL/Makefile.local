@@ -161,6 +161,37 @@ $(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
 endef
 $(foreach src,$(LVGL_SOURCES),$(eval $(call LVGL_BUILD_RULE,$(src))))
 
+# --- ThreadX (Azure RTOS) — OPT-IN via `make -f Makefile.local USE_THREADX=1`. Default (unset) keeps the
+#     proven bare-metal build byte-identical: no ThreadX sources compiled, RUN23_USE_THREADX stays 0 (the
+#     main.c fallback #define), and the bare-metal SysTick/PendSV handlers in stm32n6xx_it.c stay live.
+#     With USE_THREADX=1: compile the kernel (common/src) + the Cortex-M55 GNU port asm + the run-23 app,
+#     define RUN23_USE_THREADX=1 (main() hands off to MX_ThreadX_Init) and TX_SINGLE_MODE_SECURE (the FSBL
+#     runs secure-only, so the port skips the NS<->S secure-stack switching). ---
+ifeq ($(USE_THREADX),1)
+TX_DIR      = ../../FSBL/Middlewares/ST/threadx
+C_DEFS     += -DRUN23_USE_THREADX=1 -DTX_INCLUDE_USER_DEFINE_FILE -DTX_SINGLE_MODE_SECURE
+C_INCLUDES += -I$(TX_DIR)/common/inc -I$(TX_DIR)/ports/cortex_m55/gnu/inc -I../../FSBL/AZURE_RTOS/App
+TX_C_SOURCES = $(shell find $(TX_DIR)/common/src -name '*.c') \
+  ../../FSBL/Core/Src/app_threadx.c \
+  ../../FSBL/AZURE_RTOS/App/app_azure_rtos.c
+TX_S_SOURCES = $(shell find $(TX_DIR)/ports/cortex_m55/gnu/src -name '*.S') \
+  ../../FSBL/Core/Src/tx_initialize_low_level.S
+TX_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(TX_C_SOURCES:.c=.o))) \
+             $(addprefix $(BUILD_DIR)/,$(notdir $(TX_S_SOURCES:.S=.o)))
+OBJECTS   += $(TX_OBJECTS)
+$(BUILD_DIR)/$(TARGET).elf: $(TX_OBJECTS)
+define TX_C_RULE
+$(BUILD_DIR)/$(notdir $(1:.c=.o)): $(1) Makefile | $(BUILD_DIR)
+	$$(CC) -c $$(CFLAGS) $$< -o $$@
+endef
+$(foreach src,$(TX_C_SOURCES),$(eval $(call TX_C_RULE,$(src))))
+define TX_S_RULE
+$(BUILD_DIR)/$(notdir $(1:.S=.o)): $(1) Makefile | $(BUILD_DIR)
+	$$(CC) -c $$(CFLAGS) $$< -o $$@
+endef
+$(foreach src,$(TX_S_SOURCES),$(eval $(call TX_S_RULE,$(src))))
+endif
+
 # --- durable linker (CubeMX regenerates STM32N657XX_AXISRAM2_fsbl.ld; this frozen copy keeps the NPU layout) ---
 LDSCRIPT := STM32N657XX_fsbl_custom.ld
 # the generated link rule doesn't list the linker script as a prereq, so .ld edits

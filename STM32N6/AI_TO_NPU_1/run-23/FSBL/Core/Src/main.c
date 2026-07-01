@@ -167,6 +167,24 @@ extern void NPU_SetVerbose(int on);          /* per-token NPU dialog toggle (gra
 
 /* USER CODE END 0 */
 
+#if RUN23_USE_THREADX
+void MX_ThreadX_Init(void);   /* app_threadx.c — tx_kernel_enter(), never returns */
+
+/* ThreadX demo-thread hook (app_threadx.c calls this). Runs one NPU inference on this unit's g_network
+ * and formats the answer the demo used to build inline ("= N" / "ERROR"). Grammar_Calc blocks ~1 s, but
+ * under ThreadX that stalls only the low-priority demo thread — the render thread keeps the UI fluid. */
+void run23_infer(const char *expr, char *out, int out_sz)
+{
+    int ok = 0;
+    stai_ptr in_buf = NULL, out_buf = NULL; stai_size n = 0;
+    stai_network_get_inputs(g_network, &in_buf, &n);
+    stai_network_get_outputs(g_network, &out_buf, &n);
+    long res = Grammar_Calc(g_network, (int8_t *)in_buf, (const int8_t *)out_buf, expr, &ok);
+    if (ok) snprintf(out, (size_t)out_sz, "= %ld", res);
+    else    snprintf(out, (size_t)out_sz, "ERROR");
+}
+#endif /* RUN23_USE_THREADX */
+
 /**
   * @brief  The application entry point.
   * @retval int

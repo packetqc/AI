@@ -42,6 +42,7 @@ MEMORY
   RAM          (xrw) : ORIGIN = 0x341F3400, LENGTH = 50K   /* AXISRAM2: FSBL data+bss+stack (460K+50K fits within 1MB AXISRAM2) */
   WEIGHTS_RAM  (xrw) : ORIGIN = 0x34064000, LENGTH = 624K  /* AXISRAM1 (cpuRAM1): boot-ROM-active (GDB-loadable) — atonn HW weights blob baked @0x34064000 */
   AI_RAM       (xrw) : ORIGIN = 0x34200000, LENGTH = 512K  /* AXISRAM3: AI activations */
+  THREADX_RAM  (xrw) : ORIGIN = 0x34100000, LENGTH = 480K  /* free low AXISRAM2 (option-B XIPs weights from NOR, so this bank is unused): ThreadX byte pool + kernel .bss */
   NOR_FLASH    (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* XSPI2 NOR: AI weights (memory-mapped) */
   WEIGHTS_SRAM (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* alias: atonn-generated section name */
 }
@@ -234,6 +235,22 @@ SECTIONS
   PROVIDE( __tls_size_align = (__tls_size + __tls_align - 1) & ~(__tls_align - 1) );
   PROVIDE( __arm32_tls_tcb_offset = MAX(8, __tls_align) );
   PROVIDE( __arm64_tls_tcb_offset = MAX(16, __tls_align) );
+
+  /* ThreadX (Azure RTOS) memory → free low AXISRAM2, off the tight FSBL RAM region. Placed BEFORE .bss
+   * so the ThreadX kernel + app .bss/COMMON match HERE first and the generic .bss below takes the rest.
+   * NOLOAD: zero-init by ThreadX/startup, nothing to load. Only present in the USE_THREADX=1 build; the
+   * bare-metal build emits no .threadx_pool/tx_*.o so these sections are empty. */
+  .threadx_pool (NOLOAD) : ALIGN(8)
+  {
+    *(.threadx_pool)
+  } >THREADX_RAM
+
+  .threadx_bss (NOLOAD) : ALIGN(8)
+  {
+    *tx_*.o(.bss .bss* COMMON)
+    *app_threadx.o(.bss .bss* COMMON)
+    *app_azure_rtos.o(.bss .bss* COMMON)
+  } >THREADX_RAM
 
   .bss (NOLOAD) : ALIGN(4)
   {
