@@ -38,21 +38,37 @@ PSRAM staging stalls the scanout on a miss — which is precisely the starvation
 The FB must therefore be **fully resident in directly-LTDC-scannable SRAM**. Everything else may lean
 on PSRAM+cache to free SRAM for it.
 
-## ✅ Perfect fit — everything in SRAM, PSRAM optional
+## Target — double-buffer, full-color, 100% SRAM (the reference pattern)
 
-Total on-chip AXISRAM **4.12 MB** vs the full working set:
+> **Requirement:** the solution is **double-buffered** (keep the tear-free vsync swap) and full-color
+> RGB565. Single-buffer is **not** an acceptable solution — at most a throwaway bring-up sanity check.
+> This layout is intended as the **reference memory architecture for future LVGL bare-metal + NPU
+> projects on STM32N6.**
 
-| Config | FSBL+heap | NPU (weights+activ.) | FB | **Total** | Fits 4.12 MB? |
-|---|---|---|---|---|---|
-| **Single-buffer** | 766 K | 1040 K | 768 K | **2.57 MB** | ✅ **today, no re-gen** |
-| **Double-buffer** | 766 K | 1040 K | 1536 K | **3.34 MB** | ✅ with NPU re-pack |
+Total on-chip AXISRAM **4.12 MB** vs the full double-buffer working set:
 
-- **Single-buffer, 100% SRAM, no re-gen:** FB → AXISRAM5-6; weights stay AXISRAM1, activations AXISRAM3. **PSRAM entirely unused** for the working set → the contention source is gone.
-- **Double-buffer, 100% SRAM:** re-gen the NPU to pack weights+activations into AXISRAM3-4-7 (weights no longer need CACHEAXI since they're on-chip), freeing AXISRAM1 for FB-front; FB-back in AXISRAM5-6. Still **no PSRAM** — the true perfect fit.
+| Consumer | Size | Bank (target) |
+|---|---|---|
+| FB **front** (LTDC scans) | 768 K | **AXISRAM1** `0x34000000` |
+| FB **back** (LVGL draws) | 768 K | **AXISRAM5-6** `0x342E0000` |
+| FSBL code+data+stack | 510 K | AXISRAM2 |
+| LVGL heap | 256 K | AXISRAM2 |
+| NPU activations | 514 K | AXISRAM3(+4) |
+| NPU weights | 526 K | AXISRAM4/7 (on-chip) **or** PSRAM+CACHEAXI |
+| **Total** | **3.34 MB** | ✅ < 4.12 MB |
 
-The PSRAM-assist (weights in PSRAM + CACHEAXI middle buffer) from Tier 2 is only a fallback if the NPU
-re-pack proves awkward. **If it all fits in SRAM, we keep it 100% on-chip and drop PSRAM from the
-critical path entirely.**
+**The one prerequisite:** both FB buffers need a dedicated ≥768 K bank each, so **AXISRAM1 must be
+freed of the NPU weights** (front buffer goes there). Two ways, both need a network re-gen because the
+weight base is baked into the compiled network:
+
+- **(B) 100% SRAM — preferred for the reference:** re-pack weights+activations into AXISRAM3-4-7. No
+  PSRAM at all → the cleanest, most portable pattern (works on N6 parts without PSRAM populated).
+- **(A) FB-in-SRAM, weights in PSRAM+CACHEAXI:** simpler re-gen (weights pool → PSRAM `0x90000000`,
+  cached by SRAM7). FB is still 100% SRAM; only the bursty weights lean on PSRAM (allowed by the
+  design principle above). Good fallback if (B)'s re-pack is awkward.
+
+Either way the **framebuffer is 100% in dedicated NPU-free SRAM banks**, double-buffered — that is the
+reusable pattern.
 
 ## Bank sizes (RM0486 Table 2)
 
@@ -132,13 +148,20 @@ scanout path → no starvation, full color, 60 Hz, no gate. This is the referenc
 
 ## Change set to implement
 
+All steps are **additive** on top of the stabilized D-cache + gate build — the gate stays as a runtime
+fallback (`g_npu_gate`), never deleted; D-cache, the input-clean coherency, and the line-event vsync
+swap are untouched. FB base becomes a config, not a rewrite.
+
 | Step | Change | Risk |
 |---|---|---|
-| Enable banks | ensure AXISRAM4/5/6 powered (`RAMCFG`, they can be shut down in Run mode) | low |
-| RISAF | grant LTDC master read access to the FB bank(s) | low |
-| **Tier 1** | FB single-buffer → `0x342E0000` (AXISRAM5-6); LTDC CFBAR + `lv_conf.h`/`lcd.c` | low — validates the whole theory |
-| **Tier 2a** | weights: drop the `memcpy` to AXISRAM1; run from **PSRAM** `0x90000000` (faster than NOR XIP), cached by CACHEAXI. Needs atonn re-gen with weights pool = xSPI1/PSRAM | medium |
-| **Tier 2b** | FB double-buffer: front `0x34000000` (AXISRAM1), back `0x342E0000` (AXISRAM5-6) | low |
+| Enable banks | ensure AXISRAM1/4/5/6 powered (`RAMCFG` — AXISRAM2-6 can be shut down in Run mode) | low |
+| RISAF | grant LTDC master read access to the FB banks (AXISRAM1 + AXISRAM5-6) | low |
+| Port | `lvgl_port_n6`: take **explicit front + back FB addresses** (instead of front + fixed +1 MB offset) so the two buffers can sit in different banks | low |
+| **Re-gen** | free AXISRAM1: atonn mempool → **(B)** weights+activations in AXISRAM3-4-7 (100% SRAM), or **(A)** weights → PSRAM+CACHEAXI. *User step (AI Studio); then `/regen-fix`.* | medium |
+| **Deliver** | FB double-buffer: front `0x34000000` (AXISRAM1), back `0x342E0000` (AXISRAM5-6); drop the weights `memcpy` to `0x34064000` | low |
+| Verify | on-camera A/B, gate off — scanout clean through inference at full color | — |
+| Retire gate | once proven, default `g_npu_gate=0` (code kept as fallback) | low |
 
-**Validate Tier 1 first** (single buffer in AXISRAM5-6) — it proves FB-in-SRAM kills the glitch with
-the smallest change, before the weights→PSRAM re-gen for the full double-buffer.
+**Optional bring-up sanity check (not the solution):** a temporary single-buffer at `0x342E0000` can
+confirm the LTDC scans AXISRAM cleanly before the re-gen — but the delivered solution is always the
+double-buffer above.
