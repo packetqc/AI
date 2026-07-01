@@ -20,6 +20,40 @@
 **Verdict:** a 768 K single-buffer FB fits in on-chip SRAM today with no NPU/FSBL/weights change;
 a 1.5 MB double-buffer FB fits by relocating the weights out of AXISRAM1 (→ PSRAM, cached).
 
+## Design principle — what can be PSRAM-assisted, what must be 100% SRAM
+
+The system may exceed on-chip SRAM overall by keeping **burst/cacheable data in PSRAM and staging it
+through on-chip SRAM as a middle buffer** (the CACHEAXI/SRAM7 cache) — this is fine for anything
+accessed in bursts:
+
+| Data | Access pattern | Home | On-chip assist |
+|---|---|---|---|
+| **NPU weights** | loaded per inference, cacheable | **PSRAM** `0x90000000` (faster than NOR) | **CACHEAXI / SRAM7** = the SRAM middle buffer |
+| NPU activations | working set, hot | AXISRAM3-4 (on-chip) | — |
+| **Display framebuffer** | **continuous scanout, every scanline, 60 Hz** | **100% on-chip SRAM (AXISRAM)** | **none — CANNOT be PSRAM-staged** |
+
+**The framebuffer is the one thing that cannot use the PSRAM-assisted / SRAM-middle-buffer scheme.**
+The LTDC re-reads the *entire* frame continuously; there is no burst locality to cache, so any
+PSRAM staging stalls the scanout on a miss — which is precisely the starvation glitch we are removing.
+The FB must therefore be **fully resident in directly-LTDC-scannable SRAM**. Everything else may lean
+on PSRAM+cache to free SRAM for it.
+
+## ✅ Perfect fit — everything in SRAM, PSRAM optional
+
+Total on-chip AXISRAM **4.12 MB** vs the full working set:
+
+| Config | FSBL+heap | NPU (weights+activ.) | FB | **Total** | Fits 4.12 MB? |
+|---|---|---|---|---|---|
+| **Single-buffer** | 766 K | 1040 K | 768 K | **2.57 MB** | ✅ **today, no re-gen** |
+| **Double-buffer** | 766 K | 1040 K | 1536 K | **3.34 MB** | ✅ with NPU re-pack |
+
+- **Single-buffer, 100% SRAM, no re-gen:** FB → AXISRAM5-6; weights stay AXISRAM1, activations AXISRAM3. **PSRAM entirely unused** for the working set → the contention source is gone.
+- **Double-buffer, 100% SRAM:** re-gen the NPU to pack weights+activations into AXISRAM3-4-7 (weights no longer need CACHEAXI since they're on-chip), freeing AXISRAM1 for FB-front; FB-back in AXISRAM5-6. Still **no PSRAM** — the true perfect fit.
+
+The PSRAM-assist (weights in PSRAM + CACHEAXI middle buffer) from Tier 2 is only a fallback if the NPU
+re-pack proves awkward. **If it all fits in SRAM, we keep it 100% on-chip and drop PSRAM from the
+critical path entirely.**
+
 ## Bank sizes (RM0486 Table 2)
 
 | Bank | Address | Size | Port |
