@@ -16,6 +16,7 @@
  */
 #include "app_threadx.h"
 #include "app_azure_rtos.h"
+#include "lvgl.h"            /* lv_mem_monitor — heap telemetry */
 #include "lvgl_port_n6.h"
 #include "lvgl_scene.h"
 #include "stm32n6570_discovery.h"   /* BSP_LED_Toggle */
@@ -51,6 +52,14 @@ static TX_THREAD s_demo_thread;
 extern volatile int           g_lvgl_ok;
 extern volatile unsigned long g_heartbeat;
 
+/* SWD-readable LVGL heap telemetry (leak hunt). If g_lv_free_min trends DOWN over minutes, the heap is
+ * leaking → after a while glyph-draw allocs fail → text stops rendering while shapes still draw (the
+ * observed "blank after ~13 min, firmware alive"). Read these live via read_memory. */
+volatile uint32_t g_lv_free_now = 0;   /* current free bytes */
+volatile uint32_t g_lv_free_min = 0xFFFFFFFFU; /* lowest free ever seen */
+volatile uint8_t  g_lv_used_pct = 0;
+volatile uint8_t  g_lv_frag_pct = 0;
+
 /* Provided by main.c — wraps Grammar_Calc + the network/IO buffers (kept in main's scope). */
 extern void run23_infer(const char *expr, char *out, int out_sz);
 
@@ -73,6 +82,13 @@ static void render_thread_entry(ULONG arg)
                 hb_last = now;
                 g_heartbeat++;
                 BSP_LED_Toggle(LED_GREEN);
+                /* Sample the LVGL heap every 500 ms (this thread is the LVGL owner). */
+                lv_mem_monitor_t mon;
+                lv_mem_monitor(&mon);
+                g_lv_free_now = (uint32_t)mon.free_size;
+                if (g_lv_free_now < g_lv_free_min) g_lv_free_min = g_lv_free_now;
+                g_lv_used_pct = (uint8_t)mon.used_pct;
+                g_lv_frag_pct = (uint8_t)mon.frag_pct;
             }
             lvgl_scene_tick(frame, g_heartbeat);
             lvgl_port_n6_run_once();
