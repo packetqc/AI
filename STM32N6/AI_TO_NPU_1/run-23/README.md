@@ -112,13 +112,22 @@ Flashed via `load_and_run`. Recorded the panel with a camera and ran a gate on/o
   artifact — FB bytes stay correct, so `ISR=0`, `LayerCR.LEN=1`, and the trace ring all look clean. It
   is **invisible to SWD**; only a camera on the panel reveals it. (Lesson: board-proves-behavior.)
 
-### Real glitch-free path (no gate) — open
+### Accepted solution + what was ruled out
 
-The reference (N6_EDGEAI_1) runs the NPU concurrently with no gate; run-23 cannot yet match that. The
-remaining lever is LTDC PSRAM **read bandwidth**: 8bpp + CLUT (halves scanout traffic) or reduced
-resolution, or a full-res on-chip AXISRAM scanout buffer (doesn't fit today — weights + heap + NPU
-arena consume it). Needs investigation of why the reference's identical PSRAM scanout survives (LTDC
-pixel clock / porch timings / model AXI pattern).
+**The per-epoch display gate (`g_npu_gate=1`) + D-cache is the solution** — clean display with a mild
+per-epoch dim during inference. The LTDC config is byte-identical to the reference (N6_EDGEAI_1); the
+difference is workload — run-23 runs a sustained ~135-epoch autoregressive loop, the reference does
+single-shot inference the LTDC FIFO survives.
+
+**Interconnect QoS — tested, DISPROVEN (2026-07-01).** `SYSCFG->NPUNICQOSCR` (`0x56008028`) sets the
+NPU's NPUNIC read/write QoS. Lowering NPU read QoS default→2→0 (camera A/B, gate off) did **not** stop
+the corruption — it is bandwidth saturation, not priority arbitration. (Note: the FSBL disables the
+SYSCFG clock after system init, so `__HAL_RCC_SYSCFG_CLK_ENABLE()` is required before touching that
+register or the boot faults at boot_stage=8.)
+
+**Truly gate-free (open, needs hardware headroom):** put the framebuffer in uncontended on-chip
+AXISRAM (768 KB doesn't fit the ~256 KB free — would need 8bpp+CLUT or reduced resolution), or throttle
+the NPU (slows inference). Not achievable within current memory constraints.
 
 **Ruled out (2026-06-30):** silencing the per-token UART dialog (`g_npu_quiet=1`) did **not** fix the
 glitch — it is intrinsic per-*epoch* NPU↔LTDC AXI contention, not CPU/UART churn.
