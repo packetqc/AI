@@ -88,36 +88,38 @@ Characterised live over SWD:
 - **Not framebuffer-memory corruption** — a vblank trace ring showed the FB bytes, `CFBAR`, and layer regs all intact during inference.
 - **It is live-scanout disturbance** — the LTDC's real-time PSRAM fetch is starved by the NPU's AXI flood, so the *fetched* pixels are transiently wrong even though the memory is correct. LTDC AXI QoS is already maxed (no register lever — confirmed vs AN4861 / RM0486).
 
-### Mitigations in this build
+### Coexistence design — the reference low-bus-traffic mechanical (implemented)
+
+Rather than fight the contention with a gate, run-23 now matches how the reference (N6_EDGEAI_1) stays
+glitch-free on the same silicon: keep the AXI bus quiet during inference.
 
 1. **Double-buffer + line-event vsync swap** — LVGL renders the back buffer; the LTDC line-event ISR swaps `CFBAR` at vblank ([lvgl_port_n6.c](FSBL/Display/lvgl_port_n6.c)). Removes render-vs-read tearing.
-2. **Per-epoch display gate** — Layer 1 is disabled around each `stai_network_run` epoch so the LTDC stops fetching during the NPU's AXI flood ([npu_query.c:47-56](FSBL/AI/npu_query.c#L47-L56)). Brief per-epoch flicker; the panel recovers cleanly between epochs. **Proven required** — removing it leaves the panel blank during inference.
-3. **MPU Normal-Non-Cacheable** over the PSRAM FB (`0x44`, [psram.c](FSBL/Core/Src/psram.c)) + D-cache off — the LTDC always reads fresh pixels.
+2. **M55 D-cache ON + FB Non-Cacheable** — `SCB_EnableI/DCache()` right after `PSRAM_Mpu()` marks the FB `0x44` Normal-Non-Cacheable ([main.c](FSBL/Core/Src/main.c), [psram.c](FSBL/Core/Src/psram.c)). The CPU working set (embedding Gather, token loop, LVGL heap in cacheable AXISRAM1) is absorbed by cache instead of flooding the interconnect the LTDC scans from — the actual root-cause lever. FB stays non-cacheable so the LTDC never reads stale lines; `flush_cb`'s `__DSB` drains pixel writes before each swap.
+3. **NPU I/O coherency** — with D-cache on, `mcu_cache_clean_range(in_buf)` after the embedding Gather cleans the CPU-filled input before the NPU reads it ([npu_query.c](FSBL/AI/npu_query.c)); the STAI runtime invalidates the output. Self-gating on `SCB->CCR.DC` (no-op if D-cache off).
+4. **Per-epoch gate dropped** — the Layer-1 fetch gate around each `stai_network_run` is now off by default (`g_npu_gate=0`). Retained as a runtime A/B switch: set `g_npu_gate=1` via GDB `write_memory` to restore the old gate on-device without reflashing.
 
 ### Why the reference (N6_EDGEAI_1) doesn't show this
 
 The reference **also** scans LTDC directly from PSRAM (`0x90000000` / `0x900C0000`) — it has **no**
-AXISRAM scanout buffer — yet runs the NPU concurrently glitch-free with **no gate**. The difference is
-bus pressure, not architecture: the reference updates only a tiny dynamic L2 overlay per frame
-(dirty-region) and keeps D-cache on, whereas run-23 does a full-screen repaint every frame and runs a
-relentless per-token NPU loop. Same silicon, far more contention on our side — which is why the
-reference's identical PSRAM path never exposes it.
+AXISRAM scanout buffer — yet runs the NPU concurrently glitch-free with **no gate**. The difference was
+bus pressure, not architecture: it keeps D-cache on and updates only a small dynamic region per frame,
+whereas run-23 previously ran with D-cache **off**. Stage 1 closes that gap.
 
-### Recommended resolution (next step)
+### Status — on-device verified 2026-07-01 (branch `lvgl`, commits `6ff1ea7` + `ae28c2d`)
 
-Match the reference's low-bus-traffic pattern rather than fight it with the gate: enable D-cache, keep
-the MPU `0x44` region, and replace the full-screen invalidate with dirty-region / small-dynamic-layer
-updates — then drop the per-epoch gate. A full-res on-chip **AXISRAM scanout** buffer is the other
-option, but a 750 KB frame does not fit the ~256 KB of free contiguous AXISRAM (weights + heap + NPU
-arena consume the rest), so it would require reduced resolution or 8-bpp + CLUT.
+Flashed via `load_and_run`, gate off. Verified over SWD + VCP:
+- **Correctness (D-cache coherency holds):** boot self-test `3 + 4 = 7`, then the demo loop computes
+  `12 - 5 = 7`, `6 * 7 = 42`, `8 / 2 = 4` — every multi-epoch NPU inference correct with D-cache ON.
+- **Gate genuinely dropped:** `g_npu_gate=0`; the LTDC vblank trace ring shows `LayerCR.LEN=1` on
+  every traced vblank (never gated off), `ISR=0` (no underrun ever), `CFBAR` valid with live
+  double-buffer swaps. Display loop alive through inference (108 M loops, 226 flushes, 4378 vblanks).
+- **Pending:** the final *visual* confirmation of scanout cleanliness during inference — by the
+  glitch's nature (FB bytes stay correct, the LTDC *fetch* is transiently starved) it is invisible to
+  SWD and requires a camera on the panel.
 
-**Status:** resilient — clean between inferences, brief flicker during each epoch. Full glitch-free
-operation *during* inference is not yet achieved.
-
-**Ruled out (tested on device 2026-06-30):** silencing the per-token UART dialog (`g_npu_quiet=1`,
-"just infer + display") does **not** fix the glitch — it still happens. That confirms the glitch is
-the intrinsic per-*epoch* NPU↔LTDC AXI contention, independent of UART/CPU churn duration. The next
-lead is the reference's dirty-region update pattern + D-cache, not less terminal output.
+**Ruled out (2026-06-30):** silencing the per-token UART dialog (`g_npu_quiet=1`) did **not** fix the
+glitch — confirming it is intrinsic per-*epoch* NPU↔LTDC AXI contention, which is why the fix targets
+bus traffic (D-cache) rather than CPU churn duration.
 
 ## Debug notes (hard-won)
 
