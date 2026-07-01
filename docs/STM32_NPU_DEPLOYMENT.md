@@ -381,6 +381,20 @@ not the model**:
 With both in place the epoch completes and the device answers `3 + 4 = 7`. (The model swap to the TCN
 was necessary for a 100%-pure-hardware mapping, but it was **not** what unblocked the epoch.)
 
+### Display coexistence (LVGL + NPU) — the key finding
+
+`run-23` also drives the 800×480 LTDC panel with an LVGL calculator UI. A live-scanout glitch appears
+**exactly during inference**, and the diagnosis is worth carrying forward: **the NPU never touches
+PSRAM** — weights are in AXISRAM1 (`0x34064000`), activations in AXISRAM3 (`.AI_RAM` @ `0x34200000`),
+with no `0x9…` address anywhere in the `ll_aton` config. The only master in PSRAM is the LTDC
+framebuffer. So the glitch is **not** a shared-PSRAM fight and **not** an LTDC underrun (`LTDC_S->ISR`
+reads `0` live) and **not** FB-memory corruption (FB bytes stay intact) — it is the LTDC's real-time
+PSRAM fetch being starved by the NPU's two 64-bit AXI masters on the shared interconnect. The
+reference (N6_EDGEAI_1) scans PSRAM the same way but never exposes it because it barely touches the
+bus per frame. Full analysis, mitigations (double-buffer + vsync swap, per-epoch gate, MPU `0x44`),
+and the recommended fix (match the reference's dirty-region update pattern; AXISRAM scanout doesn't
+fit at full res): **[run-23 README § Display](../STM32N6/AI_TO_NPU_1/run-23/README.md#display--lvgl-calculator-ui--npu-coexistence)**.
+
 ---
 
 ## Roadmap — host-built custom edge-AI models on the NPU
