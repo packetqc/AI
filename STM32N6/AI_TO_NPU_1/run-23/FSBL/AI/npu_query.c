@@ -44,11 +44,13 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                 in_buf[c * L + l] = row[c];
         }
 
-        /* Per-UNIT-inference display gate: drop the LTDC framebuffer fetch for THIS one NPU epoch, then
-         * restore it — panel refreshes between the many epochs of a generation. LTDC + Neural-ART share
-         * the AXI bus (AN4861/RM0486); with the fetch off for the ~ms this epoch runs there is no
-         * contention. (Spatial segmentation into AXISRAM was tried but AXISRAM3-6 is the NPU arena, so
-         * the FB must stay in shared PSRAM and this temporal gate is the mitigation.) */
+        /* Per-epoch display gate REQUIRED. Test proved it: removing it left the LTDC fetching the front
+         * buffer during the NPU's AXI flood -> the live scanout corrupts continuously and the panel is
+         * blank all the time (ST mechanism: FB + LTDC regs stay intact, ISR underrun flag = 0, but the
+         * FETCHED pixels are wrong). The double-buffer fixes render-vs-read; this gate is the ONLY thing
+         * that fixes NPU-vs-read, by stopping the LTDC fetch (Layer1 off) for each epoch's ~ms. The
+         * per-epoch layer toggle is a brief flicker, but it is the mitigation given the FB must stay in
+         * shared PSRAM (no free non-NPU SRAM bank fits 768K). Between epochs the panel refreshes clean. */
         if (g_lvgl_ok) lvgl_port_n6_display_freeze(1);
         int npu_run_ok = (stai_network_run(net, STAI_MODE_SYNC) == STAI_SUCCESS);
         if (g_lvgl_ok) lvgl_port_n6_display_freeze(0);

@@ -45,21 +45,61 @@ static uint32_t lvgl_tick_cb(void)
     return ms;
 }
 
+/* Pending FB address handed from lvgl_flush_cb (super-loop) to the LTDC line-event ISR, which swaps
+ * CFBAR at the next vblank. 0 = nothing pending. Atomic 32-bit r/w on Cortex-M55. (Reference pattern.) */
+volatile uint32_t s_ltdc_pending_fb = 0;
+
+/* SWD-readable LTDC state trace ring — catch the transient inference glitch ON THE FLY without halting.
+ * Every vblank (line-event ISR) we snapshot {CFBAR, ISR, LayerCR, pending_fb}. After a glitch, read
+ * g_ltdc_trace_idx (newest = (idx-1)&63) and g_ltdc_trace[] via SWD to see the degradation history. */
+volatile uint32_t g_ltdc_trace[64][4];
+volatile uint32_t g_ltdc_trace_idx = 0;
+
 static void lvgl_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    /* SINGLE-BUFFER DIRECT: LVGL renders straight into the ONE framebuffer the LTDC scans (fb_addr,
-     * programmed as LTDC_Layer1->CFBAR in LCD_Init). There is NO ping-pong buffer, so there is NO swap
-     * to time and NO swap-race — the blank/"losing layout" came from the flush requesting a swap the
-     * LTDC hadn't completed, letting LVGL draw into the buffer being scanned. The reference does
-     * tear-free double-buffering from the LTDC LINE-EVENT ISR; run-23 has LTDC IRQs disabled (the
-     * error-IRQ hang fix), so we take the simpler robust route: one buffer, no swap. __DSB drains the
-     * CPU pixel writes to the (MPU non-cacheable) PSRAM framebuffer before LVGL marks the flush done,
-     * so the LTDC DMA sees fresh pixels. Only the small regions that change each frame can tear. */
-    (void)px_map;
+    /* DOUBLE-BUFFER DIRECT: LVGL rendered a full frame into the INACTIVE buffer (px_map). Hand its base
+     * to the LTDC line-event ISR to swap CFBAR at the next vblank — the LTDC never DMA-reads a buffer
+     * being drawn, and the CPU never writes the buffer the LTDC is scanning. That removes the
+     * render-vs-LTDC-read contention (the "full-screen refresh conflict"): the CPU always writes the
+     * BACK buffer while the LTDC reads the FRONT. __DSB drains the pixel writes to the MPU-non-cacheable
+     * PSRAM before the swap. */
     (void)area;
-    __DSB();
+    if (lv_display_flush_is_last(disp)) {
+        __DSB();
+        s_ltdc_pending_fb = (uint32_t)px_map;
+    }
     lvgl_port_n6_flush_count++;
     lv_display_flush_ready(disp);
+}
+
+/* LTDC line-event callback — fires at the start of vblank (line fb_height+1). Applies the pending swap
+ * via a VBlank reload (atomic, tear-free), then re-arms the line event. HAL calls this from
+ * HAL_LTDC_IRQHandler on the line interrupt. */
+void HAL_LTDC_LineEventCallback(LTDC_HandleTypeDef *h)
+{
+    (void)h;
+    /* On-the-fly trace: snapshot the live LTDC swap state each vblank (see g_ltdc_trace above). */
+    uint32_t ti = g_ltdc_trace_idx & 63U;
+    g_ltdc_trace[ti][0] = LTDC_Layer1->CFBAR;
+    g_ltdc_trace[ti][1] = hltdc.Instance->ISR;
+    g_ltdc_trace[ti][2] = LTDC_Layer1->CR;
+    g_ltdc_trace[ti][3] = s_ltdc_pending_fb;
+    g_ltdc_trace_idx++;
+
+    uint32_t pending = s_ltdc_pending_fb;
+    if (pending != 0U) {
+        LTDC_Layer1->CFBAR   = pending;
+        hltdc.Instance->SRCR = LTDC_SRCR_VBR;
+        s_ltdc_pending_fb    = 0U;
+    }
+    HAL_LTDC_ProgramLineEvent(&hltdc, s_ctx.cfg.fb_height + 1U);
+}
+
+/* IRQ handler for the LTDC line interrupt (LTDC_UP_IRQn = 193). Only the LINE interrupt is enabled
+ * (NOT the LTDC_UP_ERR error IRQ that hung bring-up). Dispatches to HAL, which invokes the callback. */
+void LTDC_UP_IRQHandler(void)
+{
+    HAL_LTDC_IRQHandler(&hltdc);
 }
 
 /* ---------- Public API ---------------------------------------------------- */
@@ -96,14 +136,23 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
     lvgl_port_n6_state = 40;
 
     const uint32_t fb_size = cfg->fb_width * cfg->fb_height * cfg->fb_bytes_per_px;
-    /* SINGLE buffer (second arg NULL): LVGL renders directly into the LTDC's framebuffer. No second
-     * buffer, no swap — the flush_cb is a plain __DSB + flush_ready. This trades a bit of tearing on
-     * changed regions for a display that CANNOT go blank from a mistimed ping-pong swap. */
-    lv_display_set_buffers(disp, cfg->fb_addr, NULL, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* DOUBLE buffer: front = fb_addr (LTDC scans), back = fb_addr + 1MB (LVGL draws). Both inside the
+     * MPU non-cacheable PSRAM region. LVGL renders the back, the line-event ISR swaps at vblank — the
+     * CPU write and the LTDC read never touch the same buffer, so no render-vs-read contention. */
+    uint8_t *fb1 = (uint8_t *)cfg->fb_addr + 0x100000U;
+    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lvgl_port_n6_state = 50;
 
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
     lvgl_port_n6_state = 60;
+
+    /* Arm the LTDC line-event at vblank + enable ONLY the line IRQ (LTDC_UP_IRQn) — NOT the error IRQ
+     * (LTDC_UP_ERR) that had no handler and hung early bring-up. HAL_LTDC_ProgramLineEvent sets LIPCR +
+     * the line-interrupt enable; the error interrupts stay masked. The ISR (LTDC_UP_IRQHandler ->
+     * HAL_LTDC_IRQHandler -> HAL_LTDC_LineEventCallback) does the tear-free double-buffer swap. */
+    HAL_LTDC_ProgramLineEvent(&hltdc, cfg->fb_height + 1U);
+    HAL_NVIC_SetPriority(LTDC_UP_IRQn, 0x0FU, 0U);   /* lowest preempt priority — display not time-critical */
+    HAL_NVIC_EnableIRQ(LTDC_UP_IRQn);
 
     if (cfg->build_scene_cb != NULL) {
         cfg->build_scene_cb();
