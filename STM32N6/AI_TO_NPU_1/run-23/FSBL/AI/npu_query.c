@@ -17,6 +17,7 @@
 extern void NPU_LogStep(int rule_idx, int pos, int tok_id, const char *piece);
 extern void lvgl_port_n6_display_freeze(int freeze);   /* per-epoch display gate: LTDC fetch off during the NPU run */
 extern volatile int g_lvgl_ok;                          /* 1 once the LVGL display is initialised */
+extern volatile int g_npu_quiet;                        /* 1 = suppress the per-token UART dialog ("just infer + display" experiment) */
 
 void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
                    int rule_idx, char *out, int out_max)
@@ -70,8 +71,12 @@ void NPU_QueryRule(stai_network *net, int8_t *in_buf, const int8_t *out_buf,
             if (x > bv) { bv = x; best = v; }
         }
 
-        /* line-by-line CPU<->NPU dialog: this step's embedding Gather + NPU epoch + argmax */
-        NPU_LogStep(rule_idx, pos, best, (best == TOK_EOS_ID) ? "<eos>" : g_tok_decode[best]);
+        /* line-by-line CPU<->NPU dialog: this step's embedding Gather + NPU epoch + argmax.
+         * g_npu_quiet gates it: the log is a BLOCKING colour UART line per token and no display
+         * refresh runs during this loop, so logging only stretches the flicker window. Silencing it
+         * = "just infer + display" (shorter inference, less per-cycle glitch degradation). */
+        if (!g_npu_quiet)
+            NPU_LogStep(rule_idx, pos, best, (best == TOK_EOS_ID) ? "<eos>" : g_tok_decode[best]);
 
         if (best == TOK_EOS_ID)
             break;

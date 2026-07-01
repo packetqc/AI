@@ -80,6 +80,13 @@ volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to
 volatile int      g_psram_rc   = 99; /* PSRAM_Init() result: 0=mapped+writable, <0=fail, 99=not run */
 volatile int      g_lvgl_ok    = 0;  /* 1 once lvgl_port_n6_init succeeded */
 volatile uint32_t g_heartbeat  = 0;  /* SW heartbeat counter (bare-metal liveness; HW LED mirrors it) */
+/* Display-clean experiment (2026-06-30): 1 = suppress the per-token CPU<->NPU UART dialog
+ * (NPU_LogStep) so a rule query is "just infer + display". The dialog is a blocking colour UART
+ * line PER TOKEN inside the token loop, and lv_timer_handler never runs during that loop — so the
+ * logging only lengthens the window the panel spends in the gate-toggling flicker state. Silencing
+ * it shortens each inference cycle (less flicker, less per-cycle degradation), matching the
+ * reference's minimal-work-per-frame pattern. Set to 0 to restore the full oracle dialog. */
+volatile int      g_npu_quiet  = 1;
 
 /* NPU model (TCN, STAI). Opaque context buffer — sized by the generated header, 8-aligned. */
 __attribute__((aligned(STAI_NETWORK_CONTEXT_ALIGNMENT)))
