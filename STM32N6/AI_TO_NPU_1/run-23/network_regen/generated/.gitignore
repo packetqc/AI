@@ -1,0 +1,3 @@
+# Large, regenerable atonn blobs — reproduce with ../verify + the stedgeai re-gen (see ../README.md).
+*.hex
+*.bin

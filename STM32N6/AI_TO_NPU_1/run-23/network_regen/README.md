@@ -37,20 +37,36 @@ weights + activations occupy. run-23 shipped with [`../Makefile/FSBL/stm32n6_sra
 > (the `{ extern void npu_cache_enable(void); npu_cache_enable(); }` line in main.c's NPU block) so SRAM7
 > is free for network data instead of being claimed as the NPU cache.
 
-## Re-generation steps (user runs ST Edge AI / AI Studio)
+## Re-generation — PROVEN command (run autonomously, 2026-07-01)
 
-1. Regenerate the network against the option-B pool:
-   ```
-   stedgeai generate --model model_cnn_calc.onnx --target stm32n6 --st-neural-art default \
-     --load-mpool-file network_regen/stm32n6_optionB_axisram34.mpool --enable-virtual-mem-pools
-   ```
-   (Or set the mem-pool file in AI Studio's project to `stm32n6_optionB_axisram34.mpool` and regenerate.)
-2. Copy the regenerated `network.c`, `network_data.c`, `network_details.h`, `network_weights.bin`,
-   `network_atonbuf_xSPI2.bin` into `FSBL/AI/`.
-3. Run **`/regen-fix`** (mandatory after any CubeMX/AI-Studio regen — restores sourceEntries etc.).
-4. **Update the weights `memcpy` destination** in `FSBL/Core/Src/main.c` from `0x34064000` to the new
-   pool base (`0x34200000`); update the `SCB_CleanDCache_by_Addr` range to match.
-5. **Re-flash the weight blob** to NOR `0x70200000` if `network_weights.bin` changed size/content.
+```bash
+ONNX=/opt/DEV/AI/models/npu_export/model_calculator_tcn_version_1/generated_sram/model_npu_int8_OE_3_3_1.onnx
+/opt/ST/STEdgeAI/4.0/Utilities/linux/stedgeai generate --target stm32n6 --name network -m "$ONNX" \
+  --st-neural-art "optionB_sram@network_regen/user_neuralart_optionB.json" \
+  --c-api st-ai --enable-epoch-controller --output <outdir> --workspace <outdir>/ws --no-report
+```
+
+Result (verified): the network lands in **AXISRAM3-4 + npuCACHE(7) + vencRAM(8) + NOR**, with **zero
+addresses in AXISRAM1 or AXISRAM5-6** (`verify_optionB.sh` passes on the generated files) and PSRAM
+unused. Generated sources are staged in [`generated/`](generated/); the ~1.9 MB NOR blob
+(`atonbuf.xSPI2` → `atonbuf_xSPI2.bin`) is gitignored (regenerate it).
+
+## Integration steps (the destructive part — commit first)
+
+1. Copy `generated/{network.c,network.h,stai_network.c,stai_network.h,network_ecblobs.h}` into
+   `FSBL/AI/`. (Keep the current `network_embed.c/.h`, `network_tokens.c/.h`, `npu_query.*` — the I/O
+   interface is unchanged: `IN=8192`, `OUT=11968`.)
+2. Run **`/regen-fix`** (restores sourceEntries etc.).
+3. **`FSBL/Core/Src/main.c`: DELETE the weights `memcpy` to `0x34064000`** (and its
+   `SCB_CleanDCache_by_Addr`) — option B keeps the weights XIP in NOR (memory-mapped), no SRAM copy.
+   Ensure `EXTMEM_MemoryMappedMode(EXTMEMORY_1, ENABLE)` stays (it does).
+4. **Flash the NOR blob** `generated/atonbuf_xSPI2.bin` to its XSPI2 base (per the generated
+   `network_ecblobs.h` / the `0x70……` base in `network.c`) using the run-23 flash path.
+5. Linker: the activation pool now spans AXISRAM3-4-7-8 — confirm `AI_RAM`/`.AI_RAM` covers it (the
+   stai context allocates there at runtime).
+6. `FSBL/Core/Inc/fb_layout.h`: set **`FB_IN_SRAM 1`**. `fb_sram_enable()` handles the FB banks' MPU.
+7. Build → `network_regen/verify_optionB.sh` (all pass) → flash → **camera A/B, gate off** → full-color
+   double-buffer, glitch-free.
 
 ## Then flip the framebuffer to SRAM
 
