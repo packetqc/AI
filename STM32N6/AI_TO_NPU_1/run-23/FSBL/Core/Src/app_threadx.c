@@ -58,6 +58,7 @@ static void render_thread_entry(ULONG arg)
 {
     (void)arg;
     unsigned long frame = 0;
+    ULONG hb_last = tx_time_get();
     for (;;) {
         if (g_lvgl_ok) {
             if (s_ui_seq != s_ui_applied) {          /* apply pending publish — LVGL calls ONLY here */
@@ -65,7 +66,11 @@ static void render_thread_entry(ULONG arg)
                 lvgl_scene_set_prompt(s_ui_expr);    /* sets prompt (+ "= ?") */
                 lvgl_scene_set_answer(s_ui_answer);  /* overwrite answer with the published string */
             }
-            if ((frame % 15UL) == 0UL) {             /* ~2 Hz heartbeat, fluid (render never blocks) */
+            /* Heartbeat on the ThreadX tick (TX_TIMER_TICKS_PER_SECOND=100 → 50 ticks = 500 ms), NOT the
+             * frame count: the render thread runs ~100 FPS so frame-gating made the LED ~3x too fast. */
+            ULONG now = tx_time_get();
+            if (now - hb_last >= 50UL) {
+                hb_last = now;
                 g_heartbeat++;
                 BSP_LED_Toggle(LED_GREEN);
             }
