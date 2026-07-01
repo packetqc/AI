@@ -170,6 +170,25 @@ extern void NPU_SetVerbose(int on);          /* per-token NPU dialog toggle (gra
 #if RUN23_USE_THREADX
 void MX_ThreadX_Init(void);   /* app_threadx.c — tx_kernel_enter(), never returns */
 
+/* --- ThreadX timebase reconciliation ---------------------------------------------------------------
+ * ThreadX owns SysTick (configured in tx_initialize_low_level.S at tx_kernel_enter). The stock HAL also
+ * drives SysTick: HAL_InitTick enables the SysTick IRQ during HAL_Init, which then fires ThreadX's
+ * SysTick_Handler -> _tx_timer_interrupt BEFORE tx_kernel_enter has initialised the kernel -> silent
+ * early hang (before any printf). So override the HAL tick onto DWT->CYCCNT (as the reference does) and
+ * leave SysTick entirely to ThreadX. HAL_GetTick then works during init without SysTick. */
+HAL_StatusTypeDef HAL_InitTick(uint32_t TickPriority)
+{
+    (void)TickPriority;
+    CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
+    DWT->CYCCNT = 0U;
+    DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
+    return HAL_OK;
+}
+uint32_t HAL_GetTick(void)
+{
+    return DWT->CYCCNT / (SystemCoreClock / 1000U);
+}
+
 /* ThreadX demo-thread hook (app_threadx.c calls this). Runs one NPU inference on this unit's g_network
  * and formats the answer the demo used to build inline ("= N" / "ERROR"). Grammar_Calc blocks ~1 s, but
  * under ThreadX that stalls only the low-priority demo thread — the render thread keeps the UI fluid. */

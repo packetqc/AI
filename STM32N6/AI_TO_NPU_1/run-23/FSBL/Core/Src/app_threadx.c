@@ -40,7 +40,7 @@ void run23_ui_set_answer(const char *ans)
 }
 
 /* ---- threads ------------------------------------------------------------------------------------- */
-#define RENDER_STACK_BYTES  (16U * 1024U)
+#define RENDER_STACK_BYTES  (32U * 1024U)   /* LVGL lv_timer_handler is stack-heavy (bare-metal used the ~50 KB main stack) */
 #define DEMO_STACK_BYTES    (16U * 1024U)
 #define RENDER_PRIO         20U
 #define DEMO_PRIO           25U
