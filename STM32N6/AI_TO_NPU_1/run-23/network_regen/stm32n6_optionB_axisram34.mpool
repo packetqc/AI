@@ -1,0 +1,27 @@
+{
+  "_comment": "Option-B memory pool for the run-23 NPU network — REFERENCE 100%-SRAM framebuffer layout.",
+  "_why": "Move the NPU (weights + activations) OFF AXISRAM1 into AXISRAM3-4 so AXISRAM1 (0x34000000) and AXISRAM5-6 (0x342E0000) become NPU-free banks for the LTDC double-buffer. Compare to the legacy stm32n6_sram_weights.mpool which pinned the network to AXISRAM1 (0x34064000). See ../MEMORY_MAP.md and README.md.",
+  "memory": {
+    "cacheinfo": [
+      {
+        "nlines": 512, "linesize": 64, "associativity": 8, "bypass_enable": 0,
+        "prop": { "rights": "ACC_WRITE", "throughput": "MID", "latency": "MID", "byteWidth": 8, "freqRatio": 2.5, "read_power": 13.584, "write_power": 12.645 }
+      }
+    ],
+    "mem_file_prefix": "atonbuf",
+    "mempools": [
+      {
+        "fname": "AXISRAM3", "name": "npuRAM3", "fformat": "FORMAT_RAW",
+        "prop": { "rights": "ACC_WRITE", "throughput": "MID", "latency": "MID", "byteWidth": 8, "freqRatio": 2.5, "read_power": 16.616, "write_power": 14.522 },
+        "offset": { "value": "0x34200000", "magnitude": "BYTES" },
+        "size":   { "value": "448", "magnitude": "KBYTES" }
+      },
+      {
+        "fname": "AXISRAM4", "name": "npuRAM4", "fformat": "FORMAT_RAW",
+        "prop": { "rights": "ACC_WRITE", "throughput": "MID", "latency": "MID", "byteWidth": 8, "freqRatio": 2.5, "read_power": 16.616, "write_power": 14.522 },
+        "offset": { "value": "0x34270000", "magnitude": "BYTES" },
+        "size":   { "value": "448", "magnitude": "KBYTES" }
+      }
+    ]
+  }
+}
