@@ -102,7 +102,14 @@ static void render_thread_entry(ULONG arg)
 static void demo_thread_entry(ULONG arg)
 {
     (void)arg;
-    static const char *const demo[] = { "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)" };
+    /* Grammar supports + - * / , parentheses, multi-digit integers, proper precedence
+     * (grammar_runner.cpp fallback_playbook: expr/term/factor). Divisions kept exact and
+     * results non-negative for a clean, readable demo. Array count is auto-computed below. */
+    static const char *const demo[] = {
+        "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)",
+        "10 + 15", "7 * 8", "20 - 6", "18 / 3", "5 + 6 * 2", "(8 - 3) * 4",
+        "100 - 45", "11 * 11", "9 + 8 + 7", "(2 + 3) * (4 + 1)", "48 / 6", "25 + 25",
+    };
     const int n = (int)(sizeof demo / sizeof demo[0]);
     int i = 0;
     for (;;) {

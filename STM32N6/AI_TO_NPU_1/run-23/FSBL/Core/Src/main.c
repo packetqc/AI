@@ -508,7 +508,11 @@ int main(void)
     /* Per-grammar demo set: the CALCULATOR grammar's test expressions. Each grammar carries its own
      * demo/test inputs; the `/demo` runner command cycles the active grammar's set. (run-23 carries
      * one grammar today; a future grammar would ship its own set.) */
-    static const char *const calc_demo[] = { "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)" };
+    static const char *const calc_demo[] = {
+        "3 + 4", "12 - 5", "6 * 7", "8 / 2", "9 * 9", "2 * (3 + 4)",
+        "10 + 15", "7 * 8", "20 - 6", "18 / 3", "5 + 6 * 2", "(8 - 3) * 4",
+        "100 - 45", "11 * 11", "9 + 8 + 7", "(2 + 3) * (4 + 1)", "48 / 6", "25 + 25",
+    };
     const int ndemo = (int)(sizeof(calc_demo) / sizeof(calc_demo[0]));
 
     /* Interactive CLI over the VCP (minicom -D /dev/ttyACM0 -b 115200), line-buffered, with a built-in
