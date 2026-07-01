@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include "stm32n6xx_hal.h"   /* USART1 direct-register TX for the blocking log sink */
 #ifdef NOCODE_DISPATCH
 #include "nocode_dispatch.h"   /* generated (grammar,token)->compiled fn dispatch (host-model->NPU) */
 #endif
@@ -31,9 +32,26 @@ extern "C" void NPU_SetVerbose(int on) { g_npu_verbose = (on != 0); }
 
 namespace {
 
-/* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand:
- * the ctor only stores a tick fn + color flag (no heap, no static-init dependency). */
-static llm::TerminalLogger rlog() { return llm::TerminalLogger(HAL_GetTick, /*color=*/true); }
+/* Blocking USART1 TX sink — same direct-register pattern as llm_repl.cpp's uart_sink.
+ * WHY: rlog() previously used the printf-native ctor (no sink -> fputs(stdout) -> _write ->
+ * __io_putchar). In the FSBL boot context that path is lossy under the fast ~7-lines-per-
+ * inference burst: bytes (including the trailing "\r\n") get dropped, so the next log line
+ * overwrites this one from column 0 — the reported "inference lines print on the same line".
+ * Polling ISR.TXFNF (bit 7) before every byte guarantees no TX-FIFO-overrun drop, so every
+ * record ends with a real newline regardless of burst rate. */
+static void rlog_uart_sink(const char* s, int n)
+{
+    if (USART1->CR1 == 0U) return;
+    for (int i = 0; i < n; ++i) {
+        while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }   /* TXFNF: wait until TX FIFO not full */
+        USART1->TDR = (uint32_t)(uint8_t)s[i];
+    }
+}
+
+/* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand: the ctor
+ * stores the blocking UART sink + tick fn + color flag (no heap, no static-init dependency).
+ * The sink (not fputs) is what stops the burst from dropping newlines. */
+static llm::TerminalLogger rlog() { return llm::TerminalLogger(rlog_uart_sink, HAL_GetTick, /*color=*/true); }
 
 
 struct Tok { char kind; std::string val; };          /* 'n'=nonterminal, 't'=terminal */
