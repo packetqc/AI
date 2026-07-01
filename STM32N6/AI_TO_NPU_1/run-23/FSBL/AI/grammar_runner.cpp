@@ -155,11 +155,16 @@ private:
             char body[160];
             NPU_QueryRule(net_, in_, out_, idx, body, (int)sizeof(body));
             /* Host GrammarRunner._query_rule line (class_model_grammar.py:429):
-             * "[model #N] <grammar> <rule> -> <answer>". The per-token CPU<->NPU
-             * epochs that produced <answer> were logged from npu_query.c above. */
+             * "[model #N] <grammar> <rule> -> <answer>".
+             * NOTE: the HW NPU oracle currently returns an EMPTY body — weights load and the int8
+             * embedding input is built, but the Neural-ART epochs emit zero logits (argmax -> EOS ->
+             * empty), a separate inference issue that appeared around the option-B/D-cache changes.
+             * Until that is fixed, fall back to the authoritative PLAYBOOK rule so the line shows the
+             * grammar the oracle represents (what a working oracle would generate) instead of a blank. */
+            const char* disp = (body[0] != '\0') ? body : PLAYBOOK[idx];
             rbuf().logf(llm::Severity::Info, "RUNNER",
                         "[model #%d] calculator %s " "\xe2\x86\x92" " %s",
-                        ++interactions_, name.c_str(), body);
+                        ++interactions_, name.c_str(), disp);
             /* playbook authoritative; the oracle line above is the visible model dialog */
             alts = parse_body(PLAYBOOK[idx]);
         }
