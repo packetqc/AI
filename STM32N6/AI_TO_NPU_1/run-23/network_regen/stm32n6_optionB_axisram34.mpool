@@ -21,6 +21,13 @@
         "prop": { "rights": "ACC_WRITE", "throughput": "MID", "latency": "MID", "byteWidth": 8, "freqRatio": 2.5, "read_power": 16.616, "write_power": 14.522 },
         "offset": { "value": "0x34270000", "magnitude": "BYTES" },
         "size":   { "value": "448", "magnitude": "KBYTES" }
+      },
+      {
+        "_comment": "AXISRAM7/CACHEAXI repurposed as NPU data — the ~1 MB network (weights 526K + activations 514K) does not fit AXISRAM3+4 (896K) alone. Safe: SRAM-resident weights do not need the CACHEAXI, so do NOT call npu_cache_enable() when this bank holds network data (see ../FSBL/Core/Src/main.c NPU block).",
+        "fname": "AXISRAM7", "name": "npuRAM7", "fformat": "FORMAT_RAW",
+        "prop": { "rights": "ACC_WRITE", "throughput": "MID", "latency": "MID", "byteWidth": 8, "freqRatio": 2.5, "read_power": 16.616, "write_power": 14.522 },
+        "offset": { "value": "0x343C0000", "magnitude": "BYTES" },
+        "size":   { "value": "256", "magnitude": "KBYTES" }
       }
     ]
   }

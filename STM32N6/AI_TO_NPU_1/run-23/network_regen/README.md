@@ -24,10 +24,18 @@ weights + activations occupy. run-23 shipped with [`../Makefile/FSBL/stm32n6_sra
 
 | | Legacy (`stm32n6_sram_weights.mpool`) | **Option B (`stm32n6_optionB_axisram34.mpool`)** |
 |---|---|---|
-| NPU pool | AXISRAM1 `0x34064000`, 624 K | AXISRAM3 `0x34200000` + AXISRAM4 `0x34270000`, 896 K |
+| NPU pool | AXISRAM1 `0x34064000` (spills to AXISRAM5-6 via virtual pools) | AXISRAM3 + AXISRAM4 + AXISRAM7, ~1152 K |
 | AXISRAM1 | NPU (blocked) | **FREE → FB front** |
-| AXISRAM5-6 | free | FB back |
+| AXISRAM5-6 | **NPU (spill) — blocked** | **FREE → FB back** |
+| AXISRAM7 (CACHEAXI) | NPU weight cache | NPU data (no cache needed — weights already on-chip) |
 | Weights `memcpy` dst | `0x34064000` | `0x34200000` (new pool base) |
+
+> **Why 3 banks:** the compiled network is ~1 MB (weights 526 K + activations 514 K) and the *current*
+> build already spreads into AXISRAM5-6 (verify with `verify_optionB.sh` — it lists NPU addresses inside
+> the FB banks today). AXISRAM3+4 (896 K) alone is too small, so the option-B pool adds AXISRAM7. Since
+> the weights then live in fast on-chip SRAM, the CACHEAXI is unnecessary — **skip `npu_cache_enable()`**
+> (the `{ extern void npu_cache_enable(void); npu_cache_enable(); }` line in main.c's NPU block) so SRAM7
+> is free for network data instead of being claimed as the NPU cache.
 
 ## Re-generation steps (user runs ST Edge AI / AI Studio)
 
