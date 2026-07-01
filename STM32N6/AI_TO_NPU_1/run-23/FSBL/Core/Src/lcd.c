@@ -10,18 +10,19 @@
 #include "lcd.h"
 #include "ltdc.h"
 #include "main.h"
+#include "fb_layout.h"   /* FB_FRONT_ADDR / FB_BACK_ADDR / FB_WIDTH / FB_HEIGHT — layout selector */
 #include <stdio.h>
 
-#define LCD_W    800U
-#define LCD_H    480U
-#define LCD_FB0  0x90000000U          /* RGB565 framebuffer in the mapped APS256 PSRAM. AXISRAM4-6
-                                        * (0x34280000) was TRIED for spatial segmentation but that whole
-                                        * 0x34200000-0x343BFFFF range is ll_aton's activation arena
-                                        * (1.75MB — the linker only *declares* 512K AI_RAM but the runtime
-                                        * uses it all), so the NPU overwrote the FB with random
-                                        * activations. No free non-NPU internal bank fits a 768K FB, so
-                                        * the FB stays in PSRAM and the LTDC-vs-NPU contention is handled
-                                        * temporally by the per-epoch gate in npu_query.c. */
+#define LCD_W    FB_WIDTH
+#define LCD_H    FB_HEIGHT
+#define LCD_FB0  FB_FRONT_ADDR         /* front buffer (LTDC scans). PSRAM 0x90000000 in the legacy
+                                        * layout; AXISRAM1 0x34000000 in the 100%-SRAM reference layout
+                                        * (FB_IN_SRAM=1, after the option-B re-gen frees AXISRAM1 of the
+                                        * NPU weights). Back buffer = FB_BACK_ADDR. See fb_layout.h +
+                                        * MEMORY_MAP.md. Earlier note: the FB could not live in AXISRAM
+                                        * while the NPU activation arena spanned 0x34200000-0x343BFFFF;
+                                        * option B re-packs the NPU into AXISRAM3-4-7 so AXISRAM5-6 and
+                                        * AXISRAM1 become NPU-free FB banks. */
 
 extern volatile int g_psram_rc;       /* 0 = PSRAM mapped + CPU-writable (set in MX_XSPI1_Init) */
 

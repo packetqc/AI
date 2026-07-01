@@ -80,7 +80,15 @@ typedef void (*lvgl_port_n6_build_scene_cb_t)(void);
 /* ---------- Configuration ------------------------------------------------- */
 
 typedef struct {
-    void *fb_addr;                                  /* LTDC-readable framebuffer base */
+    void *fb_addr;                                  /* FRONT framebuffer base (LTDC-readable) */
+    void *fb_back_addr;                             /* BACK framebuffer base. May be NULL -> defaults
+                                                     * to fb_addr + 1 MB (legacy contiguous layout).
+                                                     * Set explicitly to place the two double-buffers in
+                                                     * SEPARATE memory banks (e.g. front in AXISRAM1,
+                                                     * back in AXISRAM5-6) — required for the 100%-SRAM
+                                                     * reference layout where no single bank holds 1.5 MB.
+                                                     * Both must be LTDC-master-readable + (with D-cache
+                                                     * on) MPU Normal-Non-Cacheable. See MEMORY_MAP.md. */
     uint32_t fb_width;                              /* pixels */
     uint32_t fb_height;                             /* pixels */
     uint32_t fb_bytes_per_px;                       /* 2 for RGB565 (only supported for now) */

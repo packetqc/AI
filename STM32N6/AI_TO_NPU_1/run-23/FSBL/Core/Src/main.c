@@ -33,6 +33,7 @@
 #include "lcd.h"                     /* LTDC + panel bring-up (display) */
 #include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
 #include "lvgl_port_n6.h"            /* LVGL 9.x DIRECT-mode port on the PSRAM framebuffer */
+#include "fb_layout.h"               /* framebuffer layout selector: PSRAM (legacy) vs 100%-SRAM ref */
 #include "lvgl_scene.h"              /* C2 test scene */
 // #include "stm32n6xx_hal_bsec.h"
 // #include "stm32n6xx_hal_ramcfg.h"
@@ -426,10 +427,11 @@ int main(void)
     DWT->CTRL  |= DWT_CTRL_CYCCNTENA_Msk;
 
     lvgl_port_n6_cfg_t lv_cfg = {
-      .fb_addr         = (void *)0x90000000U,   /* PSRAM — AXISRAM4-6 is the NPU activation arena (see lcd.c) */
-      .fb_width        = 800U,
-      .fb_height       = 480U,
-      .fb_bytes_per_px = 2U,
+      .fb_addr         = (void *)FB_FRONT_ADDR,   /* front — PSRAM (legacy) or AXISRAM1 (FB_IN_SRAM) */
+      .fb_back_addr    = (void *)FB_BACK_ADDR,    /* back  — PSRAM+1MB (legacy) or AXISRAM5-6 (FB_IN_SRAM) */
+      .fb_width        = FB_WIDTH,
+      .fb_height       = FB_HEIGHT,
+      .fb_bytes_per_px = FB_BPP,
       .hclk_hz         = 800000000U,   /* run-23 HCLK (DWT->ms); tweak if clock differs */
       .build_scene_cb  = lvgl_scene_build,
     };

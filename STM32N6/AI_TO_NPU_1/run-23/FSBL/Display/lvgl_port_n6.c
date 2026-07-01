@@ -136,10 +136,14 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
     lvgl_port_n6_state = 40;
 
     const uint32_t fb_size = cfg->fb_width * cfg->fb_height * cfg->fb_bytes_per_px;
-    /* DOUBLE buffer: front = fb_addr (LTDC scans), back = fb_addr + 1MB (LVGL draws). Both inside the
-     * MPU non-cacheable PSRAM region. LVGL renders the back, the line-event ISR swaps at vblank — the
-     * CPU write and the LTDC read never touch the same buffer, so no render-vs-read contention. */
-    uint8_t *fb1 = (uint8_t *)cfg->fb_addr + 0x100000U;
+    /* DOUBLE buffer: front = fb_addr (LTDC scans), back = fb_back_addr (LVGL draws). If fb_back_addr is
+     * NULL, default to fb_addr + 1 MB (legacy contiguous layout). The two buffers MAY live in separate
+     * memory banks — this is what lets the 100%-SRAM reference layout put front in AXISRAM1 and back in
+     * AXISRAM5-6 (no single bank holds 1.5 MB). LVGL renders the back, the line-event ISR swaps CFBAR at
+     * vblank — the CPU write and the LTDC read never touch the same buffer, so no render-vs-read
+     * contention. __DSB in flush_cb drains pixel writes to the (MPU-non-cacheable) FB before the swap. */
+    uint8_t *fb1 = (cfg->fb_back_addr != NULL) ? (uint8_t *)cfg->fb_back_addr
+                                               : (uint8_t *)cfg->fb_addr + 0x100000U;
     lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
     lvgl_port_n6_state = 50;
 
