@@ -49,8 +49,8 @@ const char* severity_color(Severity s)
 void TerminalLogger::emit(const char* s) const
 {
     if (!s) return;
-    if (sink_) sink_(s, (int)strlen(s));   /* injected sink (host tests / custom TX) */
-    else       fputs(s, stdout);           /* native printf path: device __io_putchar -> COM1 */
+    if (sink_) sink_(s, (int)strlen(s));   /* injected sink (host tests / ThreadX log worker queue) */
+    else       printf("%s", s);            /* bare-metal / host: usual BSP-COM printf, ONE call/line */
 }
 
 /* Device timestamp: uptime "HH:MM:SS.mmm" (no RTC at FSBL stage).
@@ -93,20 +93,22 @@ void TerminalLogger::log(Severity sev, const char* category, const char* message
     const char* col   = color_ ? severity_color(sev) : "";
     const char* reset = color_ ? RESET : "";
 
-    /* "%-10s%-16s" reproduces Python's {sev:<10}{cat:<16} column padding. Emit the CRLF as a SEPARATE
-     * write (NOT in the format string): if a long message + colour codes pushed the formatted line to the
-     * buffer limit, snprintf would silently drop the trailing '\r\n' (or just the '\n'), leaving a bare
-     * carriage return that makes the next line overwrite this one on the same terminal row — the observed
-     * "inference lines print on the same line". Splitting the CRLF out guarantees every record ends with
-     * a full newline regardless of message length. */
-    snprintf(line, sizeof(line), "%s%s  %-10s%-16s%s%s",
-             col, time_str,
-             severity_name(sev),
-             category ? category : "",
-             safe,
-             reset);
+    /* "%-10s%-16s" reproduces Python's {sev:<10}{cat:<16} column padding. Build the WHOLE record —
+     * including the trailing CRLF — into one buffer and emit it with a SINGLE call (one BSP-COM printf
+     * on device, or one enqueue into an injected sink). Reserve 3 bytes so a long message can never
+     * truncate the "\r\n": a bare CR would make the next line overwrite this one ("same-line" print). */
+    int n = snprintf(line, sizeof(line) - 2, "%s%s  %-10s%-16s%s%s",
+                     col, time_str,
+                     severity_name(sev),
+                     category ? category : "",
+                     safe,
+                     reset);
+    if (n < 0) n = 0;
+    if (n > (int)sizeof(line) - 3) n = (int)sizeof(line) - 3;
+    line[n++] = '\r';
+    line[n++] = '\n';
+    line[n]   = '\0';
     emit(line);
-    emit("\r\n");
 }
 
 void TerminalLogger::logf(Severity sev, const char* category, const char* fmt, ...) const

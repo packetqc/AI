@@ -17,7 +17,6 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#include "stm32n6xx_hal.h"   /* USART1 direct-register TX for the blocking log sink */
 #ifdef NOCODE_DISPATCH
 #include "nocode_dispatch.h"   /* generated (grammar,token)->compiled fn dispatch (host-model->NPU) */
 #endif
@@ -32,27 +31,24 @@ extern "C" void NPU_SetVerbose(int on) { g_npu_verbose = (on != 0); }
 
 namespace {
 
-/* Blocking USART1 TX sink — same direct-register pattern as llm_repl.cpp's uart_sink.
- * WHY: rlog() previously used the printf-native ctor (no sink -> fputs(stdout) -> _write ->
- * __io_putchar). In the FSBL boot context that path is lossy under the fast ~7-lines-per-
- * inference burst: bytes (including the trailing "\r\n") get dropped, so the next log line
- * overwrites this one from column 0 — the reported "inference lines print on the same line".
- * Polling ISR.TXFNF (bit 7) before every byte guarantees no TX-FIFO-overrun drop, so every
- * record ends with a real newline regardless of burst rate. */
-static void rlog_uart_sink(const char* s, int n)
-{
-    if (USART1->CR1 == 0U) return;
-    for (int i = 0; i < n; ++i) {
-        while ((USART1->ISR & (1u << 7)) == 0) { __NOP(); }   /* TXFNF: wait until TX FIFO not full */
-        USART1->TDR = (uint32_t)(uint8_t)s[i];
-    }
-}
+/* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand: the ctor only
+ * stores a tick fn + color flag (no heap, no static-init dependency). NO sink -> TerminalLogger::log()
+ * formats the whole record and prints it with a SINGLE BSP-COM printf().
+ * color=false -> NOTHING FANCY: the string is plain "time  SEV  CAT  msg" + a trailing "\r\n", with
+ * NO ANSI escape codes at all (ruling out colour sequences as the cause of the dropped newline). */
+static llm::TerminalLogger rlog() { return llm::TerminalLogger(HAL_GetTick, /*color=*/true); }
 
-/* Host-style C++ logger (port of classes/class_terminal_logs.py). Built on demand: the ctor
- * stores the blocking UART sink + tick fn + color flag (no heap, no static-init dependency).
- * The sink (not fputs) is what stops the burst from dropping newlines. */
-static llm::TerminalLogger rlog() { return llm::TerminalLogger(rlog_uart_sink, HAL_GetTick, /*color=*/true); }
-
+/* ---- deferred NPU-dialog buffer — the printf-only fix for the dropped newline ------------------
+ * The dialog lines (NOTICE + each "[model #N]" INFO) are produced WHILE the NPU epochs run. The BSP
+ * printf returns as soon as a byte is in the UART TX FIFO (not when it is on the wire), so a line's
+ * trailing "\r\n" is still in that FIFO when the NEXT NPU epoch floods the bus and eats the in-flight
+ * byte -> the following line overwrites this one. (OK and the last INFO survive only because no epoch
+ * runs after them.) Fix: don't print each line as it happens — APPEND it to a buffer, then printf the
+ * WHOLE dialog ONCE at the end of run(), in the calm window after all epochs, where nothing races the
+ * newline. Single producer (the demo thread) -> a plain static target pointer is safe. */
+static std::string* g_dlg = nullptr;
+static void dialog_sink(const char* s, int n) { if (g_dlg) g_dlg->append(s, (size_t)n); }
+static llm::TerminalLogger rbuf() { return llm::TerminalLogger(dialog_sink, HAL_GetTick, /*color=*/true); }
 
 struct Tok { char kind; std::string val; };          /* 'n'=nonterminal, 't'=terminal */
 typedef std::vector<Tok> Alt;
@@ -112,7 +108,11 @@ public:
         : net_(net), in_(in), out_(out), interactions_(0) {}
 
     long run(const std::string& input, const std::string& start, int* ok) {
-        rlog().logf(llm::Severity::Notice, "RUNNER",
+        /* Collect the whole NPU dialog into dlg — emit still forces "\r\n" and is still called once
+         * per line, but into this buffer — then flush it with ONE printf below, after all epochs,
+         * in the calm window where nothing races the trailing newline. */
+        std::string dlg; g_dlg = &dlg;
+        rbuf().logf(llm::Severity::Notice, "RUNNER",
                     "parse \"%s\" via NPU grammar oracle (start=<%s>)",
                     input.c_str(), start.c_str());
         std::vector<std::string> toks = tokenize(input);
@@ -121,17 +121,19 @@ public:
         bool got = parse_rule(start, toks, pos, node);
         if (!got || pos != toks.size()) {
             if (ok) *ok = 0;
-            rlog().logf(llm::Severity::Error, "RUNNER",
+            rbuf().logf(llm::Severity::Error, "RUNNER",
                         "parse failed for \"%s\" (%d NPU rule-queries)",
                         input.c_str(), interactions_);
+            g_dlg = nullptr; std::printf("%s", dlg.c_str());   /* single printf, calm window */
             return 0;
         }
         Val r = eval(node);
         if (ok) *ok = r.num ? 1 : 0;
         long res = r.num ? r.n : 0;
-        rlog().logf(llm::Severity::Ok, "RUNNER",
+        rbuf().logf(llm::Severity::Ok, "RUNNER",
                     "\"%s\" = %ld  (%d rule-queries via NPU oracle)",
                     input.c_str(), res, interactions_);
+        g_dlg = nullptr; std::printf("%s", dlg.c_str());       /* single printf, calm window */
         return res;
     }
 
