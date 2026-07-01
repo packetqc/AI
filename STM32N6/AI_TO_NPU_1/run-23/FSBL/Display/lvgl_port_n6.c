@@ -156,7 +156,15 @@ lvgl_port_n6_status_t lvgl_port_n6_init(const lvgl_port_n6_cfg_t *cfg)
      * contention. __DSB in flush_cb drains pixel writes to the (MPU-non-cacheable) FB before the swap. */
     uint8_t *fb1 = (cfg->fb_back_addr != NULL) ? (uint8_t *)cfg->fb_back_addr
                                                : (uint8_t *)cfg->fb_addr + 0x100000U;
-    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_DIRECT);
+    /* FULL render mode (not DIRECT): on any change LVGL renders the ENTIRE screen into the inactive
+     * buffer, then the line-event ISR swaps. This is the correct model for run-23's mostly-STATIC scene:
+     * every swap shows a COMPLETE frame, so the two buffers never diverge -> no intermittent blank (the
+     * DIRECT-mode failure: a small dirty region lands in one buffer while the rest of that buffer is
+     * many seconds stale, so a swap exposes a big out-of-date region as a blank). The reference keeps
+     * DIRECT + tolerates a strobe only because its busy scene repaints most of the screen every frame;
+     * for a static scene a full repaint is cheap and identical frame-to-frame, so it's glitch-free.
+     * This matches flush_cb's own assumption ("LVGL rendered a full frame into the inactive buffer"). */
+    lv_display_set_buffers(disp, cfg->fb_addr, fb1, fb_size, LV_DISPLAY_RENDER_MODE_FULL);
     lvgl_port_n6_state = 50;
 
     lv_display_set_flush_cb(disp, lvgl_flush_cb);
