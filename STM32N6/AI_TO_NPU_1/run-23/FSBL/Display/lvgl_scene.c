@@ -163,6 +163,9 @@ void lvgl_scene_tick(unsigned long frame, unsigned long hb)
         s_last_hb = hb;
         lv_obj_set_style_bg_color(s_led,
             lv_color_hex((hb & 1UL) ? COL_LED_OFF : COL_LED_ON), LV_PART_MAIN);
-        lvgl_port_n6_mark_dirty();   /* propagate the LED change into both DIRECT buffers (no strobe) */
+        /* NO full-screen propagation for the heartbeat LED — it fires every 500 ms and a whole-screen
+         * repaint that often is the "frequent flicker". The LED is a tiny widget; its dirty region syncs
+         * to the other DIRECT buffer via LVGL's normal 2-buffer refresh over the next 30 FPS frame. Only
+         * the larger prompt/answer changes (every 3 s) force the 2-frame full propagation. */
     }
 }

@@ -480,7 +480,7 @@ int main(void)
      * off" — a line containing "demo" toggles the loop (off when it also contains "off"). Anything
      * else is evaluated as an expression on-chip via the nocode dispatch + NPU. Heartbeat (GREEN LED
      * + g_heartbeat) ticks throughout; RED lights only on an error. Demo runs by default at boot. */
-    uint32_t hb_last = HAL_GetTick(), demo_last = 0U;
+    uint32_t hb_last = HAL_GetTick(), demo_last = 0U, fb_last = 0U;
     int di = 0, demo_on = 1;
     char cmd[48]; int cmdn = 0;
     printf("\r\n=== NPU calculator — demo running.  /demo off  ·  /demo on  ·  or type an expression ===\r\n");
@@ -488,7 +488,10 @@ int main(void)
     {
       uint32_t now = HAL_GetTick();
       if (now - hb_last >= 500U) { hb_last = now; BSP_LED_Toggle(LED_GREEN); g_heartbeat++; }  /* heartbeat */
-      if (g_lvgl_ok) { lvgl_scene_tick(lvgl_port_n6_loop_count, g_heartbeat); lvgl_port_n6_run_once(); }  /* LVGL frame */
+      /* Cap LVGL rendering to ~30 FPS (reference cadence). Rendering the super-loop uncapped repaints far
+       * faster than the 60 Hz LTDC can swap, so the LTDC scans a buffer mid-render -> tearing/distortion
+       * ("stretched"). 33 ms matches the reference's ThreadX 30 FPS render task. */
+      if (g_lvgl_ok && (now - fb_last >= 33U)) { fb_last = now; lvgl_scene_tick(lvgl_port_n6_loop_count, g_heartbeat); lvgl_port_n6_run_once(); }  /* LVGL frame @30 FPS */
 
       uint8_t ch;                              /* line-buffered command/expression input (non-blocking) */
       if (huart1.Instance->ISR & USART_ISR_ORE) { huart1.Instance->ICR = USART_ICR_ORECF; }  /* clear overrun: the super-loop stalls ~ms during NPU inference so a byte can be missed; without this the ORE flag wedges HAL RX and the UART goes dead ("cannot write to it") */
@@ -524,9 +527,13 @@ int main(void)
          * (g_npu_gate defaults 0). set_prompt shows the new expression and clears the answer to "= ?";
          * after inference set_answer paints the result. Both are dirty-region updates (no full-screen
          * invalidate), so only the changed labels repaint. */
-        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); }   /* show the prompt + "= ?" (no NPU yet) */
+        /* Render TWICE after each label change: the mark_dirty full-redraw propagates over 2 render
+         * passes, and the ~1 s inference blocks the super-loop right after — so drain both passes now
+         * to land "expr = ?" in BOTH DIRECT buffers before the block, else the buffer the LTDC lands on
+         * during inference is stale (blank). */
+        if (g_lvgl_ok) { lvgl_scene_set_prompt(expr); lvgl_port_n6_run_once(); lvgl_port_n6_run_once(); }   /* show the prompt + "= ?" (no NPU yet) */
         long res = Grammar_Calc(g_network, (int8_t *)rin, (const int8_t *)rout, expr, &ok);   /* gates the LTDC fetch per NPU epoch internally */
-        if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "ERROR"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); }   /* show the answer */
+        if (g_lvgl_ok) { char ab[40]; if (ok) snprintf(ab, sizeof ab, "= %ld", res); else snprintf(ab, sizeof ab, "ERROR"); lvgl_scene_set_answer(ab); lvgl_port_n6_run_once(); lvgl_port_n6_run_once(); }   /* show the answer in both buffers */
         if (ok) printf("[hb %lu] %s = %ld\r\n", (unsigned long)g_heartbeat, expr, res);
         else  { printf("[hb %lu] %s -> ERROR\r\n", (unsigned long)g_heartbeat, expr); BSP_LED_On(LED_RED); }
       }
