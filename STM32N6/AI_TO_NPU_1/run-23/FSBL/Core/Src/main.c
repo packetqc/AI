@@ -31,6 +31,7 @@
 #include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
 #include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
 #include "fw_version.h"              /* live-readable build stamp (UART banner + SWD g_fw_version) */
+#include "nocode_inject.h"           /* nocode native-code injector (NcCtx / nc_program / nc_run) */
 #include "lcd.h"                     /* LTDC + panel bring-up (display) */
 #include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
 #include "lvgl_port_n6.h"            /* LVGL 9.x DIRECT-mode port on the PSRAM framebuffer */
@@ -79,6 +80,7 @@ XSPI_HandleTypeDef hxspi2;
 COM_InitTypeDef BspCOMInit;
 
 volatile int debugFlag = 0;  /* 1 = spin in catch loop for MCP GDB attach + release (methodology). */
+volatile long g_inject_test = -999;  /* nocode injection self-test result (expect 7); read via SWD */
 volatile uint32_t g_boot_stage = 0;  /* init progress marker — read via GDB to localize a stall/error */
 volatile int      g_psram_rc   = 99; /* PSRAM_Init() result: 0=mapped+writable, <0=fail, 99=not run */
 volatile int      g_lvgl_ok    = 0;  /* 1 once lvgl_port_n6_init succeeded */
@@ -269,6 +271,16 @@ int main(void)
   MX_ICACHE_Init();
   MX_CACHEAXI_Init();
   SystemIsolation_Config();
+  /* NOCODE INJECTION SELF-TEST (boot, before EXTMEM so it always runs): inject + run the
+   * model-provided op_add native code on-chip and capture the result — a self-test of the nocode
+   * path, independent of NOR/NPU. Read g_inject_test over SWD; also printed once the UART is up. */
+#ifdef NOCODE_INJECT
+  {
+    NcCtx c; memset(&c, 0, sizeof c); c.a = 3; c.b = 4;
+    const NcProgram *p = nc_program("calculator", "op_add");
+    g_inject_test = p ? nc_run(p, &c) : -1;   /* expect 7 (3+4) */
+  }
+#endif
   MX_EXTMEM_MANAGER_Init();
   /* USER CODE BEGIN 2 */
   // NPU_Config();
@@ -327,6 +339,9 @@ int main(void)
     printf("%c[0;0H", 0x1b);
     printf("MAIN APP ON\n");
     FW_PrintVersion();   /* live build stamp: version + git + nocode stage (also at g_fw_version) */
+#ifdef NOCODE_INJECT
+    printf("     nocode inject self-test: 3+4 = %ld (expect 7)\r\n", g_inject_test);
+#endif
   }
 
   /* NPU */
