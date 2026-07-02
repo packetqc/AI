@@ -445,58 +445,80 @@ NcFn nc_resolve(const char* grammar, const char* token);   /* (grammar,token) ->
     _NATIVE_FLAGS  = ["-mcpu=cortex-m55", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-d16",
                       "-Os", "-ffreestanding", "-fno-stack-protector", "-fomit-frame-pointer"]
 
-    def _compile_native_op(self, body, project_inc, workdir):
-        """Compile `long nc_fn(NcCtx* c){ body }` against the project's nocode_inject.h into
-        relocation-free Thumb machine code; return the raw .text bytes. Raises if the op needs a
-        relocation (e.g. it calls an external fn) — not injectable at the carried-table stage."""
-        import subprocess
-        src, obj, binp = (os.path.join(workdir, n) for n in ("op.c", "op.o", "op.bin"))
-        with open(src, "w", encoding="utf-8") as fh:
-            fh.write('#include "nocode_inject.h"\nlong nc_fn(NcCtx* c){ %s }\n' % body)
-        subprocess.run([self._NATIVE_CC] + self._NATIVE_FLAGS + ["-I", project_inc, "-c", src, "-o", obj],
-                       check=True, capture_output=True, text=True)
-        rel = subprocess.run([self._NATIVE_OBJDMP, "-r", obj], check=True, capture_output=True, text=True)
-        in_text = False
-        for line in rel.stdout.splitlines():           # fail on any .text relocation (breaks PIC inject)
-            if line.startswith("RELOCATION RECORDS FOR"):
-                in_text = "[.text]" in line
-            elif in_text and "R_ARM_" in line:
-                raise ValueError("op body needs a relocation (not self-contained): %s" % line.strip())
-        subprocess.run([self._NATIVE_OBJCPY, "-O", "binary", "-j", ".text", obj, binp],
-                       check=True, capture_output=True, text=True)
-        with open(binp, "rb") as fh:
-            return fh.read()
+    # (grammar, token) -> the function name in the project's nocode_ops.c (compiled -DMODEL_CREATION).
+    # The BODIES live in FSBL/AI/nocode_ops.c (project code), not here — this only maps the selectors.
+    _NATIVE_OPS = {
+        "calculator": {
+            "op_add": "nc_op_calculator_op_add",
+            "op_sub": "nc_op_calculator_op_sub",
+            "op_mul": "nc_op_calculator_op_mul",
+            "op_div": "nc_op_calculator_op_div",
+            "number": "nc_op_calculator_number",
+        },
+    }
 
-    def emit_native_program(self, grammar_names, out_dir, project_inc):
+    def _compile_ops_file(self, ops_file, project_inc, workdir):
+        """Compile the project's nocode_ops.c with -DMODEL_CREATION (and -ffunction-sections so each op
+        lands in its own .text.<fn> section). Returns the .o path. This IS the model-creation build."""
+        import subprocess
+        obj = os.path.join(workdir, "nocode_ops.o")
+        cc = ([self._NATIVE_CC] + self._NATIVE_FLAGS
+              + ["-ffunction-sections", "-DMODEL_CREATION", "-I", project_inc, "-c", ops_file, "-o", obj])
+        subprocess.run(cc, check=True, capture_output=True, text=True)
+        return obj
+
+    def _extract_op(self, obj, fn, workdir):
+        """Extract fn's relocation-free Thumb machine code (.text.<fn>) from the compiled ops object.
+        Raises if the section is missing/empty or carries a relocation (not injectable)."""
+        import subprocess
+        sec = ".text." + fn
+        rel = subprocess.run([self._NATIVE_OBJDMP, "-r", obj], check=True, capture_output=True, text=True)
+        in_sec = False
+        for line in rel.stdout.splitlines():
+            if line.startswith("RELOCATION RECORDS FOR"):
+                in_sec = ("[" + sec + "]") in line
+            elif in_sec and "R_ARM_" in line:
+                raise ValueError("%s needs a relocation (not self-contained): %s" % (fn, line.strip()))
+        binp = os.path.join(workdir, fn + ".bin")
+        r = subprocess.run([self._NATIVE_OBJCPY, "-O", "binary", "--only-section", sec, obj, binp],
+                           capture_output=True, text=True)
+        code = open(binp, "rb").read() if os.path.isfile(binp) else b""
+        if not code:
+            raise ValueError("no .text for %s — is it defined in nocode_ops.c under MODEL_CREATION? (%s)"
+                             % (fn, r.stderr.strip()))
+        return code
+
+    def emit_native_program(self, grammar_names, out_dir, project_inc, ops_file):
         """Generate nocode_program.c — the model-driven table of REAL Thumb machine code the device
-        injector (nocode_inject.c) runs natively. Compiles each op against `project_inc` (the FSBL
-        Core/Inc holding nocode_inject.h) so the ABI is byte-exact with the firmware."""
+        injector runs. The bodies live in the STM32 PROJECT (ops_file = FSBL/AI/nocode_ops.c) under
+        `#ifdef MODEL_CREATION`; this compiles that file with -DMODEL_CREATION and extracts each op's
+        .text. So the op code is authored + compiled AS project code, extracted for the model, and — in
+        the normal firmware build (MODEL_CREATION undefined) — NEVER baked in. A load-and-run of that
+        firmware still computing correctly is the proof the logic is model-driven, not CPU-hardcoded."""
         import tempfile
         if isinstance(grammar_names, str):
             grammar_names = [grammar_names]
         project_inc = os.path.abspath(project_inc)
+        ops_file = os.path.abspath(ops_file)
         blobs, entries = [], []
         with tempfile.TemporaryDirectory() as wd:
+            obj = self._compile_ops_file(ops_file, project_inc, wd)   # the MODEL_CREATION build
             for g in grammar_names:
-                spec = self._DECOMPOSE_C.get(g)
+                spec = self._NATIVE_OPS.get(g)
                 if not spec:
-                    raise ValueError("no C transposition spec for grammar '%s'" % g)
-                for tok, body in spec.items():
-                    try:
-                        code = self._compile_native_op(body, project_inc, wd)
-                    except ValueError as e:
-                        self._log("warning", "skip %s/%s — %s" % (g, tok, e))
-                        continue
+                    raise ValueError("no native-op mapping for grammar '%s'" % g)
+                for tok, fn in spec.items():
+                    code = self._extract_op(obj, fn, wd)
                     sym = "nc_code_%s_%s" % (re.sub(r"\W", "_", g), re.sub(r"\W", "_", tok))
                     hexs = ", ".join("0x%02x" % b for b in code)
-                    blobs.append("static const uint8_t %s[] = { %s };  /* %d B */" % (sym, hexs, len(code)))
+                    blobs.append("static const uint8_t %s[] = { %s };  /* %d B, from %s() */" % (sym, hexs, len(code), fn))
                     entries.append('    { "%s", "%s", %s, sizeof(%s) },' % (g, tok, sym, sym))
         c = ['/* nocode_program.c — GENERATED model-driven NATIVE CODE. DO NOT EDIT.',
              ' * source: scripts/classes/class_logic_transposer.py (emit_native_program)',
-             ' * grammars: %s' % ", ".join(grammar_names),
-             ' * Each blob is relocation-free ARM Thumb machine code (ABI: long fn(NcCtx*)), compiled',
-             ' * against the FSBL nocode_inject.h and INJECTED at runtime by nocode_inject.c — the',
-             ' * device analog of the host exec(). Regenerate when the ops or the NcCtx ABI change.',
+             ' * bodies: FSBL/AI/nocode_ops.c compiled -DMODEL_CREATION; grammars: %s' % ", ".join(grammar_names),
+             ' * Each blob is relocation-free ARM Thumb machine code (ABI: long fn(NcCtx*)), extracted from',
+             ' * the project ops object and INJECTED at runtime by nocode_inject.c (the device exec()).',
+             ' * The bodies are #ifdef MODEL_CREATION, so the normal firmware bakes NONE of this logic.',
              ' */',
              '#include "nocode_inject.h"',
              '',
@@ -511,7 +533,7 @@ NcFn nc_resolve(const char* grammar, const char* token);   /* (grammar,token) ->
         c_path = os.path.join(out_dir, "nocode_program.c")
         with open(c_path, "w", encoding="utf-8") as fh:
             fh.write("\n".join(c))
-        self._log("ok", "emitted native program for %s -> %s" % (", ".join(grammar_names), c_path))
+        self._log("ok", "emitted native program (MODEL_CREATION) for %s -> %s" % (", ".join(grammar_names), c_path))
         return [c_path]
 
     @classmethod
