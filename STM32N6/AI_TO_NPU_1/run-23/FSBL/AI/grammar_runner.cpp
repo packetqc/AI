@@ -161,10 +161,11 @@ private:
              * empty), a separate inference issue that appeared around the option-B/D-cache changes.
              * Until that is fixed, fall back to the authoritative PLAYBOOK rule so the line shows the
              * grammar the oracle represents (what a working oracle would generate) instead of a blank. */
-            const char* disp = (body[0] != '\0') ? body : PLAYBOOK[idx];
+            /* PURE ORACLE: print the NPU-generated rule body verbatim — NO PLAYBOOK fallback. If this
+             * is blank, the NPU genuinely produced nothing (don't fake it). */
             rbuf().logf(llm::Severity::Info, "RUNNER",
                         "[model #%d] calculator %s " "\xe2\x86\x92" " %s",
-                        ++interactions_, name.c_str(), disp);
+                        ++interactions_, name.c_str(), body);
             /* playbook authoritative; the oracle line above is the visible model dialog */
             alts = parse_body(PLAYBOOK[idx]);
         }

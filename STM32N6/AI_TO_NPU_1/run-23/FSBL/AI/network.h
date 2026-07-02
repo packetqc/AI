@@ -2,7 +2,7 @@
   ******************************************************************************
   * @file    network.h
   * @author  STEdgeAI
-  * @date    2026-07-01 13:06:39
+  * @date    2026-06-26 18:48:29
   * @brief   Minimal description of the generated c-implemention of the network
   ******************************************************************************
   * @attention
@@ -20,7 +20,7 @@
 
 /******************************************************************************/
 #define LL_ATON_NETWORK_C_MODEL_NAME        "network"
-#define LL_ATON_NETWORK_ORIGIN_MODEL_NAME   "model_npu_int8_OE_3_3_1"
+#define LL_ATON_NETWORK_ORIGIN_MODEL_NAME   "model_npu_int8"
 
 /************************** USER ALLOCATED IOs ********************************/
 // No user allocated inputs
@@ -34,7 +34,7 @@
 
 /************************** OUTPUTS *******************************************/
 #define LL_ATON_NETWORK_OUT_NUM        (1)    // Total number of output buffers
-// Output buffer 1 -- Quantize_15_out_0
+// Output buffer 1 -- Quantize_17_out_0
 #define LL_ATON_NETWORK_OUT_1_ALIGNMENT   (32)
 #define LL_ATON_NETWORK_OUT_1_SIZE_BYTES  (11968)
 

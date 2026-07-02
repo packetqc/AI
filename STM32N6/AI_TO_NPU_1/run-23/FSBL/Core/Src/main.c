@@ -280,11 +280,15 @@ int main(void)
    * memory-mapped, copy the weights into AXISRAM, then clean the M55 D-cache so the Neural-ART reads
    * fresh weights over its AXI master. SIZE = network_weights.bin (526496 B) — re-flash 0x70200000
    * + update this size if the model changes. */
-  (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);            /* NOR memory-mapped for XIP */
-  /* OPTION B (FB_IN_SRAM): the regenerated network reads its weights + epoch-controller blobs XIP
-   * from NOR @0x70000000 (ecloader) — NO copy to AXISRAM1, which is now the FB front bank. The
-   * legacy `memcpy(0x34064000 <- 0x70200000, 526496)` + D-cache clean are removed. Flash the
-   * regenerated NOR blob (network_regen/generated/atonbuf_xSPI2.bin) to 0x70000000. */
+  (void)EXTMEM_MemoryMappedMode(EXTMEMORY_1, EXTMEM_ENABLE);            /* NOR memory-mapped @0x70000000 */
+  /* SRAM-weights layout — the network.c the NPU actually runs reads all weights/activations from
+   * AXISRAM1 @0x34064000. Copy the weight blob from NOR @0x70200000 into AXISRAM1 so the Neural-ART
+   * reads REAL weights over its AXI master, then clean the M55 D-cache so the copy is in physical SRAM
+   * before the NPU epoch reads it. (The option-B XIP-from-0x70000000 pointed the NPU at the FSBL image
+   * -> zero logits -> the grammar oracle went dead. The FB lives in PSRAM @0x90000000, so AXISRAM1 is
+   * free for the weights.) SIZE = network_weights.bin (526496 B). */
+  memcpy((void *)0x34064000UL, (const void *)0x70200000UL, 526496U);
+  SCB_CleanDCache_by_Addr((uint32_t *)0x34064000UL, 526496);
   g_boot_stage = 5;
 
   // RISAF_Config();
