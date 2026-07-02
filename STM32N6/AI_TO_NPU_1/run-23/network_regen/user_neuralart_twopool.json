@@ -1,0 +1,9 @@
+{
+    "_comment": "Two-pool neural-art profile for run-23 — SPLIT weights and activations so they stop overlapping. Weights -> cpuRAM1 (AXISRAM1 @0x34064000, ACC_READ); activations -> npuRAM3 (AXISRAM3 @0x34200000, ACC_WRITE, NPURAM). Fixes the single-pool bug where Conv2D_6_weights (offset 0) shared its pool with activations (Reshape_4_out ...) and got overwritten during inference -> NPU garbage. Same optimization options as the shipped sram profile, plus the explicit --weights-pool/--activations-pool selectors.",
+    "Profiles": {
+        "twopool": {
+            "memory_pool": "./stm32n6_twopool.mpool",
+            "options": "--optimization 3 --cache-maintenance --Oauto-sched --native-float --enable-virtual-mem-pools --Omax-ca-pipe 4 --Ocache-opt --Os"
+        }
+    }
+}
