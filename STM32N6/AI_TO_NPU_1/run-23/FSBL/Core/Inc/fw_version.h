@@ -12,9 +12,9 @@
  *
  * nocode_stage tracks the host->device "nocode" evolution, so a live read tells EXACTLY
  * which architecture is on the board:
- *   0 = playbook grammar + compiled nocode_dispatch (baked C ops)          [pre-VM]
- *   1 = hardcoded stack VM runs a model-derived bytecode table            [nocode core]
- *   2 = NPU emits grammar + bytecode at runtime (generative oracle-in-loop)[pure oracle]
+ *   0 = playbook grammar + compiled nocode_dispatch (baked C ops)              [pre-inject]
+ *   1 = playbook grammar + injected model-provided native code (nocode_inject) [native inject]
+ *   2 = NPU emits grammar + native code at runtime (generative oracle-in-loop) [pure oracle]
  */
 #include <stdint.h>
 
@@ -23,11 +23,11 @@
 #endif
 
 #define FW_VER_MAJOR      0
-#define FW_VER_MINOR      4
+#define FW_VER_MINOR      5
 #define FW_VER_PATCH      0
-#define FW_NOCODE_STAGE   0
-#define FW_NOCODE_ARCH    "playbook+compiled-dispatch"
-#define FW_VERSION_STR    "run-23 0.4.0"
+#define FW_NOCODE_STAGE   1
+#define FW_NOCODE_ARCH    "playbook+native-inject"
+#define FW_VERSION_STR    "run-23 0.5.0"
 #define FW_VERSION_MAGIC  0x4E4F4344u   /* 'NOCD' — locate/validate the block over SWD */
 
 typedef struct {

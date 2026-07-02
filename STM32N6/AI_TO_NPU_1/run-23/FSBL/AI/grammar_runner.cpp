@@ -17,8 +17,8 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
-#ifdef NOCODE_DISPATCH
-#include "nocode_dispatch.h"   /* generated (grammar,token)->compiled fn dispatch (host-model->NPU) */
+#ifdef NOCODE_INJECT
+#include "nocode_inject.h"     /* native-code injector + model-driven Thumb machine-code program table */
 #endif
 
 extern "C" uint32_t HAL_GetTick(void);
@@ -253,15 +253,16 @@ private:
             std::string ds;
             for (size_t i = 0; i < cv.size(); ++i) if (cv[i].num) { char b[16]; std::snprintf(b,sizeof(b),"%ld",cv[i].n); ds += b; }
             if (!ds.empty()) {
-#ifdef NOCODE_DISPATCH
-                /* nocode: fold the digits via the COMPILED 'number' fn — the only number compute. */
-                if (NcFn nf = nc_resolve("calculator", "number")) {
+#ifdef NOCODE_INJECT
+                /* nocode: fold the digits by INJECTING + running the model-provided 'number' native
+                 * code — the only number compute (no CPU-side atol). */
+                if (const NcProgram* p = nc_program("calculator", "number")) {
                     NcCtx c; std::memset(&c, 0, sizeof c);
                     for (size_t i = 0; i < ds.size(); ++i)
                         if (ds[i] >= '0' && ds[i] <= '9' && c.ndigits < NC_MAX_DIGITS) c.digits[c.ndigits++] = ds[i] - '0';
-                    if (c.ndigits > 0) return vnum(nf(&c));
+                    if (c.ndigits > 0) return vnum(nc_run(p, &c));
                 }
-                return vnum(0);   /* dispatch miss — no CPU-side number fold compiled in */
+                return vnum(0);   /* program miss — no CPU-side number fold exists */
 #else
                 return vnum(std::atol(ds.c_str()));
 #endif
@@ -274,14 +275,14 @@ private:
         }
         if (nums.size() == 2 && !op.empty()) {
             long a = nums[0], b = nums[1];
-#ifdef NOCODE_DISPATCH
-            /* nocode: the op's logic is the COMPILED dispatch function selected by (grammar,token) —
-             * the ONLY arithmetic source. No hardcoded CPU math is compiled in; a dispatch miss is
-             * an error, not a CPU fallback. The runner stays purely grammar-agnostic. */
+#ifdef NOCODE_INJECT
+            /* nocode: the op's logic is the model-provided NATIVE CODE selected by (grammar,token),
+             * INJECTED + run on the CPU — the ONLY arithmetic source. No hardcoded CPU math is
+             * compiled in; a program miss is an error, not a CPU fallback. Purely grammar-agnostic. */
             const char* tok = op=="+"?"op_add":op=="-"?"op_sub":op=="*"?"op_mul":op=="/"?"op_div":nullptr;
-            if (NcFn fn = tok ? nc_resolve("calculator", tok) : nullptr) {
+            if (const NcProgram* p = tok ? nc_program("calculator", tok) : nullptr) {
                 NcCtx c; std::memset(&c, 0, sizeof c); c.a = a; c.b = b;
-                return vnum(fn(&c));
+                return vnum(nc_run(p, &c));
             }
             return vstr("?");   /* token not carried in the model — no CPU-side arithmetic exists */
 #else

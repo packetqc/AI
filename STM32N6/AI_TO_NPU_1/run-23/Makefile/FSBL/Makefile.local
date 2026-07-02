@@ -101,14 +101,18 @@ $(foreach src,$(CXX_SOURCES),$(eval $(call CXX_BUILD_RULE,$(src))))
 # STL (std::map/std::string) pulls libstdc++ internals (_Rb_tree, __throw_* stubs).
 LIBS += -lstdc++
 
-# --- nocode dispatch: generated (grammar,token)->compiled-fn table (host-model->NPU path) ---
-# C_DEFS feeds both CFLAGS and CXXFLAGS (recursive =), so -DNOCODE_DISPATCH reaches the C unit AND
-# the C++ runner that calls nc_resolve(). nocode_dispatch.h lives in Core/Inc (already on -I path).
-# Explicit per-object rule (no vpath) per the durable-wrapper convention.
-C_DEFS  += -DNOCODE_DISPATCH
-OBJECTS += $(BUILD_DIR)/nocode_dispatch.o
-$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/nocode_dispatch.o
-$(BUILD_DIR)/nocode_dispatch.o: ../../FSBL/Core/Src/nocode_dispatch.c Makefile | $(BUILD_DIR)
+# --- nocode INJECT: model-driven NATIVE code (host model->NPU path, device end) ---
+# The op logic is real Thumb machine code compiled against nocode_inject.h at model-creation time
+# (generated nocode_program.c) and INJECTED + run at runtime by nocode_inject.c — the device analog of
+# the host exec(). -DNOCODE_INJECT reaches the C units AND the C++ runner (C_DEFS feeds both CFLAGS and
+# CXXFLAGS). Headers live in Core/Inc (already on -I path). Explicit per-object rules per the
+# durable-wrapper convention.
+C_DEFS  += -DNOCODE_INJECT
+OBJECTS += $(BUILD_DIR)/nocode_inject.o $(BUILD_DIR)/nocode_program.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/nocode_inject.o $(BUILD_DIR)/nocode_program.o
+$(BUILD_DIR)/nocode_inject.o: ../../FSBL/Core/Src/nocode_inject.c Makefile | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+$(BUILD_DIR)/nocode_program.o: ../../FSBL/Core/Src/nocode_program.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
 # --- firmware version stamp: live-readable build id (UART banner + SWD read of g_fw_version) ---
