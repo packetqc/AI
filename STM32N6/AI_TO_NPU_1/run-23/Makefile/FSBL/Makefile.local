@@ -111,6 +111,18 @@ $(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/nocode_dispatch.o
 $(BUILD_DIR)/nocode_dispatch.o: ../../FSBL/Core/Src/nocode_dispatch.c Makefile | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) $< -o $@
 
+# --- firmware version stamp: live-readable build id (UART banner + SWD read of g_fw_version) ---
+# git hash captured at make-parse time (immediate :=); the unit is force-rebuilt every invocation
+# (force_version) so __DATE__/__TIME__ and the hash are always current in the flashed image.
+FW_GIT_HASH := $(shell git rev-parse --short HEAD 2>/dev/null || echo nogit)
+C_DEFS  += -DFW_GIT_HASH=\"$(FW_GIT_HASH)\"
+OBJECTS += $(BUILD_DIR)/fw_version.o
+$(BUILD_DIR)/$(TARGET).elf: $(BUILD_DIR)/fw_version.o
+.PHONY: force_version
+force_version:
+$(BUILD_DIR)/fw_version.o: ../../FSBL/Core/Src/fw_version.c Makefile force_version | $(BUILD_DIR)
+	$(CC) -c $(CFLAGS) $< -o $@
+
 # --- LCD/LTDC display: enable the LTDC HAL module (regen-proof, via -D not hal_conf.h) + build the
 #     LTDC HAL driver (copied into run-23) + MX_LTDC_Init (ltdc.c) + panel bring-up (lcd.c) ---
 C_DEFS  += -DHAL_LTDC_MODULE_ENABLED

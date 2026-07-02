@@ -30,6 +30,7 @@
 #include "network_tokens.h"          /* device tokenizer support (rule prompts + decode) */
 #include "npu_query.h"               /* grammar-oracle bridge (autoregressive NPU recall) */
 #include "grammar_runner.h"          /* parse + evaluate via the oracle (the calculator) */
+#include "fw_version.h"              /* live-readable build stamp (UART banner + SWD g_fw_version) */
 #include "lcd.h"                     /* LTDC + panel bring-up (display) */
 #include "psram.h"                   /* external PSRAM map + self-test (framebuffer + app data) */
 #include "lvgl_port_n6.h"            /* LVGL 9.x DIRECT-mode port on the PSRAM framebuffer */
@@ -325,6 +326,7 @@ int main(void)
     printf( "\x1B[2J" );
     printf("%c[0;0H", 0x1b);
     printf("MAIN APP ON\n");
+    FW_PrintVersion();   /* live build stamp: version + git + nocode stage (also at g_fw_version) */
   }
 
   /* NPU */
