@@ -214,5 +214,18 @@ LDSCRIPT := STM32N657XX_fsbl_custom.ld
 # (stack/heap size, memory map) didn't trigger a relink — make it an explicit prereq:
 $(BUILD_DIR)/$(TARGET).elf: STM32N657XX_fsbl_custom.ld
 
+# --- stale-object guard (USE_THREADX flip) ---------------------------------------------------------
+# USE_THREADX toggles -DRUN23_USE_THREADX, so the units that test it (main.c, stm32n6xx_it.c) compile
+# to DIFFERENT code. Plain `make` keeps the previous config's .o: a ThreadX-built stm32n6xx_it.o has NO
+# bare-metal SysTick_Handler (it is `#if !RUN23_USE_THREADX`), so a later bare-metal build links the weak
+# Default_Handler for SysTick -> the stock HAL_InitTick enables SysTick -> the first tick jumps into the
+# Default_Handler infinite loop -> SILENT BOOT HANG (looks like an EXTMEM/SFDP stall). Stamp those units
+# against a USE_THREADX-named marker so flipping the flag forces them to recompile. Object-as-target of
+# the marker => normal (order-safe) dependency resolution.
+THREADX_STAMP := $(BUILD_DIR)/.usethreadx.$(USE_THREADX)
+$(THREADX_STAMP): | $(BUILD_DIR)
+	@rm -f $(BUILD_DIR)/.usethreadx.* && touch $@
+$(BUILD_DIR)/main.o $(BUILD_DIR)/stm32n6xx_it.o: $(THREADX_STAMP)
+
 # --- toolchain: arm-none-eabi-gcc 15.2 ships no newlib-nano spec (LAST: captures updated LIBS/LDSCRIPT) ---
 LDFLAGS := $(filter-out -specs=nano.specs,$(LDFLAGS))
