@@ -38,10 +38,10 @@ ENTRY(Reset_Handler)
 /* Memories definition */
 MEMORY
 {
-  ROM          (xrw) : ORIGIN = 0x34180400, LENGTH = 464K  /* AXISRAM2: FSBL code+rodata (+4K for the inline SRAM network.c) */
-  RAM          (xrw) : ORIGIN = 0x341F4400, LENGTH = 50K   /* AXISRAM2: FSBL data+bss+stack (shifted +4K for the bigger ROM) */
+  ROM          (xrw) : ORIGIN = 0x34180400, LENGTH = 462K  /* AXISRAM2: FSBL code+rodata (+2K for the inline SRAM network.c) */
+  RAM          (xrw) : ORIGIN = 0x341F3C00, LENGTH = 48K   /* AXISRAM2: FSBL data+bss+stack — MUST stay <0x34200000 (AXISRAM3 is enabled late in SystemInit; stack there hangs boot) */
   WEIGHTS_RAM  (xrw) : ORIGIN = 0x34064000, LENGTH = 624K  /* AXISRAM1 (cpuRAM1): boot-ROM-active (GDB-loadable) — atonn HW weights blob baked @0x34064000 */
-  AI_RAM       (xrw) : ORIGIN = 0x34201000, LENGTH = 508K  /* AXISRAM3: AI activations (unused by the single-pool SRAM network; nudged +4K for RAM) */
+  AI_RAM       (xrw) : ORIGIN = 0x34200000, LENGTH = 512K  /* AXISRAM3: AI activations (unused by the single-pool SRAM network) */
   THREADX_RAM  (xrw) : ORIGIN = 0x34140000, LENGTH = 256K  /* low AXISRAM2 AFTER the LVGL heap (lv_conf LV_MEM_ADR=0x34100000, 256K → ends 0x34140000) and before the FSBL ROM @0x34180400: ThreadX byte pool + kernel .bss. MUST NOT overlap the LVGL heap (that corrupts s_led → get_local_style HardFault). */
   NOR_FLASH    (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* XSPI2 NOR: AI weights (memory-mapped) */
   WEIGHTS_SRAM (rx)  : ORIGIN = 0x70000000, LENGTH = 8M    /* alias: atonn-generated section name */
