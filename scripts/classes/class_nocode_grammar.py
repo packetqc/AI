@@ -27,7 +27,7 @@ class CodeExecPolicy:
     VOCAB_VERIFIED = "vocab_verified"
     GENERATIVE = "generative"
     ALL = (TOKEN_SELECT, VOCAB_VERIFIED, GENERATIVE)
-    DEFAULT = VOCAB_VERIFIED   # safe rung; promote to GENERATIVE as the model matures
+    DEFAULT = GENERATIVE   # the destiny: model-emitted code executed directly (no CPU-side code)
 
     @classmethod
     def coerce(cls, value):

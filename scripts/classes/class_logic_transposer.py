@@ -432,6 +432,88 @@ NcFn nc_resolve(const char* grammar, const char* token);   /* (grammar,token) ->
         self._log("ok", "emitted C dispatch for %s -> %s" % (", ".join(grammar_names), out_dir))
         return written
 
+    # ── native-code backend (host model → NPU path, device end) ─────────────────────────────────
+    # The host "create for device" step: COMPILE each op body against the STM32 project (this repo's
+    # nocode_inject.h ABI + the FSBL arm-gcc flags) into relocation-free Thumb machine code, and carry
+    # those bytes as the model-driven program table the firmware INJECTS + runs natively. The faithful
+    # device analog of the host runner's exec(): real STM32 code, provided model-driven — not a toy
+    # bytecode/VM, and not compiled into the firmware. Only self-contained (call-free) ops are
+    # injectable at the carried-table stage; the calculator ops are (pure arithmetic over the ctx).
+    _NATIVE_CC     = "arm-none-eabi-gcc"
+    _NATIVE_OBJCPY = "arm-none-eabi-objcopy"
+    _NATIVE_OBJDMP = "arm-none-eabi-objdump"
+    _NATIVE_FLAGS  = ["-mcpu=cortex-m55", "-mthumb", "-mfloat-abi=hard", "-mfpu=fpv5-d16",
+                      "-Os", "-ffreestanding", "-fno-stack-protector", "-fomit-frame-pointer"]
+
+    def _compile_native_op(self, body, project_inc, workdir):
+        """Compile `long nc_fn(NcCtx* c){ body }` against the project's nocode_inject.h into
+        relocation-free Thumb machine code; return the raw .text bytes. Raises if the op needs a
+        relocation (e.g. it calls an external fn) — not injectable at the carried-table stage."""
+        import subprocess
+        src, obj, binp = (os.path.join(workdir, n) for n in ("op.c", "op.o", "op.bin"))
+        with open(src, "w", encoding="utf-8") as fh:
+            fh.write('#include "nocode_inject.h"\nlong nc_fn(NcCtx* c){ %s }\n' % body)
+        subprocess.run([self._NATIVE_CC] + self._NATIVE_FLAGS + ["-I", project_inc, "-c", src, "-o", obj],
+                       check=True, capture_output=True, text=True)
+        rel = subprocess.run([self._NATIVE_OBJDMP, "-r", obj], check=True, capture_output=True, text=True)
+        in_text = False
+        for line in rel.stdout.splitlines():           # fail on any .text relocation (breaks PIC inject)
+            if line.startswith("RELOCATION RECORDS FOR"):
+                in_text = "[.text]" in line
+            elif in_text and "R_ARM_" in line:
+                raise ValueError("op body needs a relocation (not self-contained): %s" % line.strip())
+        subprocess.run([self._NATIVE_OBJCPY, "-O", "binary", "-j", ".text", obj, binp],
+                       check=True, capture_output=True, text=True)
+        with open(binp, "rb") as fh:
+            return fh.read()
+
+    def emit_native_program(self, grammar_names, out_dir, project_inc):
+        """Generate nocode_program.c — the model-driven table of REAL Thumb machine code the device
+        injector (nocode_inject.c) runs natively. Compiles each op against `project_inc` (the FSBL
+        Core/Inc holding nocode_inject.h) so the ABI is byte-exact with the firmware."""
+        import tempfile
+        if isinstance(grammar_names, str):
+            grammar_names = [grammar_names]
+        project_inc = os.path.abspath(project_inc)
+        blobs, entries = [], []
+        with tempfile.TemporaryDirectory() as wd:
+            for g in grammar_names:
+                spec = self._DECOMPOSE_C.get(g)
+                if not spec:
+                    raise ValueError("no C transposition spec for grammar '%s'" % g)
+                for tok, body in spec.items():
+                    try:
+                        code = self._compile_native_op(body, project_inc, wd)
+                    except ValueError as e:
+                        self._log("warning", "skip %s/%s — %s" % (g, tok, e))
+                        continue
+                    sym = "nc_code_%s_%s" % (re.sub(r"\W", "_", g), re.sub(r"\W", "_", tok))
+                    hexs = ", ".join("0x%02x" % b for b in code)
+                    blobs.append("static const uint8_t %s[] = { %s };  /* %d B */" % (sym, hexs, len(code)))
+                    entries.append('    { "%s", "%s", %s, sizeof(%s) },' % (g, tok, sym, sym))
+        c = ['/* nocode_program.c — GENERATED model-driven NATIVE CODE. DO NOT EDIT.',
+             ' * source: scripts/classes/class_logic_transposer.py (emit_native_program)',
+             ' * grammars: %s' % ", ".join(grammar_names),
+             ' * Each blob is relocation-free ARM Thumb machine code (ABI: long fn(NcCtx*)), compiled',
+             ' * against the FSBL nocode_inject.h and INJECTED at runtime by nocode_inject.c — the',
+             ' * device analog of the host exec(). Regenerate when the ops or the NcCtx ABI change.',
+             ' */',
+             '#include "nocode_inject.h"',
+             '',
+             "\n".join(blobs),
+             '',
+             'const NcProgram NC_PROGRAMS[] = {',
+             "\n".join(entries),
+             '};',
+             'const int NC_PROGRAM_COUNT = (int)(sizeof(NC_PROGRAMS) / sizeof(NC_PROGRAMS[0]));',
+             '']
+        os.makedirs(out_dir, exist_ok=True)
+        c_path = os.path.join(out_dir, "nocode_program.c")
+        with open(c_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(c))
+        self._log("ok", "emitted native program for %s -> %s" % (", ".join(grammar_names), c_path))
+        return [c_path]
+
     @classmethod
     def known_grammars(cls):
         return sorted(cls._GRAMMAR_LOGIC)
